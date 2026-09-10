@@ -105,7 +105,9 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
     }
     if (d.type === 'session.error') messages.set('error:' + event.seq, { id: 'error:' + event.seq, role: 'error', text: d.message, time: event.time, complete: true });
   }
-  return [...messages.values()];
+  // A turn that only calls tools carries no assistant text, and the tool blocks already show
+  // what happened. Keeping the empty message would render a blank bubble in every client.
+  return [...messages.values()].filter(message => message.role !== 'assistant' || message.text.trim() !== '');
 }
 export function loadHistoryPage(client: TurnwireClient, sessionId: string, before?: number, limit = 40): Promise<HistoryPage> {
   return client.request('history.page', { sessionId, limit, ...(before === undefined ? {} : { before }) });

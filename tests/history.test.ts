@@ -51,6 +51,22 @@ it('merges live deltas arriving during history fetch exactly once, retaining a c
   expect(buffer.events).toHaveLength(1);
   expect(conversation(buffer.events, session.id)[0]).toMatchObject({ text: 'Hello world!', complete: true });
 });
+
+it('leaves no assistant message for a turn that only calls tools', () => {
+  const store = new Store(':memory:'); cleanup.push(() => store.close());
+  const sessionId = 'tool-only';
+  store.append({ type: 'message.completed', sessionId, messageId: 'm1', text: '' });
+  store.append({ type: 'tool.started', sessionId, callId: 'call-1', tool: 'bash', detail: '{}' });
+  store.append({ type: 'tool.finished', sessionId, callId: 'call-1', tool: 'bash', detail: 'ok', isError: false });
+  expect(conversation(store.events(0, 50), sessionId).map(m => m.role)).toEqual(['tool']);
+  // Whitespace is not text either, and a message that gains text later is kept.
+  store.append({ type: 'message.completed', sessionId, messageId: 'm2', text: '   \n' });
+  expect(conversation(store.events(0, 50), sessionId).map(m => m.role)).toEqual(['tool']);
+  store.append({ type: 'message.delta', sessionId, messageId: 'm3', text: 'real answer' });
+  const messages = conversation(store.events(0, 50), sessionId);
+  expect(messages.map(m => m.role)).toEqual(['tool', 'assistant']);
+  expect(messages[1]?.text).toBe('real answer');
+});
 it('never lets an old running event or approval regress a newer idle snapshot', () => {
   const snapshot: Snapshot = { device: { id: 'mac', name: 'Mac' }, sessions: [session], approvals: [], runtimes: [], cursor: 90 };
   expect(applyEvent(snapshot, { seq: 20, time: 'now', data: { type: 'session.updated', session: { ...session, status: 'running' } } })).toBe(snapshot);
