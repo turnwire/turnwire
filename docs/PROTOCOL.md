@@ -16,7 +16,7 @@ Local clients POST `/rpc` with `Authorization: Bearer <local-token>`. Request:
 
 Success: `{ "v": 1, "id": "...", "ok": true, "result": ... }`. Failure: `{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`.
 
-Methods: `system.snapshot`, `session.create`, `session.resume`, `session.message`, `session.cancel`, `session.rename`, `session.archive`, `approval.decide`, `events.list`, `history.page`, `inbox.page`, `request.result`, `notifications.status`, `notifications.subscribe`, `notifications.unsubscribe`. Inputs are validated at the daemon boundary. Request IDs persist across restarts for mutations. An identical ID/payload returns the previous receipt. A changed payload conflicts. If the process died after reservation but before receipt persistence, Turnwire returns `OUTCOME_UNKNOWN` rather than replaying a potentially completed operation. This is an at-most-once submission boundary, not a claim of distributed exactly-once execution.
+Methods: `system.snapshot`, `session.create`, `session.resume`, `session.message`, `session.cancel`, `session.queueAction`, `session.rename`, `session.archive`, `approval.decide`, `events.list`, `history.page`, `subagent.list`, `inbox.page`, `request.result`, `notifications.status`, `notifications.subscribe`, `notifications.unsubscribe`. Inputs are validated at the daemon boundary. Request IDs persist across restarts for mutations. An identical ID/payload returns the previous receipt. A changed payload conflicts. If the process died after reservation but before receipt persistence, Turnwire returns `OUTCOME_UNKNOWN` rather than replaying a potentially completed operation. This is an at-most-once submission boundary, not a claim of distributed exactly-once execution.
 
 Session commands serialize per session; cancel remains independent so Stop cannot wait behind a slow prompt. Approval commands serialize per approval. Each successful decision applies once. Runtime disconnect and daemon restart cancel outstanding approvals.
 
@@ -81,6 +81,12 @@ The local token and every paired device have full control over Turnwire's config
 `history.page {sessionId, before?, limit?}` reads complete projected history records from Core. `limit` is 1–100, default 40; `before` is an exclusive positive original record sequence. The response `{events, cursor, hasMore, nextBefore}` contains compact message events, complete tool start/result pairs, approvals and errors. `nextBefore` is null at the oldest page. The cursor is the journal watermark at page capture, not the oldest record. `originSeq` is optional on events and preserves a compacted message's original position; `seq` is its latest included version. Raw event subscriptions and `events.list` keep their original meaning.
 
 Encrypted `subscribe` accepts a numeric `after` or `"latest"`. The latter starts at the current journal cursor, avoiding historical replay for a connection health check or snapshot request. An explicit event listener subscribes from the snapshot cursor to cover concurrent changes. Clients must not apply metadata events at or below their snapshot cursor to current state. Page fetches and live events are reconciled using the page watermark, with deltas after the watermark applied once.
+
+## A prompt that has not run yet
+
+`session.queueAction {sessionId, messageId, action}` changes a prompt that is still waiting behind a running turn. `messageId` is the id the client was given for that prompt; the runtime translates it to its own queue entry, so a stale row fails instead of changing a different prompt. The action is `{kind:"edit", text}`, `{kind:"remove"}` or `{kind:"steer"}` — rewrite it, take it back, or move it into the turn that is already running. A prompt that has left the queue answers `QUEUE_ITEM_GONE`.
+
+The journal recorded the prompt as it was first sent, so the outcome is written back: an edit emits `message.updated` with the new `text`, a steer emits `message.updated` with `steer: true`, and a removal emits `message.removed`, which drops the message from every projection. Without that, a transcript would describe a prompt that is not the one that ran, or one that never ran at all.
 
 ## Background agents
 

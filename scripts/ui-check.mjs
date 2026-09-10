@@ -28,24 +28,41 @@ try {
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('验证消息与审批能否在 Mac 和手机之间同步。');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
-  await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false })).toBeVisible();
-  // While the turn runs with nothing queued and nothing typed, the queue area is absent: there is
-  // no message to jump the queue with, so a button sitting there disabled would be furniture.
-  await expect(page.locator('.queue-area')).toHaveCount(0);
-  await expect(page.locator('.queue-hint')).toHaveCount(0);
+  await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false }).first()).toBeVisible();
+  // A queued prompt owns its own controls: edit, cancel and jump the queue live on that row and
+  // nowhere else, so an empty queue has no queue controls at all.
+  await expect(page.locator('.queued-strip')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(0);
-  // Typing is what makes it appear, and it names the draft it would send rather than explaining itself.
-  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('把日志一起看下');
-  await expect(page.locator('.queue-draft')).toHaveText('把日志一起看下');
-  await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toBeEnabled();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('需要批准这条日志');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const queuedRow = page.locator('.queued-item');
+  await expect(queuedRow).toHaveCount(1);
+  await expect(queuedRow.locator('.queued-text')).toHaveText('需要批准这条日志');
+  await expect(queuedRow.getByRole('button')).toHaveText(['Edit', 'Cancel', 'Jump the queue']);
+  // Typing does not grow a second set of controls: the row is the only place they exist.
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('另一条草稿');
+  await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(1);
+  // Edit opens the row in place, and the same three slots stay in the same order.
+  await queuedRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true })).toHaveValue('需要批准这条日志');
+  await expect(queuedRow.getByRole('button')).toHaveText(['Save', 'Cancel', 'Jump the queue']);
+  await queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true }).press('Escape');
+  await expect(queuedRow.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('');
   await page.screenshot({ path: join(output, 'desktop-session.png'), fullPage: true, animations: 'disabled' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
   await page.screenshot({ path: join(output, 'mobile-approval.png'), fullPage: true, animations: 'disabled' });
   const overflowing = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   expect(overflowing).toBe(false);
-  await page.getByRole('button', { name: 'Approve once', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
+  // The queued prompt raised an approval of its own — the demo answers every send — so both are
+  // settled here, one at a time, and the queue row goes with the turn it belonged to.
+  await expect(page.locator('.approval-panel')).toHaveCount(2);
+  await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
+  await expect(page.locator('.approval-panel')).toHaveCount(1);
+  await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
+  await expect(page.locator('.approval-panel')).toHaveCount(0);
+  await expect(page.locator('.queued-item')).toHaveCount(0);
   await page.getByRole('button', { name: 'Open session list' }).click();
   await expect(page.getByRole('navigation', { name: 'Session list' })).toBeVisible();
   await page.getByRole('button', { name: 'Close list', exact: true }).click();
@@ -55,7 +72,7 @@ try {
   await page.screenshot({ path: join(output, 'mobile-session-small.png'), fullPage: true, animations: 'disabled' });
   await page.reload();
   await expect(page.getByRole('heading', { name: '验证 Turnwire 的多端接续' })).toBeVisible();
-  await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false })).toBeVisible();
+  await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false }).first()).toBeVisible();
   await page.locator('.session-actions summary').click();
   await page.getByRole('button', { name: 'Rename', exact: true }).click();
   await page.getByLabel('New session name').fill('跨端会话管理验证');

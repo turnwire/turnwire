@@ -101,6 +101,13 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
     // client, and the exported transcript, can say so.
     if (d.type === 'message.user' && d.queued) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, queued: true }); }
     if (d.type === 'message.user' && d.steer) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, steer: true }); }
+    // A prompt that had not run yet can be changed or taken back after it was journaled; the
+    // projection follows, so no client has to know what the queue did beyond these two events.
+    if (d.type === 'message.updated') {
+      const existing = messages.get(d.messageId);
+      if (existing) messages.set(d.messageId, { ...existing, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) });
+    }
+    if (d.type === 'message.removed') messages.delete(d.messageId);
     if (d.type === 'tool.started' || d.type === 'tool.finished') {
       const existing = messages.get(d.callId); const finished = d.type === 'tool.finished';
       messages.set(d.callId, { id: d.callId, role: 'tool', text: d.detail, tool: existing?.tool ?? d.tool, time: existing?.time ?? event.time, complete: finished,

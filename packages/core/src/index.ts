@@ -133,6 +133,25 @@ export class TurnwireCore {
         // Cancellation is independent of the command lock, so a slow prompt cannot block Stop.
         const session = this.session(p.sessionId); await this.runtime(session.runtimeId).cancel(session.runtimeSessionId); return { accepted: true };
       }
+      case 'session.queueAction': {
+        const p = methodSchemas['session.queueAction'].parse(request.params);
+        const session = this.session(p.sessionId); this.requireActive(session);
+        const runtime = this.runtime(session.runtimeId);
+        const queueAction = runtime.queueAction?.bind(runtime);
+        if (!queueAction) throw new TurnwireError('NOT_AVAILABLE', 'This runtime cannot change a prompt that is already waiting');
+        return this.lock(p.sessionId, async () => {
+          await queueAction(session.runtimeSessionId, p.messageId, p.action);
+          // The journal recorded the prompt as it was first sent. An edit or a steer would otherwise
+          // leave the transcript describing a prompt that is not the one that ran, and a removal
+          // would leave one that never did, so each outcome is written back under the command's own
+          // id — a retry stays a no-op because the daemon replays the receipt instead of re-running.
+          const source = `${p.sessionId}:queue:${p.action.kind}:${request.id}`;
+          if (p.action.kind === 'remove') this.publish({ type: 'message.removed', sessionId: p.sessionId, messageId: p.messageId }, source);
+          else if (p.action.kind === 'edit') this.publish({ type: 'message.updated', sessionId: p.sessionId, messageId: p.messageId, text: p.action.text }, source);
+          else this.publish({ type: 'message.updated', sessionId: p.sessionId, messageId: p.messageId, queued: false, steer: true }, source);
+          return { accepted: true };
+        });
+      }
       case 'session.setModel': {
         const p = methodSchemas['session.setModel'].parse(request.params);
         return this.lock(p.sessionId, async () => {

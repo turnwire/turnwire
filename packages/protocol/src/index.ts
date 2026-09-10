@@ -50,6 +50,13 @@ export const eventDataSchema = z.discriminatedUnion('type', [
     steer: z.boolean().optional() }),
   z.object({ type: z.literal('message.delta'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
   z.object({ type: z.literal('message.completed'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
+  /**
+   * A prompt that had not run yet was changed before it did: edited, or moved into the running turn.
+   * The journal recorded the prompt as it was first sent, so this keeps it true.
+   */
+  z.object({ type: z.literal('message.updated'), sessionId: idSchema, messageId: idSchema, text: z.string().optional(), queued: z.boolean().optional(), steer: z.boolean().optional() }),
+  /** A prompt that had not run yet was taken back, so it never happened. */
+  z.object({ type: z.literal('message.removed'), sessionId: idSchema, messageId: idSchema }),
   z.object({ type: z.literal('tool.started'), sessionId: idSchema, callId: idSchema, tool: z.string(), detail: z.string() }),
   z.object({ type: z.literal('tool.finished'), sessionId: idSchema, callId: idSchema, tool: z.string(), detail: z.string(), isError: z.boolean().optional() }),
   z.object({ type: z.literal('approval.requested'), approval: approvalSchema }),
@@ -85,6 +92,16 @@ export const subagentViewSchema = z.object({
   todos: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })),
 });
 export type SubagentView = z.infer<typeof subagentViewSchema>;
+/**
+ * What a client may do to a prompt that is still waiting in the runtime's queue: change its text,
+ * take it back, or move it into the turn that is already running.
+ */
+export const queueActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('steer') }).strict(),
+  z.object({ kind: z.literal('remove') }).strict(),
+  z.object({ kind: z.literal('edit'), text: z.string().trim().min(1).max(100_000) }).strict(),
+]);
+export type QueueAction = z.infer<typeof queueActionSchema>;
 export interface Snapshot { device: { id: string; name: string }; sessions: Session[]; approvals: Approval[]; runtimes: RuntimeInfo[]; cursor: number }
 
 export const methodSchemas = {
@@ -102,6 +119,8 @@ export const methodSchemas = {
     /** Steer the running turn instead of waiting behind it; ignored semantics when no turn runs. */
     steer: z.boolean().optional() }).strict(),
   'session.cancel': z.object({ sessionId: idSchema }).strict(),
+  /** Change a prompt that has not run yet, addressed by the id the client already shows for it. */
+  'session.queueAction': z.object({ sessionId: idSchema, messageId: idSchema, action: queueActionSchema }).strict(),
   'session.setModel': z.object({ sessionId: idSchema, provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict(),
   'model.catalog': z.object({ runtimeId: idSchema.optional() }).strict(),
   'approval.decide': z.object({ approvalId: idSchema, decision: z.enum(['approved', 'rejected']) }).strict(),
@@ -142,6 +161,7 @@ export const turnwireErrorCodes = [
   'NOT_AVAILABLE',
   'OUTCOME_UNKNOWN',
   'PROBE_TIMEOUT',
+  'QUEUE_ITEM_GONE',
   'RATE_LIMITED',
   'REKEY_REQUIRED',
   'REMOTE_ERROR',

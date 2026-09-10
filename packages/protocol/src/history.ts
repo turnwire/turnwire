@@ -18,6 +18,13 @@ export function reduceHistory(existing: TurnwireEvent[], event: TurnwireEvent): 
   const d = event.data;
   if ('messageId' in d) {
     const previous = first?.data;
+    // A prompt that never ran can be patched or taken back after it was journaled. An update keeps
+    // the entity it describes — including the fields it does not mention — and a removal drops it.
+    if (d.type === 'message.updated') {
+      if (previous === undefined || previous.type !== 'message.user') return existing;
+      return [{ ...event, originSeq, time: first?.time ?? event.time, data: { ...previous, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) } }];
+    }
+    if (d.type === 'message.removed') return [];
     const text = d.type === 'message.delta' ? (previous && 'text' in previous ? previous.text : '') + d.text : d.text;
     return [{ ...event, originSeq, time: first?.time ?? event.time, data: { ...d, text } }];
   }

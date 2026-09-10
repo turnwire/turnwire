@@ -118,9 +118,13 @@ const en = {
   'model.loadingCatalog': 'Loading model catalog…',
   'model.unavailable': '{name} unavailable',
 
-  // Queued prompts.
+  // Queued prompts: the row owns the only edit/cancel/steer controls in the page.
   'queue.aria': 'Queued messages',
-  'queue.label': 'Queued',
+  'queue.edit': 'Edit',
+  'queue.editLabel': 'Edit the queued message',
+  'queue.save': 'Save',
+  'queue.remove': 'Cancel',
+  'queue.steer': 'Jump the queue',
 
   // Background agents: a delegation returns at once, so this is where a child's progress shows.
   'agents.aria': 'Background agents',
@@ -134,9 +138,6 @@ const en = {
   // Composer.
   'composer.messageAria': 'Message',
   'composer.placeholder': 'Describe the task, or add your next thought…',
-  'composer.steerAria': 'Jump the queue',
-  'composer.steerTitle': 'Jump into the running turn now (⌥↩)',
-  'composer.steer': 'Jump the queue',
   'composer.chooseModel': 'Choose model',
   'composer.stopTask': 'Stop task',
   'composer.stop': 'Stop',
@@ -240,6 +241,7 @@ const en = {
   'error.NOT_AVAILABLE': 'This action is not available for this device.',
   'error.OUTCOME_UNKNOWN': 'The host was interrupted while handling this request; check session state before sending a new request.',
   'error.PROBE_TIMEOUT': 'The connection check timed out.',
+  'error.QUEUE_ITEM_GONE': 'That message is no longer waiting to be sent.',
   'error.RATE_LIMITED': 'Too many remote messages; slow down and try again.',
   'error.REKEY_REQUIRED': 'The encrypted connection needs to be re-established.',
   'error.REMOTE_ERROR': 'The host rejected the connection; check the host diagnostics.',
@@ -360,7 +362,11 @@ const zh: Catalog = {
   'model.unavailable': '{name} 不可用',
 
   'queue.aria': '排队中的消息',
-  'queue.label': '排队',
+  'queue.edit': '编辑',
+  'queue.editLabel': '编辑排队中的消息',
+  'queue.save': '保存',
+  'queue.remove': '取消',
+  'queue.steer': '插队',
 
   'agents.aria': '后台子代理',
   'agents.running': '{count} 个子代理正在运行',
@@ -372,9 +378,6 @@ const zh: Catalog = {
 
   'composer.messageAria': '消息',
   'composer.placeholder': '描述任务，或补充下一步想法…',
-  'composer.steerAria': '插队',
-  'composer.steerTitle': '立即插进正在运行的回合（⌥↩）',
-  'composer.steer': '插队',
   'composer.chooseModel': '选择模型',
   'composer.stopTask': '停止任务',
   'composer.stop': '停止',
@@ -472,6 +475,7 @@ const zh: Catalog = {
   'error.NOT_AVAILABLE': '此设备不支持该操作。',
   'error.OUTCOME_UNKNOWN': '主机在处理此请求时中断，请先确认会话状态再发送新请求。',
   'error.PROBE_TIMEOUT': '连接检测超时。',
+  'error.QUEUE_ITEM_GONE': '这条消息已经不在排队中了。',
   'error.RATE_LIMITED': '远程消息过于频繁，请稍后再试。',
   'error.REKEY_REQUIRED': '需要重新建立加密连接。',
   'error.REMOTE_ERROR': '主机拒绝了连接，请查看主机诊断。',

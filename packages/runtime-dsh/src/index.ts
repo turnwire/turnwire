@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
-import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
@@ -29,6 +29,9 @@ const subagentDetailSchema = z.object({ sessionId: z.string(), projections: z.ob
   subagentTiming: z.object({ settledMs: z.number().optional(), active: z.object({ since: z.number() }).optional() }).optional(),
 }).optional() }).passthrough();
 interface SubagentDetail { label?: string; title?: string; elapsedMs?: number; todos: SubagentView['todos'] }
+/** One prompt still waiting in a session's inbox, with the client id it arrived under. */
+const inboxMessageSchema = z.object({ id: z.string(), source: z.object({ rpcId: z.string().optional() }).passthrough().optional() }).passthrough();
+const sessionInboxSchema = z.object({ sessionId: z.string(), projections: z.object({ inbox: z.object({ 'next-turn': z.array(z.unknown()), 'next-step': z.array(z.unknown()) }).optional() }).optional() }).passthrough();
 export interface DshOptions {
   url: string; token?: string;
   readCursor?: (sessionId: string) => number | undefined;
@@ -130,6 +133,39 @@ export class DshRuntime implements AgentRuntime {
       });
     }
     return details;
+  }
+  /**
+   * Change one prompt that has not run yet. The Host keys its queue by its own message id while a
+   * client only knows the id Turnwire gave the prompt, so the pending inbox is read to translate
+   * between them — the same projection the client is looking at, which means a stale client id
+   * fails here instead of mutating a different prompt. `session/updateQueue` refuses an item that
+   * has already left the queue, and that refusal is the same answer as never finding it.
+   */
+  async queueAction(sessionId: string, messageId: string, action: QueueAction): Promise<void> {
+    await this.connect();
+    const item = (await this.queuedItems(sessionId)).find(entry => entry.rpcId === messageId);
+    if (!item) throw new TurnwireError('QUEUE_ITEM_GONE', 'That prompt is no longer waiting to run');
+    try {
+      await this.rpc('session/updateQueue', { request: { sessionId, itemId: item.itemId, action: action.kind === 'edit' ? { kind: 'edit', content: [{ type: 'text', text: action.text }] } : { kind: action.kind } } });
+    } catch (error) {
+      if (error instanceof TurnwireError && error.code === 'session/queue-item-not-found') throw new TurnwireError('QUEUE_ITEM_GONE', 'That prompt is no longer waiting to run');
+      throw error;
+    }
+  }
+  /** The prompts still waiting in one session, in the order the Host will run them. */
+  private async queuedItems(sessionId: string): Promise<Array<{ itemId: string; rpcId?: string }>> {
+    const value = z.object({ items: z.array(z.unknown()) }).parse(await this.rpc('session/list', { _request: {} }));
+    for (const row of value.items) {
+      const parsed = sessionInboxSchema.safeParse(row);
+      if (!parsed.success || parsed.data.sessionId !== sessionId) continue;
+      const inbox = parsed.data.projections?.inbox;
+      if (inbox === undefined) return [];
+      return [...inbox['next-turn'], ...inbox['next-step']].flatMap(entry => {
+        const message = inboxMessageSchema.safeParse(entry);
+        return message.success ? [{ itemId: message.data.id, ...(message.data.source?.rpcId === undefined ? {} : { rpcId: message.data.source.rpcId }) }] : [];
+      });
+    }
+    return [];
   }
   async health() { try { await this.connect(); return { online: true, message: 'Connected to the DSH host' }; } catch { return { online: false, message: this.lastError }; } }
   async createSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {

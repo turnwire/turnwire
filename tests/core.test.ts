@@ -88,6 +88,30 @@ describe('durable daemon ownership', () => {
     // A poll, not a durable command: no receipt is reserved, so a client may repeat it freely.
     expect(store.request('agents')).toBeUndefined();
   });
+  it('rewrites the journal when a prompt is changed before it ever runs', async () => {
+    class QueueRuntime extends DemoRuntime {
+      readonly handled: string[] = [];
+      async queueAction(_sessionId: string, _messageId: string, action: { kind: string }) { this.handled.push(action.kind); }
+    }
+    const store = new Store(':memory:');
+    const runtime = new QueueRuntime();
+    const core = new TurnwireCore(store, [runtime], { id: 'mac', name: 'Test Mac' }); cleanup.push(() => core.dispose());
+    const created = await session(core);
+    // The first prompt raises the demo's approval, so the turn is still going; the second waits.
+    await call(core, 'first', 'session.message', { sessionId: created.id, text: 'Needs approval' });
+    await call(core, 'second', 'session.message', { sessionId: created.id, text: 'and then this' });
+    const queued = () => conversation(store.events(0, 100), created.id).find(message => message.id === 'second');
+    expect(queued()).toMatchObject({ text: 'and then this', queued: true });
+
+    await call(core, 'edit', 'session.queueAction', { sessionId: created.id, messageId: 'second', action: { kind: 'edit', text: 'actually this' } });
+    expect(queued()).toMatchObject({ text: 'actually this', queued: true });
+    await call(core, 'steer', 'session.queueAction', { sessionId: created.id, messageId: 'second', action: { kind: 'steer' } });
+    expect(queued()).toMatchObject({ text: 'actually this', queued: false, steer: true });
+    await call(core, 'drop', 'session.queueAction', { sessionId: created.id, messageId: 'second', action: { kind: 'remove' } });
+    // Taken back before it ran, so the transcript does not claim it happened.
+    expect(queued()).toBeUndefined();
+    expect(runtime.handled).toEqual(['edit', 'steer', 'remove']);
+  });
   it('does not replay a command whose result was interrupted by a crash', async () => {
     const { core, store } = setup(); const params = { cwd: process.cwd(), runtimeId: 'demo' };
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: 'session.create', params })).digest('hex');

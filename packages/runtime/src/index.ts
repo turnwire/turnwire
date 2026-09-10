@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
 export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
@@ -32,6 +32,11 @@ export interface AgentRuntime {
    * cannot enumerate them leaves this out, and clients then render no agents at all.
    */
   listSubagents?(sessionId: string): Promise<SubagentView[]>;
+  /**
+   * Change a prompt that has not run yet. `messageId` is the id the client was given for that
+   * prompt; the runtime resolves it against its own queue. Runtimes without a queue leave this out.
+   */
+  queueAction?(sessionId: string, messageId: string, action: QueueAction): Promise<void>;
   /**
    * Apply a selection and return what the runtime accepted. A runtime resolves defaults
    * (for example a reasoning effort) and may reject an unknown route, so callers render

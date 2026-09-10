@@ -16,9 +16,11 @@ interface FixtureChild {
   hasChildren?: boolean; title?: string; elapsedMs?: number; settledMs?: number;
   todos?: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }>;
 }
+/** One prompt waiting in the fixture's inbox: the Host's own item id plus the client's request id. */
+interface FixtureQueued { itemId: string; rpcId?: string; text: string; step?: boolean }
 async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned'; childrenError?: boolean; omitDetails?: boolean; oddDetail?: boolean } = {}) {
   let seq = 0; let running = false; const calls: Array<{ path: string; args: Record<string, unknown> }> = [];
-  let children: FixtureChild[] = [];
+  let children: FixtureChild[] = []; let queued: FixtureQueued[] = [];
   const records: Array<{ type: string; event: { seq: number; time: number; type: string; data: Record<string, unknown> } }> = [];
   const streams = new Map<WebSocket, string>(); const events = new Set<WebSocket>();
   const item = (socket: WebSocket, streamId: string, value: unknown) => socket.send(JSON.stringify({ type: 'item', streamId, value }));
@@ -55,7 +57,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
           subagentTiming: child.activity === 'running' ? { descriptorSeen: true, settledMs: 0, active: { since: Date.now() - (child.elapsedMs ?? 0), through: seq } } : { descriptorSeen: true, settledMs: child.settledMs ?? 0 },
         },
       }));
-      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running }, ...described, ...(options.oddDetail ? [{ sessionId: 'odd', running: false, projections: { todos: 'a projection shape this adapter has never seen' } }] : [])] };
+      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running, projections: { inbox: { 'next-turn': queued.filter(entry => entry.step !== true).map(entry => ({ id: entry.itemId, role: 'user', content: [{ type: 'text', text: entry.text }], source: { kind: 'user', ...(entry.rpcId === undefined ? {} : { rpcId: entry.rpcId }) } })), 'next-step': queued.filter(entry => entry.step === true).map(entry => ({ id: entry.itemId, role: 'user', content: [{ type: 'text', text: entry.text }], source: { kind: 'user', rpcId: entry.rpcId } })) } } }, ...described, ...(options.oddDetail ? [{ sessionId: 'odd', running: false, projections: { todos: 'a projection shape this adapter has never seen' } }] : [])] };
     }
     else if (url.pathname === '/api/session/prompt') {
       const input = z.object({ request: z.object({ requestId: z.string(), sessionId: z.literal('s'), mode: z.enum(['queue', 'steer']), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict() }).strict().parse(args);
@@ -78,6 +80,17 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
       if (options.childrenError) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'subagent/projections-unavailable', message: 'no projection registry is mounted' } } })); return; }
       value = { parentAvailable: true, entries: children.filter(child => (child.parent ?? 's') === input.parentSessionId).map(child => ({ kind: 'child', id: child.id, activity: child.activity, hasChildren: child.hasChildren ?? false, mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }) })) };
     }
+    else if (url.pathname === '/api/session/updateQueue') {
+      const input = z.object({ request: z.object({ sessionId: z.literal('s'), itemId: z.string(), action: z.discriminatedUnion('kind', [z.object({ kind: z.literal('steer') }).strict(), z.object({ kind: z.literal('remove') }).strict(), z.object({ kind: z.literal('edit'), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict()]) }).strict() }).strict().parse(args);
+      const item = queued.find(entry => entry.itemId === input.request.itemId);
+      // The Host refuses an item that has already left the queue, which is the race a client's stale
+      // row hits after the prompt has started running.
+      if (!item) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'session/queue-item-not-found', message: 'queued item is no longer pending' } } })); return; }
+      if (input.request.action.kind === 'remove') queued = queued.filter(entry => entry.itemId !== item.itemId);
+      if (input.request.action.kind === 'edit') item.text = input.request.action.content[0]!.text;
+      if (input.request.action.kind === 'steer') item.step = true;
+      value = { accepted: true };
+    }
     else { res.writeHead(404); res.end(); return; }
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: true, value } }));
   });
@@ -99,7 +112,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -180,6 +193,26 @@ it('reads each session row on its own, so one unknown shape cannot blank the res
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());
   expect((await runtime.health()).online).toBe(false); await expect(runtime.createSession({ id: 's', cwd: '/tmp' })).rejects.toThrow('TURNWIRE_DSH_TOKEN');
+});
+it('changes a waiting prompt by the id the client knows, not the one the Host minted', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  host.setQueued([{ itemId: 'dsh-1', rpcId: 'client-1', text: 'first draft' }]);
+  await runtime.queueAction('s', 'client-1', { kind: 'steer' });
+  // The Host is addressed with its own item id, translated from the client's request id.
+  expect(host.calls.at(-1)).toMatchObject({ path: '/api/session/updateQueue', args: { request: { sessionId: 's', itemId: 'dsh-1', action: { kind: 'steer' } } } });
+  await runtime.queueAction('s', 'client-1', { kind: 'edit', text: 'second draft' });
+  expect(host.calls.at(-1)?.args).toMatchObject({ request: { itemId: 'dsh-1', action: { kind: 'edit', content: [{ type: 'text', text: 'second draft' }] } } });
+  await runtime.queueAction('s', 'client-1', { kind: 'remove' });
+  expect(host.calls.at(-1)?.args).toMatchObject({ request: { action: { kind: 'remove' } } });
+});
+it('says a prompt is gone when it is no longer waiting, from either side of the race', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  host.setQueued([{ itemId: 'dsh-1', rpcId: 'client-1', text: 'first draft' }]);
+  // A client id that is not in the Host's inbox at all.
+  await expect(runtime.queueAction('s', 'never-queued', { kind: 'remove' })).rejects.toMatchObject({ code: 'QUEUE_ITEM_GONE' });
+  // The Host's own refusal for an item that left the queue between the read and the write.
+  host.setQueued([]);
+  await expect(runtime.queueAction('s', 'client-1', { kind: 'remove' })).rejects.toMatchObject({ code: 'QUEUE_ITEM_GONE' });
 });
 it('expires pending approvals on connection loss', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
