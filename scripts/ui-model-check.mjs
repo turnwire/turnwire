@@ -29,14 +29,21 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
+  // The picker stays collapsed behind a chip so the composer keeps its height on a phone. The chip
+  // itself has to be reachable without scrolling, and it must not live inside the conversation
+  // scroller: toBeVisible only requires a non-empty box, while the conversation opens pinned to the
+  // newest message, so a control inside that scroller would pass while sitting off-screen.
+  const chip = page.getByLabel('选择模型', { exact: true });
+  await expect(chip).toBeVisible();
+  await expect(chip).toBeInViewport();
+  expect(await chip.evaluate(element => element.closest('[aria-label="会话内容"]') === null)).toBe(true);
+  await expect(page.getByLabel('模型', { exact: true })).toHaveCount(0);
+
   // The catalog needs no credential, so every registered model is listed before a selection exists.
+  await chip.click();
   const picker = page.getByLabel('模型', { exact: true });
   await expect(picker).toBeVisible();
-  // Visibility alone does not prove the phone can reach it: toBeVisible only requires a non-empty
-  // box, while the conversation opens pinned to the newest message. A picker inside that scroller
-  // is off-screen, so it has to live in the always-visible composer area instead.
   await expect(picker).toBeInViewport();
-  expect(await picker.evaluate(element => element.closest('[aria-label="会话内容"]') === null)).toBe(true);
   await expect(picker.locator('option')).toHaveCount(4);
   await expect(page.getByLabel('思考强度', { exact: true })).toHaveCount(0);
 
@@ -54,11 +61,14 @@ try {
   // The selection lives on the host, so a reload must not lose it.
   await page.reload();
   await expect(page.getByRole('heading', { name: '模型选择验证' })).toBeVisible();
+  // Collapsed again after a reload, so reopen the picker before reading back the stored values.
+  await expect(page.getByLabel('模型', { exact: true })).toHaveCount(0);
+  await page.getByLabel('选择模型', { exact: true }).click();
   await expect(page.getByLabel('模型', { exact: true })).toHaveValue('deepseek-official/deepseek-v4-pro');
   await expect(page.getByLabel('思考强度', { exact: true })).toHaveValue('low');
 
   expect(errors).toEqual([]);
-  console.log('UI model checks passed: catalog listed, selection applied, effort resolved by the Host, selection survives reload.');
+  console.log('UI model checks passed: chip reachable on a phone, catalog listed, selection applied, effort resolved by the Host, selection survives reload.');
 } catch (error) {
   console.error(await page.locator('main').innerText());
   throw error;
