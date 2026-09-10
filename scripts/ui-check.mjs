@@ -173,7 +173,30 @@ try {
   // reply after it continues that run and carries no name, avatar or time of its own.
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('toolme: run something');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
-  await expect(page.locator('.tool-message').last()).toBeVisible();
+  // A run of calls reads on one line. While it is in flight that line is the newest call — the
+  // command being run right now — and it becomes the run's summary once the last call returns.
+  const run = page.locator('.tool-group').last(); const header = run.locator('summary').first();
+  await expect(header.locator('.tool-name')).toHaveText('shell');
+  await expect(header.locator('.tool-action')).toHaveText('npm test -- --run session-filter --reporter=verbose --coverage');
+  await expect(header.locator('.tool-status')).toHaveText('Running');
+  await expect(header.locator('.tool-status')).toHaveText('All returned', { timeout: 10_000 });
+  await expect(header).toContainText('shell ×3');
+  // Opening it must not stack a box inside a box: the calls indent under a hairline instead, and the
+  // one box left is the call someone actually opened.
+  await header.click();
+  await expect(run).toHaveCSS('border-top-width', '0px');
+  await expect(run.locator('.tool-group-items')).toHaveCSS('border-left-width', '1px');
+  // The phone viewport is the one this whole run has been in since the approval step; it is also the
+  // width that makes the truncation real rather than theoretical.
+  const nested = run.locator('.tool-message').last();
+  await nested.locator('summary').first().click();
+  await expect(nested).toHaveCSS('border-top-width', '1px');
+  const action = nested.locator('summary').first().locator('.tool-action');
+  await expect(action).toHaveCSS('text-overflow', 'ellipsis');
+  const measured = await action.evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+  expect(measured.scroll, `the action was not cut on a narrow screen: ${JSON.stringify(measured)}`).toBeGreaterThan(measured.client);
+  await expect(action).toHaveAttribute('title', 'npm test -- --run session-filter --reporter=verbose --coverage');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const followUp = page.locator('.message.assistant').last();
   await expect(followUp).toHaveClass(/follow/);
   await expect(followUp.locator('.message-author')).toHaveCount(0);

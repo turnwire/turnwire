@@ -159,7 +159,7 @@ const en = {
   'composer.disconnected': 'Disconnected, reconnecting',
 
   // Tool calls.
-  'tool.subagent': 'Subagent · {description}',
+  'tool.subagentName': 'Subagent',
   'tool.failed': 'Failed',
   'tool.returned': 'Returned',
   'tool.running': 'Running',
@@ -417,7 +417,7 @@ const zh: Catalog = {
   'composer.shared': '所有客户端共享当前会话',
   'composer.disconnected': '连接已断开，正在重连',
 
-  'tool.subagent': '子代理 · {description}',
+  'tool.subagentName': '子代理',
   'tool.failed': '失败',
   'tool.returned': '已返回',
   'tool.running': '执行中',

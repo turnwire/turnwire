@@ -20,6 +20,8 @@ export class DemoRuntime implements AgentRuntime {
   private asked = new Map<string, string>();
   /** The last answers a client sent, for tests that assert what came back. */
   lastAnswers: QuestionAnswerItem[] = [];
+  /** Replies a tool run still owes, so stopping the turn stops the answer it was going to give. */
+  private replies = new Map<string, ReturnType<typeof setTimeout>>();
   capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: true, backgroundTasks: false, modelSelection: false }; }
   async health() { return { online: true, message: 'Offline demo: runs no code and calls no model' }; }
   async createSession(options: { id: string; cwd: string }) { const session: RuntimeSession = { ...options, status: 'idle' }; this.sessions.set(session.id, session); return session; }
@@ -45,6 +47,7 @@ export class DemoRuntime implements AgentRuntime {
     this.answer(sessionId, input.text);
   }
   async cancel(sessionId: string) {
+    const owed = this.replies.get(sessionId); if (owed) { clearTimeout(owed); this.replies.delete(sessionId); }
     for (const [id, pending] of this.pending) if (pending.sessionId === sessionId) { this.pending.delete(id); this.emit(sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); }
     this.queues.delete(sessionId);
     for (const [id, owner] of this.asked) if (owner === sessionId) { this.asked.delete(id); this.emit(sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' }); }
@@ -73,11 +76,31 @@ export class DemoRuntime implements AgentRuntime {
     this.emit(sessionId, { type: 'status', status: 'running' });
     // A prompt that asks for a tool call produces one first, so a turn of several steps — a step
     // that acts, then a step that reports — can be exercised without a model behind it.
-    if (/toolme/i.test(prompt)) {
+    if (/toolme/i.test(prompt)) { this.toolRun(sessionId, prompt); return; }
+    this.reply(sessionId, prompt);
+  }
+  /**
+   * A run of consecutive calls, which is the shape a client actually has to render: two calls settle
+   * and the last one stays in flight while the turn keeps running, so a client that only ever saw
+   * single finished calls would never exercise its group line, its in-flight row, or the nesting.
+   */
+  private toolRun(sessionId: string, prompt: string) {
+    for (const command of ['echo demo', 'ls -la']) {
       const callId = randomUUID();
-      this.emit(sessionId, { type: 'tool.started', callId, tool: 'shell', detail: '{"command":"echo demo"}' });
-      this.emit(sessionId, { type: 'tool.finished', callId, tool: 'shell', detail: 'demo' });
+      this.emit(sessionId, { type: 'tool.started', callId, tool: 'shell', detail: JSON.stringify({ command }) });
+      this.emit(sessionId, { type: 'tool.finished', callId, tool: 'shell', detail: command === 'echo demo' ? 'demo' : 'total 0' });
     }
+    const callId = randomUUID();
+    this.emit(sessionId, { type: 'tool.started', callId, tool: 'shell', detail: JSON.stringify({ command: 'npm test -- --run session-filter --reporter=verbose --coverage' }) });
+    const timer = setTimeout(() => {
+      this.replies.delete(sessionId);
+      this.emit(sessionId, { type: 'tool.finished', callId, tool: 'shell', detail: 'ok · 3 passed' });
+      this.reply(sessionId, prompt);
+    }, 2500);
+    this.replies.set(sessionId, timer);
+    (timer as { unref?: () => void }).unref?.();
+  }
+  private reply(sessionId: string, prompt: string) {
     const messageId = randomUUID();
     const text = `This is Turnwire's offline demo session. Received: ${prompt}\n\nSessions, output and approvals sync to every connected client. Connect DSH to run real development tasks.`;
     this.emit(sessionId, { type: 'message.delta', messageId, text: text.slice(0, 24) });
@@ -95,5 +118,5 @@ export class DemoRuntime implements AgentRuntime {
     } else this.emit(sessionId, { type: 'status', status: 'idle' });
   }
   private emit(id: string, event: RuntimeEvent) { if (event.type === 'status') { const session = this.sessions.get(id); if (session) session.status = event.status; } for (const listener of this.listeners.get(id) ?? []) listener(event); }
-  async dispose() { this.listeners.clear(); this.pending.clear(); this.queues.clear(); }
+  async dispose() { for (const timer of this.replies.values()) clearTimeout(timer); this.replies.clear(); this.listeners.clear(); this.pending.clear(); this.queues.clear(); }
 }
