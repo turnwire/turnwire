@@ -38,7 +38,7 @@ fi
 state="${TURNWIRE_HOME:-$root/.turnwire}"
 wait_seconds="${TURNWIRE_RELOAD_WAIT:-900}"
 deadline=$(( $(date +%s) + wait_seconds ))
-echo "waiting for a safe point (up to ${wait_seconds}s): no running session"
+echo "waiting for a safe point (up to ${wait_seconds}s): no running session and no live background agent"
 while :; do
   running=$(npm run --silent turnwire -- status --json 2>/dev/null | node -e '
     let text = ""; process.stdin.on("data", part => { text += part; }).on("end", () => {

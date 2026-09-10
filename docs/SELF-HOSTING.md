@@ -52,11 +52,13 @@ Three properties make repeat runs harmless:
   gitignored, a rebuild does not change the fingerprint, so a watch-triggered run that follows a
   build exits immediately instead of looping.
 - **Safe point.** It waits (default 900s) until no session is `running` or `waiting_approval`
-  before restarting, so a reload never interrupts a turn. Background subagents are **not** covered by
-  that check: a delegation tool returns as soon as it hands work to a child, so the session can read
-  as idle while the child is still working, and the restart kills it. Before fan-out work, stop the
-  timer (`systemctl --user stop turnwire-dev-reload.timer`) and start it again when the children are
-  done. The runtime reports its live children (`busy` in the snapshot), so the wait covers them too. A child the runtime can no longer see — after a manual restart, for example — is outside the check, and stopping the timer by hand is the fallback.
+  before restarting, so a reload never interrupts a turn. A background agent is not a session: a
+  delegation tool returns as soon as it hands work to a child, so the parent session reads as idle
+  while the child is still working. The runtime therefore reports the children it still owns
+  (`busy` in the snapshot) and the wait covers both. That count is a live query of the host, so it
+  also includes a child that started while the connection was down. A child the host can no longer
+  enumerate — one an earlier restart already killed — is outside the check, and stopping the timer
+  by hand (`systemctl --user stop turnwire-dev-reload.timer`) is the fallback.
 - **Restart is survivable.** A turn runs inside DSH, which persists its session log, and
   Turnwire reconnects by following the session and replaying from its stored cursor. After a
   reload, re-attach and continue.

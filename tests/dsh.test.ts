@@ -11,8 +11,9 @@ async function until(check: () => boolean) { const end = Date.now() + 5000; whil
 
 // Contract fixture follows the pinned upstream fields, 303 cookie exchange,
 // exact named arguments, mux frames and one-shot Remote event waterfall.
-async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned' } = {}) {
+async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned'; childrenError?: boolean } = {}) {
   let seq = 0; let running = false; const calls: Array<{ path: string; args: Record<string, unknown> }> = [];
+  let children: Array<{ id: string; activity: 'running' | 'inactive' }> = [];
   const records: Array<{ type: string; event: { seq: number; time: number; type: string; data: Record<string, unknown> } }> = [];
   const streams = new Map<WebSocket, string>(); const events = new Set<WebSocket>();
   const item = (socket: WebSocket, streamId: string, value: unknown) => socket.send(JSON.stringify({ type: 'item', streamId, value }));
@@ -51,6 +52,12 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
       for (const socket of events) item(socket, 'events', { type: 'cancel', eventId: 'approval-1' });
       value = undefined; setTimeout(() => { running = false; emit('turn/end', { turn: 1, reason: 'completed' }); }, 30);
     } else if (url.pathname === '/api/session/cancel') { value = { accepted: true }; running = false; emit('turn/end', { turn: 1, reason: 'cancelled' }); }
+    else if (url.pathname === '/api/subagents/list') {
+      // The generated `subagents/list` descriptor names its one positional parameter `parentSessionId`.
+      z.object({ parentSessionId: z.literal('s') }).strict().parse(args);
+      if (options.childrenError) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'subagent/projections-unavailable', message: 'no projection registry is mounted' } } })); return; }
+      value = { parentAvailable: true, entries: children.map(child => ({ kind: 'child', id: child.id, activity: child.activity, hasChildren: false, mode: 'one-shot' })) };
+    }
     else { res.writeHead(404); res.end(); return; }
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: true, value } }));
   });
@@ -72,7 +79,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: Array<{ id: string; activity: 'running' | 'inactive' }>) => { children = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -87,7 +94,7 @@ it('uses the official cookie, exact named RPC arguments and mux, and resolves ap
   expect(received).toContainEqual({ type: 'message.completed', messageId: 'dsh:s:1:1', text: 'Hello world' });
   await runtime.approve('s', 'approval-1', 'approved'); await until(() => received.some(e => e.type === 'status' && e.status === 'idle'));
   expect(received.filter(e => e.type === 'approval.resolved')).toEqual([{ type: 'approval.resolved', requestId: 'approval-1', decision: 'approved' }]);
-  await expect(runtime.approve('s', 'approval-1', 'approved')).rejects.toThrow('失效');
+  await expect(runtime.approve('s', 'approval-1', 'approved')).rejects.toThrow('has expired');
   expect(host.calls.some(c => c.path === '/api/session/list' && '_request' in c.args)).toBe(true);
   // Steering is a different wire value, not a client-side label.
   await runtime.sendMessage('s', { id: 'steer', text: '还要看日志', steer: true });
@@ -96,11 +103,18 @@ it('uses the official cookie, exact named RPC arguments and mux, and resolves ap
 it('counts live background agents so a restart is not mistaken for a safe point', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
   await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
-  expect(runtime.busy()).toBe(0);
-  host.publish('subagent/start', [{ id: 'child-1' }]); host.publish('subagent/start', [{ id: 'child-2' }]);
-  await until(() => runtime.busy() === 2);
-  host.publish('subagent/end', [{ id: 'child-1' }]); await until(() => runtime.busy() === 1);
-  host.publish('subagent/end', [{ id: 'child-2' }]); await until(() => runtime.busy() === 0);
+  // The count is a live query, so it stays right without any lifecycle frame reaching this client.
+  await expect(runtime.busy()).resolves.toBe(0);
+  host.setChildren([{ id: 'child-1', activity: 'running' }, { id: 'child-2', activity: 'running' }]);
+  await expect(runtime.busy()).resolves.toBe(2);
+  host.setChildren([{ id: 'child-1', activity: 'running' }, { id: 'child-2', activity: 'inactive' }]);
+  await expect(runtime.busy()).resolves.toBe(1);
+  expect(host.calls.some(c => c.path === '/api/subagents/list' && c.args.parentSessionId === 's')).toBe(true);
+});
+it('reports no background agents rather than failing when the Host cannot answer', async () => {
+  const host = await dshHost({ childrenError: true }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
+  await expect(runtime.busy()).resolves.toBe(0);
 });
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());

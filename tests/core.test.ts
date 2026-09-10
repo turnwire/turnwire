@@ -65,10 +65,12 @@ describe('durable daemon ownership', () => {
     expect(conversation(second.store.events(0, 100), s.id)).toHaveLength(2);
   });
   it('reports background agents the runtime still owns', async () => {
-    class BusyRuntime extends DemoRuntime { busy() { return 2; } }
-    const core = new TurnwireCore(new Store(':memory:'), [new BusyRuntime()], { id: 'mac', name: 'Test Mac' });
-    const snapshot = await core.snapshot();
-    expect(snapshot.runtimes[0]?.busy).toBe(2);
+    class BusyRuntime extends DemoRuntime { async busy() { return 2; } }
+    // A runtime that cannot answer must not break the snapshot; it reports none.
+    class UnreachableRuntime extends DemoRuntime { async busy(): Promise<number> { throw new Error('The runtime host is unreachable'); } }
+    const device = { id: 'mac', name: 'Test Mac' };
+    expect((await new TurnwireCore(new Store(':memory:'), [new BusyRuntime()], device).snapshot()).runtimes[0]?.busy).toBe(2);
+    expect((await new TurnwireCore(new Store(':memory:'), [new UnreachableRuntime()], device).snapshot()).runtimes[0]?.busy).toBe(0);
   });
   it('does not replay a command whose result was interrupted by a crash', async () => {
     const { core, store } = setup(); const params = { cwd: process.cwd(), runtimeId: 'demo' };

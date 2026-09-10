@@ -30,9 +30,7 @@ export class DshRuntime implements AgentRuntime {
   private live = new Map<string, { id: string; nextIndex: number; text: string }>();
   private pending = new Map<string, { sessionId: string; clientId: string; resolving?: boolean; cancelled?: boolean }>();
   private clientId?: string;
-  /** Live background agents, counted from the host's subagent lifecycle events. */
-  private children = 0;
-  private lastError = 'DSH 尚未连接';
+  private lastError = 'DSH is not connected yet';
   constructor(private options: DshOptions) {
     this.url = new URL(options.url); this.token = options.token ?? this.url.searchParams.get('token') ?? undefined;
     this.url.search = ''; this.url.hash = ''; this.url.pathname = '/';
@@ -40,8 +38,27 @@ export class DshRuntime implements AgentRuntime {
     if (this.url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(this.url.hostname)) throw new Error('Non-loopback DSH connections require HTTPS');
   }
   capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true }; }
-  busy() { return this.children; }
-  async health() { try { await this.connect(); return { online: true, message: 'DSH Host 已连接' }; } catch { return { online: false, message: this.lastError }; } }
+  /**
+   * Ask the Host for each followed session's direct children and count the running ones.
+   * `subagents/list` is a live Session query, unlike the `subagent/start`/`subagent/end`
+   * lifecycle frames the Remote waterfall never forwards to this client, so an agent that
+   * started while we were disconnected still counts and a duplicate frame cannot double it.
+   * A read that fails reports 0: an unanswerable count must not block a reload, and a
+   * runtime we cannot query owns nothing we can prove is alive.
+   */
+  async busy(): Promise<number> {
+    try { await this.connect(); } catch { return 0; }
+    let count = 0;
+    for (const sessionId of this.sessions.keys()) count += await this.runningChildren(sessionId);
+    return count;
+  }
+  private async runningChildren(parentSessionId: string): Promise<number> {
+    try {
+      const catalog = z.object({ entries: z.array(z.object({ kind: z.string(), activity: z.string().optional() }).passthrough()) }).parse(await this.rpc('subagents/list', { parentSessionId }));
+      return catalog.entries.filter(entry => entry.kind === 'child' && entry.activity === 'running').length;
+    } catch { return 0; }
+  }
+  async health() { try { await this.connect(); return { online: true, message: 'Connected to the DSH host' }; } catch { return { online: false, message: this.lastError }; } }
   async createSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {
     await this.connect();
     const created = z.object({ sessionId: z.string() }).passthrough().parse(await this.rpc('session/create', { request: { sessionId: options.id, cwd: options.cwd } }));
@@ -149,7 +166,7 @@ export class DshRuntime implements AgentRuntime {
             if (frame.type !== 'item') throw new Error(frame.error?.message ?? `DSH stream ${frame.streamId} ended`);
             const value = record(frame.value);
             if (frame.streamId === 'events' && value.type === 'ready') {
-              this.clientId = z.string().parse(value.clientId); clearTimeout(timer); resolve(); this.children = 0;
+              this.clientId = z.string().parse(value.clientId); clearTimeout(timer); resolve();
               for (const id of this.listeners.keys()) this.follow(id);
             } else if (frame.streamId === 'events') { void this.remoteEvent(value).catch(error => this.fail(error)); }
             else {
@@ -215,15 +232,13 @@ export class DshRuntime implements AgentRuntime {
       const args = Array.isArray(frame.args) ? frame.args : [];
       if (frame.event === 'api-session/status' && typeof args[0] === 'string' && this.listeners.has(args[0])) this.emit(args[0], { type: 'status', status: args[1] === true ? 'running' : 'idle' });
       if (frame.event === 'api-session/error' && typeof args[0] === 'string') this.emit(args[0], { type: 'error', message: String(args[1]) });
-      if (frame.event === 'subagent/start') this.children += 1;
-      if (frame.event === 'subagent/end') this.children = Math.max(0, this.children - 1);
     }
     if (frame.type !== 'waterfall' || !this.clientId) return;
     const sessionId = z.string().parse(frame.agentId); const eventId = z.string().parse(frame.eventId);
     if (frame.event !== 'approval/request' || !this.listeners.has(sessionId)) { await this.rpc('$events/result', { clientId: this.clientId, eventId, outcome: { kind: 'next' } }); return; }
     const request = record(frame.request);
     this.pending.set(eventId, { sessionId, clientId: this.clientId });
-    this.emit(sessionId, { type: 'approval.requested', requestId: eventId, tool: String(request.toolName ?? '工具操作'), reason: String(request.reason ?? 'DSH 请求执行此操作的授权') });
+    this.emit(sessionId, { type: 'approval.requested', requestId: eventId, tool: String(request.toolName ?? 'tool call'), reason: String(request.reason ?? 'DSH asks for authorization to run this tool') });
   }
   private emit(id: string, event: RuntimeEvent) { if (event.type === 'model.selected') { const session = this.sessions.get(id); if (session) session.model = event.selection; } for (const listener of this.listeners.get(id) ?? []) listener(event); }
   private send(value: unknown) { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(value)); }

@@ -22,9 +22,11 @@ export interface AgentRuntime {
   modelCatalog?(): Promise<ModelCatalog>;
   /**
    * Background agents this runtime still owns. A non-zero count means a restart is not a safe
-   * point: those agents live inside the runtime process and would be killed with it.
+   * point: those agents live inside the runtime process and would be killed with it. This is a
+   * live query rather than a cached counter, so a missed or replayed lifecycle frame cannot
+   * leave it stale, and it must resolve 0 instead of throwing when the runtime cannot answer.
    */
-  busy?(): number;
+  busy?(): Promise<number>;
   /**
    * Apply a selection and return what the runtime accepted. A runtime resolves defaults
    * (for example a reasoning effort) and may reject an unknown route, so callers render
