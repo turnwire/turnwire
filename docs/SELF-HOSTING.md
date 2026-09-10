@@ -39,6 +39,45 @@ exists but stays inactive until you switch to it.
 Add `--enable-watch` to enable `turnwire-dev-reload.path`, which reloads automatically when
 `apps/`, `packages/` or `scripts/` change. It is disabled by default.
 
+## The DSH environment file
+
+`config/dsh.env.json` (0600, gitignored) is the environment DSH is started with, not a slot for a
+single key: every string it holds is forwarded to the DSH process, and Turnwire's own secrets
+(relay token, DSH launch token and URL) are stripped even if the file names them. Nothing in it
+reaches the daemon or any client — model credentials stay inside DSH.
+
+That is what makes more than one provider endpoint a configuration change rather than a code
+change. DSH mounts `llm-pi-ai`, whose routes are a dict keyed by provider, so a second endpoint is
+one entry plus its credential:
+
+```yaml
+# config/dsh-deepseek.patch.yml
+- id: llm-deepseek
+  config:
+    apiKeyEnv: TURNWIRE_HARNESS_DEEPSEEK_API_KEY
+
+- id: llm-pi-ai
+  config:
+    providers:
+      gateway:                        # this key is the provider id clients will show
+        displayName: Team gateway
+        baseURL: https://gateway.example.com/v1
+        api: openai-completions       # or anthropic-messages, openai-responses, ...
+        apiKeyEnv: TURNWIRE_HARNESS_GATEWAY_KEY
+        models:
+          - id: some-model
+            name: Some model
+```
+```json
+// config/dsh.env.json
+{ "TURNWIRE_HARNESS_DEEPSEEK_API_KEY": "…", "TURNWIRE_HARNESS_GATEWAY_KEY": "…" }
+```
+
+Turnwire does not need to know: the runtime's model catalog reports one group per registered route
+with its own failures, the daemon refuses a model the runtime does not list, and every client shows
+exactly those groups. Adding a route is visible to all of them on the next snapshot — no client
+change, and no model id invented on this side.
+
 ## Reload
 
 ```bash

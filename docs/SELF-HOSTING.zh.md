@@ -27,6 +27,37 @@ scripts/install-dev-host.sh --state <state> --dsh-home <dsh-state>
 
 加上 `--enable-watch` 会启用 `turnwire-dev-reload.path`，当 `apps/`、`packages/` 或 `scripts/` 变化时自动重载。它默认禁用。
 
+## DSH 环境文件
+
+`config/dsh.env.json`（0600，被 gitignore）是 DSH 启动时的环境，而不是"一个 key 的位置"：里面每个字符串都会转发给 DSH 进程；Turnwire 自己的密钥（relay token、DSH 启动 token 和 URL）即使写在这个文件里也会被剥掉。文件里的任何东西都不会进入 daemon 或任何客户端 —— 模型凭据始终留在 DSH 内部。
+
+正因为如此，"接入第二个 endpoint"是改配置而不是改代码。DSH 默认挂载了 `llm-pi-ai`，它的路由是一个以 provider 为键的 dict，所以加一个 endpoint 就是加一条配置加上它的凭据：
+
+```yaml
+# config/dsh-deepseek.patch.yml
+- id: llm-deepseek
+  config:
+    apiKeyEnv: TURNWIRE_HARNESS_DEEPSEEK_API_KEY
+
+- id: llm-pi-ai
+  config:
+    providers:
+      gateway:                        # 这个键就是客户端会看到的 provider id
+        displayName: 团队网关
+        baseURL: https://gateway.example.com/v1
+        api: openai-completions       # 也可以是 anthropic-messages、openai-responses 等
+        apiKeyEnv: TURNWIRE_HARNESS_GATEWAY_KEY
+        models:
+          - id: some-model
+            name: Some model
+```
+```json
+// config/dsh.env.json
+{ "TURNWIRE_HARNESS_DEEPSEEK_API_KEY": "…", "TURNWIRE_HARNESS_GATEWAY_KEY": "…" }
+```
+
+Turnwire 侧不需要知道任何事：runtime 的模型目录会为每条已注册的路由报告一个 group 以及它自己的 failures，daemon 会拒绝 runtime 没列出的模型，每个客户端展示的就是这些 group。加一条路由，下一次快照就能在所有客户端看到 —— 不用改客户端，也不用在这边发明模型 id。
+
 ## 重载
 
 ```bash

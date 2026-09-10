@@ -8,14 +8,24 @@ it('supervises DSH and daemon with isolated credentials, startup tokens and clea
   const root = await mkdtemp(join(tmpdir(), 'turnwire-host-service-'));
   await mkdir(join(root, 'config'));
   const key = 'fixture-model-secret'; const token = 'fixture-launch-secret';
-  await writeFile(join(root, 'config/dsh.env.json'), JSON.stringify({ TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key }), { mode: 0o600 });
+  // A second provider route names its own credential here, and Turnwire's own secrets are present
+  // too: the file is the whole DSH environment, so only the first kind may reach DSH.
+  const gateway = 'fixture-gateway-secret';
+  await writeFile(join(root, 'config/dsh.env.json'), JSON.stringify({
+    TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key,
+    TURNWIRE_HARNESS_GATEWAY_KEY: gateway,
+    TURNWIRE_RELAY_TOKEN: 'file-relay-secret',
+    TURNWIRE_DSH_TOKEN: 'file-launch-secret',
+    TURNWIRE_NOT_A_STRING: { nested: true },
+  }), { mode: 0o600 });
   await writeFile(join(root, 'dsh.mjs'), `import {writeFileSync} from 'node:fs';
-writeFileSync('dsh.json',JSON.stringify({hasKey:process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY==='${key}',hasRelayToken:!!process.env.TURNWIRE_RELAY_TOKEN}));
+writeFileSync('dsh.json',JSON.stringify({hasKey:process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY==='${key}',hasGatewayKey:process.env.TURNWIRE_HARNESS_GATEWAY_KEY==='${gateway}',hasRelayToken:!!process.env.TURNWIRE_RELAY_TOKEN,hasFileRelayToken:process.env.TURNWIRE_RELAY_TOKEN==='file-relay-secret',hasDshToken:!!process.env.TURNWIRE_DSH_TOKEN,hasObject:!!process.env.TURNWIRE_NOT_A_STRING}));
 console.log('dsh web: http://127.0.0.1:3080/?token=${token}');
 console.log('credential diagnostic ${key}');
+console.log('gateway diagnostic ${gateway}');
 process.on('SIGTERM',()=>{writeFileSync('dsh-stopped','yes');process.exit(0)});setInterval(()=>{},1000);`);
   await writeFile(join(root, 'daemon.mjs'), `import {writeFileSync} from 'node:fs';
-writeFileSync('daemon.json',JSON.stringify({hasKey:!!process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY,url:process.env.TURNWIRE_DSH_URL,runtime:process.env.TURNWIRE_RUNTIME}));
+writeFileSync('daemon.json',JSON.stringify({hasKey:!!process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY,hasGatewayKey:!!process.env.TURNWIRE_HARNESS_GATEWAY_KEY,url:process.env.TURNWIRE_DSH_URL,runtime:process.env.TURNWIRE_RUNTIME}));
 process.on('SIGTERM',()=>{writeFileSync('daemon-stopped','yes');process.exit(0)});setInterval(()=>{},1000);`);
   // Pin every location and port the supervisor reads: an exported development environment must
   // not point the fixture at the developer's state, DSH home, env file or DSH port.
@@ -24,11 +34,12 @@ process.on('SIGTERM',()=>{writeFileSync('daemon-stopped','yes');process.exit(0)}
   let logs = ''; child.stdout.on('data', chunk => { logs += String(chunk); }); child.stderr.on('data', chunk => { logs += String(chunk); });
   const stopped = new Promise(resolve => child.once('exit', resolve));
   try {
-    await expect.poll(async () => JSON.parse(await readFile(join(root, 'daemon.json'), 'utf8'))).toEqual({ hasKey: false, url: `http://127.0.0.1:3080/?token=${token}`, runtime: 'dsh' });
-    expect(JSON.parse(await readFile(join(root, 'dsh.json'), 'utf8'))).toEqual({ hasKey: true, hasRelayToken: false });
+    await expect.poll(async () => JSON.parse(await readFile(join(root, 'daemon.json'), 'utf8'))).toEqual({ hasKey: false, hasGatewayKey: false, url: `http://127.0.0.1:3080/?token=${token}`, runtime: 'dsh' });
+    // DSH gets the whole file — both credentials, and nothing of Turnwire's own.
+    expect(JSON.parse(await readFile(join(root, 'dsh.json'), 'utf8'))).toEqual({ hasKey: true, hasGatewayKey: true, hasRelayToken: false, hasFileRelayToken: false, hasDshToken: false, hasObject: false });
     child.kill('SIGTERM'); expect(await stopped).toBe(0);
     expect(await readFile(join(root, 'daemon-stopped'), 'utf8')).toBe('yes'); expect(await readFile(join(root, 'dsh-stopped'), 'utf8')).toBe('yes');
-    expect(logs).not.toContain(key); expect(logs).not.toContain(token);
+    expect(logs).not.toContain(key); expect(logs).not.toContain(token); expect(logs).not.toContain(gateway);
   } finally { child.kill('SIGTERM'); await stopped; await rm(root, { recursive: true, force: true }); }
 });
 

@@ -6,28 +6,41 @@ import { createInterface } from 'node:readline';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/** Turnwire's own secrets: neither child may inherit these, whatever a configuration file says. */
+const TURNWIRE_SECRETS = ['TURNWIRE_RELAY_TOKEN', 'TURNWIRE_DSH_TOKEN', 'TURNWIRE_DSH_URL'];
+
 export async function runManagedHost() {
   const root = resolve(process.env.TURNWIRE_INSTALL_DIR ?? fileURLToPath(new URL('../../../', import.meta.url)));
   const directory = resolve(process.env.TURNWIRE_HOME ?? join(root, 'state'));
   const dshHome = resolve(process.env.TURNWIRE_DSH_HOME ?? join(root, 'dsh-state'));
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await mkdir(dshHome, { recursive: true, mode: 0o700 });
-  let key = process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
-  if (!key) {
-    const values = JSON.parse(await readFile(process.env.TURNWIRE_DSH_ENV_FILE ?? join(root, 'config/dsh.env.json'), 'utf8')) as Record<string, unknown>;
-    if (typeof values.TURNWIRE_HARNESS_DEEPSEEK_API_KEY === 'string') key = values.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
-  }
+  // The private file is the DSH environment, not one slot for one key: a deployment may register
+  // several provider routes, each naming its own credential by environment variable. Every string
+  // it holds is therefore forwarded to DSH — and only to DSH, because model credentials never
+  // belong in a client or in the daemon. Turnwire's own secrets are never forwarded, whatever the
+  // file says, and every forwarded value is kept out of the logs.
+  const envFile = process.env.TURNWIRE_DSH_ENV_FILE ?? join(root, 'config/dsh.env.json');
+  let values: Record<string, unknown> = {};
+  try { values = JSON.parse(await readFile(envFile, 'utf8')) as Record<string, unknown>; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`Cannot read the DSH environment file ${envFile}`); }
+  const forwarded: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(values)) if (typeof value === 'string' && !TURNWIRE_SECRETS.includes(name)) forwarded[name] = value;
+  const key = process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY || forwarded.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   if (!key) throw new Error('Configure TURNWIRE_HARNESS_DEEPSEEK_API_KEY in the DSH environment file');
   const base: NodeJS.ProcessEnv = { ...process.env, TURNWIRE_HOME: directory };
-  delete base.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
-  delete base.TURNWIRE_RELAY_TOKEN; delete base.TURNWIRE_DSH_TOKEN; delete base.TURNWIRE_DSH_URL;
+  // The model credentials belong to DSH alone: the daemon drives the runtime, it never holds a key.
+  for (const name of [...TURNWIRE_SECRETS, 'TURNWIRE_HARNESS_DEEPSEEK_API_KEY']) delete base[name];
+  // Redact the model credentials and anything else long enough to be one: a short value in that
+  // file is configuration, and replacing it everywhere would mangle unrelated log text.
+  const secrets = [...new Set([key, ...Object.values(forwarded)])].filter((secret): secret is string => typeof secret === 'string' && (secret === key || secret.length >= 8));
   const dshEntry = resolve(process.env.TURNWIRE_DSH_ENTRY ?? join(root, 'runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'));
   const daemonEntry = resolve(process.env.TURNWIRE_DAEMON_ENTRY ?? join(root, 'apps/daemon/dist/main.js'));
   const port = process.env.TURNWIRE_DSH_PORT ?? '3080';
   if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error('Invalid TURNWIRE_DSH_PORT');
   const timeoutMs = Number(process.env.TURNWIRE_HOST_START_TIMEOUT_MS ?? 120_000);
   const children: ChildProcess[] = []; let stopping = false; let launchURL = '';
-  const clean = (text: string) => text.replaceAll(key!, '[redacted]').replace(/([?&]token=)[^\s)&]+/g, '$1[redacted]');
+  const clean = (text: string) => secrets.reduce((redacted, secret) => redacted.replaceAll(secret, '[redacted]'), text).replace(/([?&]token=)[^\s)&]+/g, '$1[redacted]');
   let finish!: (code: number) => void;
   const done = new Promise<number>(ok => { finish = ok; });
   async function stop(code: number) {
@@ -49,7 +62,8 @@ export async function runManagedHost() {
     child.once('exit', () => { if (!stopping) { console.error(`${label} exited; supervisor will restart the host`); void stop(1); } });
     return child;
   };
-  const dsh = launch(dshEntry, ['web', '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--no-open', '--host', '127.0.0.1', '--port', port], { ...base, DSH_HOME: dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
+  // Process environment first, then the file: an operator's exported value wins over the stored one.
+  const dsh = launch(dshEntry, ['web', '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--no-open', '--host', '127.0.0.1', '--port', port], { ...forwarded, ...base, DSH_HOME: dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
   for (const stream of [dsh.stdout!, dsh.stderr!]) createInterface({ input: stream }).on('line', line => {
     if (!launchURL && !stopping) {
       const found = line.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/)?.[1];
