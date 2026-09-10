@@ -22,8 +22,11 @@
         api: openai-completions
         apiKeyEnv: TURNWIRE_HARNESS_CODEX_BRIDGE_KEY
         models:
-          # The endpoint's own /v1/models is the authority for these ids; the Codex cache on this
-          # machine lists a few more that the bridge does not serve.
+          # The endpoint's own /v1/models is the authority for these ids, and this list is exactly what
+          # it answers with: the bridge dropped the 5.4 pair and gained gpt-6-astra. A model the
+          # endpoint serves but this list omits is not offered by the Host at all.
+          - id: gpt-6-astra
+            name: GPT-6 Astra
           - id: gpt-5.6-sol
             name: GPT-5.6 Sol
           - id: gpt-5.6-terra
@@ -32,7 +35,3 @@
             name: GPT-5.6 Luna
           - id: gpt-5.5
             name: GPT-5.5
-          - id: gpt-5.4
-            name: GPT-5.4
-          - id: gpt-5.4-mini
-            name: GPT-5.4 mini

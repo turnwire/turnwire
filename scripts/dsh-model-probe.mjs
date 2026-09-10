@@ -10,6 +10,7 @@
 // Usage: node scripts/dsh-model-probe.mjs
 // Env:   DSH_BIN     path to the dsh launcher (defaults to the installed host runtime)
 //        DSH_PORT    loopback port (defaults to 3199)
+//        DSH_MODEL   provider/model to select instead of the catalog default (e.g. bridge/gpt-6-astra)
 
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
@@ -111,7 +112,8 @@ try {
   }
 
   section('5. session/selectModel —— 用目录里的 default（若可用）');
-  const selection = catalog?.default ?? { provider: 'deepseek', model: 'deepseek-chat' };
+  const named = process.env.DSH_MODEL === undefined ? undefined : { provider: process.env.DSH_MODEL.split('/')[0], model: process.env.DSH_MODEL.split('/').slice(1).join('/') };
+  const selection = named ?? catalog?.default ?? { provider: 'deepseek', model: 'deepseek-chat' };
   console.log(`  尝试选择: ${JSON.stringify(selection)}`);
   try {
     show('selectModel 结果', await rpc('session/selectModel', { request: { sessionId: (created?.sessionId ?? sessionId), ...selection } }));
