@@ -55,6 +55,21 @@ try {
   const composerAfter = await page.locator('.composer').boundingBox();
   expect(composerAfter.y).toBe(composerBefore.y);
   expect(composerAfter.height).toBe(composerBefore.height);
+  // Geometry is not enough: a panel can sit exactly where it should and still be clipped by its own
+  // composer, which is what happened while the composer card carried `overflow: hidden`. Each probe asks
+  // what the reader would actually touch, inset from the rounded corners so the border radius is not
+  // mistaken for occlusion. The drawer is waited out first: it slides away, and while it is on screen it
+  // covers anything near the left edge.
+  await expect.poll(() => page.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
+  const covered = await page.evaluate(() => {
+    const panel = document.querySelector('.model-picker'); const select = panel?.querySelector('select');
+    if (!panel || !select) return ['the panel is not rendered'];
+    const rect = panel.getBoundingClientRect(); const selectRect = select.getBoundingClientRect();
+    const points = [[rect.left + 14, rect.top + 14], [rect.right - 14, rect.top + 14], [rect.left + 14, rect.bottom - 14], [rect.right - 14, rect.bottom - 14], [selectRect.left + selectRect.width / 2, selectRect.top + selectRect.height / 2]];
+    const name = (x, y) => { const at = document.elementFromPoint(x, y); return at ? `${at.tagName.toLowerCase()}.${String(at.className).split(' ')[0]}` : 'nothing'; };
+    return points.filter(([x, y]) => { const at = document.elementFromPoint(x, y); return !at || !panel.contains(at); }).map(([x, y]) => `${name(x, y)} at ${Math.round(x)},${Math.round(y)}`);
+  });
+  expect(covered, `the model options are covered by ${covered.join(', ')}`).toEqual([]);
   const chipBox = await chip.boundingBox(); const panelBox = await page.locator('.model-picker').boundingBox();
   const gap = chipBox.y - (panelBox.y + panelBox.height);
   expect(gap, `the model panel is not next to its chip (gap ${Math.round(gap)}px)`).toBeGreaterThanOrEqual(-1);
