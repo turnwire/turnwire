@@ -45,10 +45,22 @@ try {
   await expect(page.getByLabel('Model', { exact: true })).toHaveCount(0);
 
   // The catalog needs no credential, so every registered model is listed before a selection exists.
+  const composerBefore = await page.locator('.composer').boundingBox();
   await chip.click();
   const picker = page.getByLabel('Model', { exact: true });
   await expect(picker).toBeVisible();
   await expect(picker).toBeInViewport();
+  // The options belong to the chip, not to the composer: opening them must not move the input the
+  // reader is about to type into, and the panel has to line up with the control that opened it.
+  const composerAfter = await page.locator('.composer').boundingBox();
+  expect(composerAfter.y).toBe(composerBefore.y);
+  expect(composerAfter.height).toBe(composerBefore.height);
+  const chipBox = await chip.boundingBox(); const panelBox = await page.locator('.model-picker').boundingBox();
+  const gap = chipBox.y - (panelBox.y + panelBox.height);
+  expect(gap, `the model panel is not next to its chip (gap ${Math.round(gap)}px)`).toBeGreaterThanOrEqual(-1);
+  expect(gap).toBeLessThan(40);
+  expect(Math.abs((panelBox.x + panelBox.width) - (chipBox.x + chipBox.width)), 'the model panel is not aligned with its chip').toBeLessThan(24);
+  expect(Math.abs((panelBox.x + panelBox.width) - (chipBox.x + chipBox.width))).toBeLessThan(24);
   // A deployment may register more routes than this one (a local bridge, for example), and those
   // belong in the picker too, so the check names the catalog it is about instead of counting
   // everything the Host happens to offer. The number of models on that route belongs to the runtime

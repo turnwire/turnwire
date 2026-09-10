@@ -76,11 +76,13 @@
 
 .inbox-heading label,.session-filter label{flex-direction:row}.inbox-heading p{margin-top:8px}.notification-settings p{margin:8px 0;line-height:1.6}.notification-settings small{display:block;line-height:1.7}.inbox-item p{line-height:1.7;margin:8px 0 14px}.sidebar>.new-session+.new-session{margin-top:8px}
 
-.model-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; }
-.model-picker label { flex-direction: row; align-items: center; gap: 8px; font-size: 12px; color: var(--muted, #647184); }
-.model-picker select { width: auto; max-width: 240px; padding: 7px 10px; font-size: 12px; }
-/* The picker sits above the composer so it stays reachable while the conversation is pinned to the newest message. */
-.composer-model { margin: 0 2px 9px; }
+/* The model switch opens against the chip it belongs to. It used to be a block above the composer,
+   which pushed the input around every time the reader looked at the catalog. */
+.model-switch { position: relative; display: inline-flex; }
+.model-picker { position: absolute; right: 0; bottom: calc(100% + 9px); z-index: 6; display: grid; gap: 11px; width: min(330px, calc(100vw - 34px)); padding: 13px; background: #fff; border: 1px solid #dbe2ec; border-radius: 12px; box-shadow: 0 16px 44px #16243e26; }
+.model-picker label { flex-direction: column; align-items: stretch; gap: 6px; font-size: 11px; color: var(--muted, #647184); }
+.model-picker select { width: 100%; max-width: none; padding: 9px 10px; font-size: 13px; }
+.model-default { font-size: 10.5px; color: #8190a4; }
 /* A prompt sent during a turn waits behind it: it is listed above the composer while it waits,
    and keeps this chip once it reads as history. */
 .queued-chip { margin-left: 8px; padding: 2px 6px; border-radius: 999px; background: #fdf3e2; color: #9a6a1f; font-size: 9.5px; }
@@ -111,7 +113,7 @@
 /* Collapsed by default: the composer keeps its height, and the chip carries the runtime name. */
 .model-chip { display: flex; align-items: center; max-width: 44vw; border: 0; border-radius: 8px; padding: 7px 9px; background: #f2f4f8; color: #66768c; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-loading { font-size: 12px; color: var(--muted, #647184); }
-@media(max-width:700px) { .model-picker { gap: 9px; } .model-picker label { font-size: 11px; } .model-picker select { padding: 6px 8px; max-width: 170px; } }
+@media(max-width:700px) { .model-picker { width: min(300px, calc(100vw - 26px)); padding: 11px; } .model-picker select { font-size: 16px; } }
 
 
 /* Language override: compact EN/ZH switch in the composer caption row. First child so the
