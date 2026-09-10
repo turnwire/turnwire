@@ -123,6 +123,15 @@ const en = {
   'queue.label': 'Queued',
   'queue.runningHint': 'The agent is working. Jump the queue to send this into the running turn; Enter waits behind it.',
 
+  // Background agents: a delegation returns at once, so this is where a child's progress shows.
+  'agents.aria': 'Background agents',
+  'agents.running': '{count} background agents running',
+  'agents.finished': '{count} background agents, none running',
+  'agents.seconds': '{value}s',
+  'agents.minutes': '{minutes}m {seconds}s',
+  'agents.steps': '{done}/{total} steps',
+  'agents.current': '{done}/{total} steps · {content}',
+
   // Composer.
   'composer.messageAria': 'Message',
   'composer.placeholder': 'Describe the task, or add your next thought…',
@@ -354,6 +363,14 @@ const zh: Catalog = {
   'queue.aria': '排队中的消息',
   'queue.label': '排队',
   'queue.runningHint': 'Agent 正在运行。插队会把这条送进当前回合；直接回车则排在它后面。',
+
+  'agents.aria': '后台子代理',
+  'agents.running': '{count} 个子代理正在运行',
+  'agents.finished': '{count} 个子代理，均已结束',
+  'agents.seconds': '{value} 秒',
+  'agents.minutes': '{minutes} 分 {seconds} 秒',
+  'agents.steps': '{done}/{total} 项待办',
+  'agents.current': '{done}/{total} 项待办 · {content}',
 
   'composer.messageAria': '消息',
   'composer.placeholder': '描述任务，或补充下一步想法…',

@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
 import { tunnelProviderSchema } from '@turnwire/protocol';
-import type { TurnwireEvent, Session, Snapshot, ModelCatalog } from '@turnwire/protocol';
+import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView } from '@turnwire/protocol';
 import { safe, printRemote, printPairing, remoteMenu, runTui, deploymentMenu, watchDeployment, directMenu, notificationsMenu } from './terminal.js';
 import { detectLocale, isLocale, localeFromArgv, localizedError, padEnd, setLocale, t, textIn } from './i18n.js';
 import type { Locale } from './i18n.js';
@@ -42,6 +42,8 @@ async function config(): Promise<Config> {
 }
 async function client(): Promise<TurnwireClient> { const path = program.opts().pairing as string | undefined; if (path) return new RemoteClient(decodePairing(await readFile(path, 'utf8')), { persistPairing: async pairing => { const temporary = path + '.next'; await writeFile(temporary, encodePairing(pairing), { mode: 0o600 }); await chmod(temporary, 0o600); await rename(temporary, path); } }); const c = await config(); return new LocalClient(c.url, c.token); }
 function print(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
+/** How long an agent has been working, rounded the way a person reads a stopwatch. */
+function duration(ms: number) { const seconds = Math.round(ms / 1000); return seconds < 60 ? t('agents.seconds', { value: seconds }) : t('agents.minutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 }); }
 async function withClient(action: (client: TurnwireClient) => Promise<void>) { const c = await client(); try { await action(c); } finally { c.close(); } }
 program.command('status').description(t('command.status')).action(() => withClient(async c => { const snapshot = await c.request<Snapshot>('system.snapshot'); if (program.opts().json) print(snapshot); else { console.log(t('status.summary', { device: snapshot.device.name, count: snapshot.sessions.length })); for (const runtime of snapshot.runtimes) console.log(`${runtime.online ? '●' : '○'} ${runtime.name}: ${safe(runtime.message)}`); } }));
 program.command('ls').description(t('command.ls')).option('--archived', t('option.archived')).option('--all', t('option.all')).option('--search <query>', t('option.search')).action((options: { archived?: boolean; all?: boolean; search?: string }) => withClient(async c => {
@@ -74,6 +76,18 @@ program.command('model <session> <spec>').description(t('command.model')).option
   // The daemon returns what the runtime resolved, which can differ from the request.
   const updated = await c.request<Session>('session.setModel', { sessionId, ...modelSelection(spec, options.effort) });
   if (program.opts().json) print(updated); else console.log(`${updated.id} · ${showModel(updated)}`);
+}));
+program.command('agents <session>').description(t('command.agents')).action((sessionId: string) => withClient(async c => {
+  const { subagents } = await c.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId });
+  if (program.opts().json) { print(subagents); return; }
+  if (!subagents.length) { console.log(t('agents.empty')); return; }
+  for (const agent of subagents) {
+    const current = agent.todos.find(todo => todo.status === 'in_progress');
+    const done = agent.todos.filter(todo => todo.status === 'completed').length;
+    // The running child leads with the tool it is on; a finished one keeps the state it ended in.
+    const steps = current ? t('agents.current', { done, total: agent.todos.length, content: current.content }) : agent.todos.length ? t('agents.steps', { done, total: agent.todos.length }) : '';
+    console.log(`${agent.activity === 'running' ? '●' : '○'} ${'  '.repeat(agent.depth - 1)}${safe(agent.label)}${agent.elapsedMs === undefined ? '' : '  ' + duration(agent.elapsedMs)}${steps ? '  ' + steps : ''}`);
+  }
 }));
 program.command('history <session>').description(t('command.history'))
   .option('--before <cursor>', t('option.before'), Number).option('--limit <count>', t('option.limit'), Number, 40)

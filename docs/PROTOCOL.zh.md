@@ -82,6 +82,10 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 
 加密的 `subscribe` 接受数字 `after` 或 `"latest"`。后者从当前 journal 游标开始，避免为连接健康检查或快照请求进行历史重放。显式事件监听器从快照游标开始订阅，以覆盖并发变更。客户端不得把位于或早于其快照游标的元数据事件应用到当前状态。页面获取与实时事件使用页面 watermark 进行对账，watermark 之后的 delta 只应用一次。
 
+## 后台子代理
+
+`subagent.list {sessionId}` 返回 `{subagents: SubagentView[]}` —— 一个会话委派出去的子代理，直接子代理在前，嵌套的在后。委派工具把活交给子代理后立即返回，所以父会话自己的记录显示不出子代理在做什么；这就是那个视图。每一项为 `{id, parentId, depth, label, mode, activity, elapsedMs?, todos}`：`label` 是委派时带的简短描述，`activity` 是运行时对子代理是否仍在工作的实时判断，`elapsedMs` 是它已运行（或最终运行）的时长，`todos` 是子代理自己维护的计划。它是读取而不是变更：不预留请求 ID，客户端按轮询 `system.snapshot` 的方式轮询它。无法枚举子代理的运行时返回空列表而不是报错，客户端于是什么都不显示，而不是失败。
+
 ## 收件箱与 Web Push
 
 `inbox.page {status?:"pending"|"all", before?, limit?}` 返回 `{items:[{position,approval,sessionTitle}],nextBefore,cursor}`。position 在决议过程中保持稳定，页面默认 40 项。权威收件箱与审批一起在 Core 事务中持久化。已决议和已取消的项仍可读取；daemon 重启会取消待处理的实时 runtime 审批，而不是使之复活。

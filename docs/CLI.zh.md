@@ -11,6 +11,7 @@
 | `turnwire rename SESSION_ID 标题` | 重命名共享会话 |
 | `turnwire archive SESSION_ID` / `turnwire unarchive SESSION_ID` | 归档与取消归档，保留历史 |
 | `turnwire history SESSION_ID` | 查看消息和完整工具输入、输出 |
+| `turnwire agents SESSION_ID` | 查看会话正在跑的后台子代理：名称、状态、已运行时间，以及它们自己的待办进度 |
 | `turnwire export SESSION_ID --output 会话.md` | 导出 Markdown 记录 |
 | `turnwire new [prompt] --cwd /absolute/path --title 标题` | 创建会话，默认 DSH |
 | `turnwire models` | 列出当前 runtime 注册的模型、默认模型与可选思考强度 |

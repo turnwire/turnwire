@@ -11,9 +11,14 @@ async function until(check: () => boolean) { const end = Date.now() + 5000; whil
 
 // Contract fixture follows the pinned upstream fields, 303 cookie exchange,
 // exact named arguments, mux frames and one-shot Remote event waterfall.
-async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned'; childrenError?: boolean } = {}) {
+interface FixtureChild {
+  id: string; activity: 'running' | 'inactive'; parent?: string; label?: string; mode?: 'one-shot' | 'continuable';
+  hasChildren?: boolean; title?: string; elapsedMs?: number; settledMs?: number;
+  todos?: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }>;
+}
+async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned'; childrenError?: boolean; omitDetails?: boolean } = {}) {
   let seq = 0; let running = false; const calls: Array<{ path: string; args: Record<string, unknown> }> = [];
-  let children: Array<{ id: string; activity: 'running' | 'inactive' }> = [];
+  let children: FixtureChild[] = [];
   const records: Array<{ type: string; event: { seq: number; time: number; type: string; data: Record<string, unknown> } }> = [];
   const streams = new Map<WebSocket, string>(); const events = new Set<WebSocket>();
   const item = (socket: WebSocket, streamId: string, value: unknown) => socket.send(JSON.stringify({ type: 'item', streamId, value }));
@@ -36,7 +41,21 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
       if (options.create === 'owned') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'gateway/internal', message: `failed to create session "${input.request.sessionId}": SessionAlreadyOwnedError: session "${input.request.sessionId}" is already owned by an active write handle` } } })); return; }
       value = { sessionId: input.request.sessionId };
     }
-    else if (url.pathname === '/api/session/list') { z.object({ _request: z.object({}).strict() }).strict().parse(args); value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running }] }; }
+    else if (url.pathname === '/api/session/list') {
+      z.object({ _request: z.object({}).strict() }).strict().parse(args);
+      // The Host projects each child's plan, label and timing onto the same listing every session
+      // appears in, so a progress view needs no second read per child.
+      const described = options.omitDetails ? [] : children.map(child => ({
+        sessionId: child.id, running: child.activity === 'running',
+        projections: {
+          ...(child.title === undefined ? {} : { title: child.title }),
+          ...(child.todos === undefined ? {} : { todos: child.todos }),
+          subagent: { mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }) },
+          subagentTiming: child.activity === 'running' ? { settledMs: 0, active: { since: Date.now() - (child.elapsedMs ?? 0), through: seq } } : { settledMs: child.settledMs ?? 0 },
+        },
+      }));
+      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running }, ...described] };
+    }
     else if (url.pathname === '/api/session/prompt') {
       const input = z.object({ request: z.object({ requestId: z.string(), sessionId: z.literal('s'), mode: z.enum(['queue', 'steer']), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict() }).strict().parse(args);
       running = true; emit('user/message', { id: 'user-1', source: { kind: 'user', rpcId: input.request.requestId }, content: input.request.content }); emit('turn/start', { turn: 1 });
@@ -54,9 +73,9 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
     } else if (url.pathname === '/api/session/cancel') { value = { accepted: true }; running = false; emit('turn/end', { turn: 1, reason: 'cancelled' }); }
     else if (url.pathname === '/api/subagents/list') {
       // The generated `subagents/list` descriptor names its one positional parameter `parentSessionId`.
-      z.object({ parentSessionId: z.literal('s') }).strict().parse(args);
+      const input = z.object({ parentSessionId: z.string() }).strict().parse(args);
       if (options.childrenError) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'subagent/projections-unavailable', message: 'no projection registry is mounted' } } })); return; }
-      value = { parentAvailable: true, entries: children.map(child => ({ kind: 'child', id: child.id, activity: child.activity, hasChildren: false, mode: 'one-shot' })) };
+      value = { parentAvailable: true, entries: children.filter(child => (child.parent ?? 's') === input.parentSessionId).map(child => ({ kind: 'child', id: child.id, activity: child.activity, hasChildren: child.hasChildren ?? false, mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }) })) };
     }
     else { res.writeHead(404); res.end(); return; }
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: true, value } }));
@@ -79,7 +98,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: Array<{ id: string; activity: 'running' | 'inactive' }>) => { children = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -113,8 +132,38 @@ it('counts live background agents so a restart is not mistaken for a safe point'
 });
 it('reports no background agents rather than failing when the Host cannot answer', async () => {
   const host = await dshHost({ childrenError: true }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);  await expect(runtime.busy()).resolves.toBe(0);
+});
+it('describes the agents under a session, nested ones included, for the progress view', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
   await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
-  await expect(runtime.busy()).resolves.toBe(0);
+  host.setChildren([
+    { id: 'child-1', activity: 'running', label: 'Translate the root docs', elapsedMs: 12_000, hasChildren: true, todos: [{ content: 'Translate README', status: 'completed' }, { content: 'Check links', status: 'in_progress' }] },
+    { id: 'child-2', activity: 'inactive', label: 'CLI i18n', mode: 'continuable', settledMs: 42_000, title: 'CLI i18n run' },
+    { id: 'grandchild', activity: 'running', parent: 'child-1', label: 'Check links' },
+  ]);
+  const agents = await runtime.listSubagents('s');
+  // Breadth-first: the nested child follows both direct children.
+  expect(agents.map(agent => [agent.id, agent.parentId, agent.depth, agent.activity, agent.mode, agent.label])).toEqual([
+    ['child-1', 's', 1, 'running', 'one-shot', 'Translate the root docs'],
+    ['child-2', 's', 1, 'inactive', 'continuable', 'CLI i18n'],
+    ['grandchild', 'child-1', 2, 'running', 'one-shot', 'Check links'],
+  ]);
+  // A running child is timed against now; a settled one reports the duration it ran for.
+  expect(agents[0]!.elapsedMs).toBeGreaterThanOrEqual(12_000);
+  expect(agents[1]!.elapsedMs).toBe(42_000);
+  // The plan is the closest thing to progress the Host projects without replaying a transcript.
+  expect(agents[0]!.todos).toEqual([{ content: 'Translate README', status: 'completed' }, { content: 'Check links', status: 'in_progress' }]);
+  expect(agents[2]!.todos).toEqual([]);
+  expect(host.calls.some(c => c.path === '/api/subagents/list' && c.args.parentSessionId === 'child-1')).toBe(true);
+});
+it('still names an agent whose own detail cannot be read', async () => {
+  const host = await dshHost({ omitDetails: true }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
+  host.setChildren([{ id: 'child-1', activity: 'running', label: 'Translate the root docs', elapsedMs: 5_000, todos: [{ content: 'Translate README', status: 'in_progress' }] }]);
+  // The listing route is the authority on which agents exist; a failed detail read may not hide one.
+  const agents = await runtime.listSubagents('s');
+  expect(agents.map(agent => [agent.id, agent.label, agent.activity, agent.todos.length, agent.elapsedMs])).toEqual([['child-1', 'Translate the root docs', 'running', 0, undefined]]);
 });
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());

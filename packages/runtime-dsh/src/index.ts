@@ -2,14 +2,30 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
-import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
 
 export const DSH_SOURCE_REVISION = '5dda764ed3aa172535a7967b06ff95d9cbfe536a';
+/** Bounds on one progress read: a run of delegations should be visible, not unbounded. */
+const MAX_SUBAGENTS = 50; const MAX_SUBAGENT_DEPTH = 3;
 const resultSchema = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), value: z.unknown() }), z.object({ ok: z.literal(false), error: z.object({ code: z.string(), message: z.string() }).passthrough() })]);
 const summarySchema = z.object({ sessionId: z.string(), running: z.boolean(), cwd: z.string().optional() }).passthrough();
+/** One `subagents/list` row: the durable child identity plus the Host's live read of its activity. */
+const subagentEntrySchema = z.object({ kind: z.string(), id: z.string(), activity: z.string().optional(), hasChildren: z.boolean().optional(), mode: z.string().optional(), label: z.string().optional() }).passthrough();
+/**
+ * The slice of `session/list` a progress view needs. The Host projects the child's own plan
+ * (`todos`), its delegation label and mode, its title, and its timing onto every listed session,
+ * so one call describes every child without replaying any transcript.
+ */
+const subagentDetailSchema = z.object({ sessionId: z.string(), projections: z.object({
+  title: z.string().nullable().optional(),
+  todos: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })).nullable().optional(),
+  subagent: z.object({ mode: z.string(), label: z.string().optional() }).nullable().optional(),
+  subagentTiming: z.object({ settledMs: z.number(), active: z.object({ since: z.number(), through: z.number() }).optional() }).optional(),
+}).optional() }).passthrough();
+interface SubagentDetail { label?: string; title?: string; elapsedMs?: number; todos: SubagentView['todos'] }
 export interface DshOptions {
   url: string; token?: string;
   readCursor?: (sessionId: string) => number | undefined;
@@ -53,10 +69,59 @@ export class DshRuntime implements AgentRuntime {
     return count;
   }
   private async runningChildren(parentSessionId: string): Promise<number> {
-    try {
-      const catalog = z.object({ entries: z.array(z.object({ kind: z.string(), activity: z.string().optional() }).passthrough()) }).parse(await this.rpc('subagents/list', { parentSessionId }));
-      return catalog.entries.filter(entry => entry.kind === 'child' && entry.activity === 'running').length;
-    } catch { return 0; }
+    try { return (await this.childEntries(parentSessionId)).filter(entry => entry.activity === 'running').length; } catch { return 0; }
+  }
+  /**
+   * The subagent tree under one session, ready for a progress view: `subagents/list` is the
+   * authoritative enumerator (the same route `busy` reads), and one `session/list` adds each
+   * child's plan, label and timing. A child whose detail read fails still appears, so the view
+   * never hides an agent it knows about. Breadth-first with a small bound, because a runaway
+   * delegation tree must not turn a client poll into an unbounded walk.
+   */
+  async listSubagents(sessionId: string): Promise<SubagentView[]> {
+    try { await this.connect(); } catch { return []; }
+    const details = await this.sessionDetails().catch(() => new Map<string, SubagentDetail>());
+    const views: SubagentView[] = [];
+    const queue: Array<{ id: string; depth: number }> = [{ id: sessionId, depth: 0 }];
+    const seen = new Set<string>([sessionId]);
+    while (queue.length && views.length < MAX_SUBAGENTS) {
+      const parent = queue.shift()!;
+      for (const entry of await this.childEntries(parent.id).catch(() => [])) {
+        if (seen.has(entry.id) || views.length >= MAX_SUBAGENTS) continue;
+        seen.add(entry.id);
+        const detail = details.get(entry.id);
+        views.push({
+          id: entry.id, parentId: parent.id, depth: parent.depth + 1,
+          label: entry.label || detail?.label || detail?.title || 'Subagent',
+          mode: entry.mode === 'continuable' ? 'continuable' : 'one-shot',
+          activity: entry.activity === 'running' ? 'running' : 'inactive',
+          ...(detail?.elapsedMs === undefined ? {} : { elapsedMs: detail.elapsedMs }),
+          todos: detail?.todos ?? [],
+        });
+        if (entry.hasChildren && parent.depth + 1 < MAX_SUBAGENT_DEPTH) queue.push({ id: entry.id, depth: parent.depth + 1 });
+      }
+    }
+    return views;
+  }
+  private async childEntries(parentSessionId: string) {
+    const catalog = z.object({ entries: z.array(subagentEntrySchema) }).parse(await this.rpc('subagents/list', { parentSessionId }));
+    return catalog.entries.filter(entry => entry.kind === 'child');
+  }
+  private async sessionDetails(): Promise<Map<string, SubagentDetail>> {
+    const value = z.object({ items: z.array(subagentDetailSchema) }).parse(await this.rpc('session/list', { _request: {} }));
+    const details = new Map<string, SubagentDetail>();
+    for (const item of value.items) {
+      const timing = item.projections?.subagentTiming;
+      // A live child is timed from its own start; a settled one keeps the duration it ran for.
+      const elapsedMs = timing === undefined ? undefined : Math.max(0, timing.active ? Date.now() - timing.active.since : timing.settledMs);
+      details.set(item.sessionId, {
+        ...(item.projections?.subagent?.label === undefined ? {} : { label: item.projections.subagent.label }),
+        ...(item.projections?.title == null ? {} : { title: item.projections.title }),
+        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+        todos: item.projections?.todos?.map(todo => ({ content: todo.content, status: todo.status })) ?? [],
+      });
+    }
+    return details;
   }
   async health() { try { await this.connect(); return { online: true, message: 'Connected to the DSH host' }; } catch { return { online: false, message: this.lastError }; } }
   async createSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {

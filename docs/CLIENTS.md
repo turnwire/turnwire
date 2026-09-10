@@ -50,8 +50,11 @@ The TUI currently provides a line-oriented interactive command interface, includ
 | Pair by link/code/QR | `devices pair --qr`, `--qr-file phone.png` | Same commands or menu | Pairing link / QR |
 | List and revoke devices | `devices list`, `devices revoke` | Same commands or menu | Device list / Revoke |
 | Verify paired device connection | `devices list --watch`; remote client `connection` | Same commands; devices menu shows last confirmation | Device state, last confirmation and latency, refreshed every 2 seconds |
+| Watch the background agents a session is running | `agents <session>` | Same command | Not yet — see the note below |
 
 Host administration uses authenticated local `/remote` and `/devices`. A paired phone or remote CLI can operate sessions and approvals, but cannot change host settings or pair additional devices. This is a connection-permission boundary enforced by the daemon, not a missing UI feature. PWA currently serves this paired-phone role.
+
+The background-agent view (`subagent.list`) is in the CLI, the interactive terminal and the PWA. The desktop panel is still to come, so that cell is a real gap rather than a platform difference.
 
 Deployment uses the same local permission boundary through `/deployment`. Clients submit runtime configuration and display shared asynchronous status; they never run SSH or install services themselves. The daemon owns the job, persists private configuration, strips model credentials from child processes, and connects to the installed Relay through `RemoteController`. Server addresses, login accounts and key paths are required runtime input. Optional advanced settings are available through the shared JSON configuration in every client and native advanced fields. Closing a client leaves the job running; daemon interruption is explicitly reported for recovery.
 

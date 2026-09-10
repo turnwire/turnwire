@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities, SessionStatus } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
 export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
@@ -27,6 +27,11 @@ export interface AgentRuntime {
    * leave it stale, and it must resolve 0 instead of throwing when the runtime cannot answer.
    */
   busy?(): Promise<number>;
+  /**
+   * Background agents under one session, direct children first, for a progress view. A runtime that
+   * cannot enumerate them leaves this out, and clients then render no agents at all.
+   */
+  listSubagents?(sessionId: string): Promise<SubagentView[]>;
   /**
    * Apply a selection and return what the runtime accepted. A runtime resolves defaults
    * (for example a reasoning effort) and may reject an unknown route, so callers render

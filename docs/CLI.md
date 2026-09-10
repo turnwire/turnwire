@@ -11,6 +11,7 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | `turnwire rename SESSION_ID TITLE` | Rename a shared session |
 | `turnwire archive SESSION_ID` / `turnwire unarchive SESSION_ID` | Archive and unarchive while keeping history |
 | `turnwire history SESSION_ID` | View messages and full tool inputs and outputs |
+| `turnwire agents SESSION_ID` | Watch the background agents a session has running: label, state, elapsed time, and their own todo progress |
 | `turnwire export SESSION_ID --output session.md` | Export a Markdown record |
 | `turnwire new [prompt] --cwd /absolute/path --title TITLE` | Create a session; DSH by default |
 | `turnwire models` | List the models registered by the current runtime, the default model and available thinking efforts |

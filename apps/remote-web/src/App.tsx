@@ -4,7 +4,7 @@ import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog } from '@turnwire/protocol';
+import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, SubagentView } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
@@ -32,6 +32,14 @@ function modelChipLabel(session: Session, catalog?: { runtimeId: string; value: 
   return entry?.name ?? session.model.model;
 }
 function Status({ status }: { status: SessionStatus }) { const t = useLocale(); return <span className={`status ${status}`}><span />{t(statusKeys[status])}</span>; }
+/** How long an agent has been working, rounded the way a person reads a stopwatch. */
+function agentDuration(ms: number) { const seconds = Math.round(ms / 1000); return seconds < 60 ? t('agents.seconds', { value: seconds }) : t('agents.minutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 }); }
+/** The step an agent is on, or how far its plan got; the plan is the progress it reports. */
+function agentStep(agent: SubagentView) {
+  const current = agent.todos.find(todo => todo.status === 'in_progress');
+  const done = agent.todos.filter(todo => todo.status === 'completed').length;
+  return current ? t('agents.current', { done, total: agent.todos.length, content: current.content }) : t('agents.steps', { done, total: agent.todos.length });
+}
 /** A compact EN/ZH switch; the manual choice is persisted so it survives a reload. */
 function LocaleSwitch() {
   const t = useLocale();
@@ -72,6 +80,24 @@ export function App() {
   useEffect(() => { if (!turnRunning) setQueuedIds([]); }, [turnRunning]);
   const pending = useMemo(() => turnRunning ? messages.filter(message => message.role === 'user' && message.queued && queuedIds.includes(message.id)) : [], [messages, turnRunning, queuedIds]);
   const visible = useMemo(() => pending.length ? messages.filter(message => !pending.some(item => item.id === message.id)) : messages, [messages, pending]);
+  /**
+   * Background agents the session has delegated to. A delegation returns at once, so the transcript
+   * goes quiet while children work; this is the only place their progress shows. Polled while the
+   * session runs, and once more when it settles so the last state is not left half-read.
+   */
+  const [agents, setAgents] = useState<SubagentView[]>([]);
+  useEffect(() => {
+    if (!selected || !session || session.archived || !clientRef.current) { setAgents([]); return; }
+    let active = true;
+    const load = async () => {
+      try { const result = await clientRef.current!.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId: selected }); if (active) setAgents(result.subagents); }
+      catch { if (active) setAgents([]); }
+    };
+    void load();
+    if (!turnRunning) return () => { active = false; };
+    const timer = setInterval(load, 4000);
+    return () => { active = false; clearInterval(timer); };
+  }, [selected, session?.archived, session?.status, turnRunning, state]);
   /** Adjacent tool calls become one row; everything else renders on its own. */
   const rows = useMemo(() => {
     const output: Array<{ key: string; tools?: ConversationMessage[]; message?: ConversationMessage }> = [];
@@ -213,6 +239,7 @@ export function App() {
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
           {modelSupport && showModel && <div className="model-picker composer-model">{catalog?.runtimeId === runtime?.id ? <><label>{t('model.label')}<select aria-label={t('model.label')} value={session.model ? `${session.model.provider}/${session.model.model}` : ''} disabled={!connected || busy || session.archived} onChange={event => { const [provider, model] = event.target.value.split('/'); if (provider && model) chooseModel(provider, model, session.model?.reasoningEffort); }}>{!session.model && <option value="">{t('model.runtimeDefaultNamed', { provider: catalog.value.default.provider, model: catalog.value.default.model })}</option>}{catalog.value.groups.map(group => <optgroup key={group.id} label={group.name}>{group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}{catalog.value.routableProviders.includes(group.id) ? '' : t('model.unavailableSuffix')}</option>)}</optgroup>)}</select></label>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</> : <span className="model-loading">{t('model.loadingCatalog')}</span>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</div>}
+          {agents.length > 0 && <div className="agent-strip" role="status" aria-label={t('agents.aria')}><div className="agent-heading">{agents.some(agent => agent.activity === 'running') ? t('agents.running', { count: agents.filter(agent => agent.activity === 'running').length }) : t('agents.finished', { count: agents.length })}</div>{agents.map(agent => <div className={`agent-item${agent.activity === 'running' ? ' running' : ''}`} key={agent.id}><span className="agent-dot" /><span className="agent-label">{agent.label}</span>{agent.elapsedMs !== undefined && <span className="agent-time">{agentDuration(agent.elapsedMs)}</span>}{agent.todos.length > 0 && <span className="agent-steps">{agentStep(agent)}</span>}</div>)}</div>}
           {(turnRunning || pending.length > 0) && <div className="queue-area" role="status" aria-label={t('queue.aria')}>{pending.length > 0 && <div className="queued-strip">{pending.map(item => <div className="queued-item" key={item.id}><span className="queued-label">{t('queue.label')}</span><span className="queued-text">{item.text}</span></div>)}</div>}<div className="queue-actions"><span className="queue-hint">{t('queue.runningHint')}</span><button type="button" className="steer-button" aria-label={t('composer.steerAria')} title={t('composer.steerTitle')} disabled={!connected || busy || !prompt.trim()} onClick={() => submit(prompt, true)}>{t('composer.steer')}</button></div></div>}
           <form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim()) return; submit(prompt, false); }}>
               <textarea aria-label={t('composer.messageAria')} placeholder={t('composer.placeholder')} value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} disabled={!connected || session.archived || ['interrupted', 'error'].includes(session.status)} onKeyDown={event => { if (event.key !== 'Enter') return; if (event.altKey) { event.preventDefault(); submit(prompt, true); } else if (event.metaKey || event.ctrlKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />

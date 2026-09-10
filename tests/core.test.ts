@@ -74,6 +74,20 @@ describe('durable daemon ownership', () => {
     expect((await new TurnwireCore(new Store(':memory:'), [new BusyRuntime()], device).snapshot()).runtimes[0]?.busy).toBe(2);
     expect((await new TurnwireCore(new Store(':memory:'), [new UnreachableRuntime()], device).snapshot()).runtimes[0]?.busy).toBe(0);
   });
+  it('reports the background agents under a session as a read clients may poll', async () => {
+    class AgentRuntime extends DemoRuntime {
+      async listSubagents(sessionId: string) {
+        return [{ id: 'child', parentId: sessionId, depth: 1, label: 'Translate the docs', mode: 'one-shot' as const, activity: 'running' as const, elapsedMs: 4_200, todos: [{ content: 'Translate README', status: 'completed' as const }, { content: 'Check links', status: 'in_progress' as const }] }];
+      }
+    }
+    const store = new Store(':memory:');
+    const core = new TurnwireCore(store, [new AgentRuntime()], { id: 'mac', name: 'Test Mac' }); cleanup.push(() => core.dispose());
+    const created = await session(core);
+    const listed = value<{ subagents: Array<{ label: string; elapsedMs?: number; todos: unknown[] }> }>(await call(core, 'agents', 'subagent.list', { sessionId: created.id }));
+    expect(listed.subagents.map(agent => [agent.label, agent.elapsedMs, agent.todos.length])).toEqual([['Translate the docs', 4_200, 2]]);
+    // A poll, not a durable command: no receipt is reserved, so a client may repeat it freely.
+    expect(store.request('agents')).toBeUndefined();
+  });
   it('does not replay a command whose result was interrupted by a crash', async () => {
     const { core, store } = setup(); const params = { cwd: process.cwd(), runtimeId: 'demo' };
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: 'session.create', params })).digest('hex');

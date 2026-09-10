@@ -82,6 +82,10 @@ The local token and every paired device have full control over Turnwire's config
 
 Encrypted `subscribe` accepts a numeric `after` or `"latest"`. The latter starts at the current journal cursor, avoiding historical replay for a connection health check or snapshot request. An explicit event listener subscribes from the snapshot cursor to cover concurrent changes. Clients must not apply metadata events at or below their snapshot cursor to current state. Page fetches and live events are reconciled using the page watermark, with deltas after the watermark applied once.
 
+## Background agents
+
+`subagent.list {sessionId}` returns `{subagents: SubagentView[]}` — the agents a session has delegated to, direct children first and nested ones after them. A delegation tool returns as soon as it hands work to a child, so the parent's own transcript cannot show what the child is doing; this is that view. Each entry is `{id, parentId, depth, label, mode, activity, elapsedMs?, todos}`: `label` is the short description the delegation carried, `activity` is the runtime's live read of whether the child still works, `elapsedMs` is its running (or final) duration, and `todos` is the child's own plan when it keeps one. It is a read, not a mutation: it reserves no request ID, and clients poll it the way they poll `system.snapshot`. A runtime that cannot enumerate agents reports an empty list rather than an error, so a client renders nothing instead of failing.
+
 ## Inbox and Web Push
 
 `inbox.page {status?:"pending"|"all", before?, limit?}` returns `{items:[{position,approval,sessionTitle}],nextBefore,cursor}`. Positions are stable across resolution, pages default to 40 items. The authoritative inbox is persisted alongside approvals in the Core transaction. Resolved and cancelled items remain readable; daemon restart cancels pending live-runtime approvals rather than reviving them.

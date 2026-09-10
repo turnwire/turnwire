@@ -63,6 +63,28 @@ export type TurnwireEvent = z.infer<typeof eventSchema>;
 export interface RuntimeInfo { id: string; name: string; online: boolean; message: string; capabilities: RuntimeCapabilities;
   /** Background agents the runtime still owns; restarting the host would kill them. */
   busy?: number }
+/**
+ * One background agent under a session, as the runtime describes it. A delegation tool returns as
+ * soon as it hands work to a child, so the parent's own transcript cannot say what the child is
+ * doing; this is that view. `activity` is the runtime's read of whether the child still works, and
+ * `todos` is the child's own plan when it keeps one — the closest thing to progress a runtime can
+ * report without replaying the child's transcript for every client that asks.
+ */
+export const subagentViewSchema = z.object({
+  id: idSchema,
+  /** The agent this child hangs under; the requested session itself for a direct child. */
+  parentId: idSchema,
+  /** Edge distance from the requested session: direct children are 1. */
+  depth: z.number().int().nonnegative(),
+  /** The short description the delegation carried, falling back to the child's own title. */
+  label: z.string(),
+  mode: z.enum(['one-shot', 'continuable']),
+  activity: z.enum(['running', 'inactive']),
+  /** How long the child has been working, from the runtime's own timing projection. */
+  elapsedMs: z.number().int().nonnegative().optional(),
+  todos: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })),
+});
+export type SubagentView = z.infer<typeof subagentViewSchema>;
 export interface Snapshot { device: { id: string; name: string }; sessions: Session[]; approvals: Approval[]; runtimes: RuntimeInfo[]; cursor: number }
 
 export const methodSchemas = {
@@ -85,6 +107,8 @@ export const methodSchemas = {
   'approval.decide': z.object({ approvalId: idSchema, decision: z.enum(['approved', 'rejected']) }).strict(),
   'history.page': z.object({ sessionId: idSchema, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(40) }).strict(),
   'events.list': z.object({ after: z.number().int().nonnegative().default(0), sessionId: idSchema.optional(), limit: z.number().int().min(1).max(1000).default(500) }).strict(),
+  /** Live background agents under one session. A read, so clients may poll it like a snapshot. */
+  'subagent.list': z.object({ sessionId: idSchema }).strict(),
 } as const;
 export type Method = keyof typeof methodSchemas;
 export const requestSchema = z.object({ v: z.literal(PROTOCOL_VERSION), id: idSchema, method: z.enum(Object.keys(methodSchemas) as [Method, ...Method[]]), params: z.unknown() }).strict();
