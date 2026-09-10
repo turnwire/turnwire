@@ -263,6 +263,31 @@ try {
   expect(await page.title()).toBe('Turnwire Remote');
   await expect(page.locator('#root')).not.toBeEmpty();
   await context.setOffline(false);
+  // The folder picker opens on the tap, not on the host's answer. This is its own context with service
+  // workers blocked, because Playwright cannot hold back a request the page's service worker owns, and
+  // holding the listing is the only way to prove the tap was acknowledged on its own. A control that
+  // reacts only once the host replies is a dead button on a slow link — and an older host that does
+  // not know the method at all used to leave the phone waiting out a 35-second timeout.
+  const tapContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  const tapPage = await tapContext.newPage();
+  await tapPage.route('**/rpc', async route => {
+    const body = route.request().postDataJSON?.();
+    if (body?.method === 'workspace.list') await new Promise(resolve => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  try {
+    await tapPage.goto(config.url);
+    await tapPage.getByRole('button', { name: 'Local connection', exact: true }).click();
+    await tapPage.getByLabel('Host service URL', { exact: true }).fill(config.url);
+    await tapPage.getByLabel('Connection token', { exact: true }).fill(config.token);
+    await tapPage.getByRole('button', { name: 'Connect to host', exact: true }).click();
+    await tapPage.getByRole('button', { name: 'Open session list' }).click();
+    await tapPage.getByRole('button', { name: /New session/ }).first().click();
+    await tapPage.getByRole('button', { name: 'Choose folder', exact: true }).click();
+    await expect(tapPage.locator('.folder-picker'), 'the tap showed nothing until the host answered').toBeVisible({ timeout: 600 });
+    await expect(tapPage.locator('.folder-reading')).toBeVisible();
+    await expect(tapPage.locator('.folder-picker .folder-list button').first()).toBeVisible({ timeout: 10_000 });
+  } finally { await tapContext.close(); }
   expect(errors).toEqual([]);
   console.log('UI checks passed: connection, create, prompt, approval, responsive layout, persisted history.');
   console.log(`Screenshots: ${output}`);

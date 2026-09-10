@@ -393,16 +393,19 @@ function ToolRun({ items, running }: { items: ConversationMessage[]; running: bo
 function CreateSession({ snapshot, busy, close, onBrowse, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onBrowse: (path?: string) => Promise<WorkspaceListing>; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
   const t = useLocale();
   const ref = useRef<HTMLDialogElement>(null); const [cwd, setCwd] = useState(snapshot.sessions[0]?.cwd ?? ''); const [title, setTitle] = useState(''); const [runtimeId, setRuntime] = useState(snapshot.runtimes[0]?.id ?? 'dsh');
-  const [listing, setListing] = useState<WorkspaceListing>(); const [failure, setFailure] = useState(''); const [reading, setReading] = useState(false);
+  const [listing, setListing] = useState<WorkspaceListing>(); const [failure, setFailure] = useState(''); const [reading, setReading] = useState(false); const [choosing, setChoosing] = useState(false);
+  const picker = useRef<HTMLElement | null>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
+  // The picker opens on the tap, not on the answer: a prompt tap that shows nothing until the host
+  // replies reads as a dead button, and on a slow or older host that reply can be a long wait.
+  useEffect(() => { if (choosing) picker.current?.scrollIntoView({ block: 'nearest' }); }, [choosing, listing]);
   /** Opens the picker at `path`, falling back to the host home so a stale path is not a dead end. */
   async function browse(path?: string) {
-    setReading(true); setFailure('');
+    setChoosing(true); setReading(true); setFailure('');
     try { setListing(await onBrowse(path)); }
     catch (error) {
-      if (!path) { setFailure(errorText(error)); setReading(false); return; }
-      try { setListing(await onBrowse()); setFailure(errorText(error)); }
-      catch (homeError) { setFailure(errorText(homeError)); }
+      if (!path) setFailure(errorText(error));
+      else { try { setListing(await onBrowse()); setFailure(errorText(error)); } catch (homeError) { setFailure(errorText(homeError)); } }
     }
     setReading(false);
   }
@@ -410,18 +413,19 @@ function CreateSession({ snapshot, busy, close, onBrowse, onCreate }: { snapshot
     <div className="dialog-heading"><h2 id="new-title">{t('common.newSession')}</h2><button type="button" className="icon-button" onClick={close} aria-label={t('common.close')}><X size={20} /></button></div>
     <p>{t('create.intro')}</p>
     <label>{t('create.name')}<input autoFocus required maxLength={200} value={title} onChange={e => setTitle(e.target.value)} placeholder={t('create.namePlaceholder')} /></label>
-    <label>{t('create.cwd')}<span className="field-row"><input required value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/absolute/path/to/project" /><button type="button" className="choose-folder" onClick={() => void browse(cwd || undefined)}><FolderSimple size={16} />{t('create.choose')}</button></span></label>
-    {listing && <section className="folder-picker" aria-label={t('create.folderPicker')}>
-      <header><code title={listing.path}>{listing.path}</code><span><button type="button" disabled={reading} onClick={() => void browse(listing.home)}>{t('create.home')}</button><button type="button" disabled={reading || !listing.parent} onClick={() => listing.parent && void browse(listing.parent)}>{t('create.up')}</button></span></header>
+    <label>{t('create.cwd')}<span className="field-row"><input required value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/absolute/path/to/project" /><button type="button" className="choose-folder" aria-busy={reading} onClick={() => void browse(cwd || undefined)}>{reading ? <CircleNotch size={16} className="spin" /> : <FolderSimple size={16} />}{t('create.choose')}</button></span></label>
+    {choosing && <section className="folder-picker" ref={picker} aria-label={t('create.folderPicker')}>
+      <header><code title={listing?.path ?? cwd}>{listing?.path ?? t('create.reading')}</code><span><button type="button" disabled={reading || !listing} onClick={() => listing && void browse(listing.home)}>{t('create.home')}</button><button type="button" disabled={reading || !listing?.parent} onClick={() => listing?.parent && void browse(listing.parent)}>{t('create.up')}</button></span></header>
       <div className="folder-list">
-        {listing.entries.map(entry => <button type="button" key={entry.path} onClick={() => void browse(entry.path)}><FolderSimple size={15} /><span>{entry.name}</span><CaretRight size={12} /></button>)}
-        {!listing.entries.length && !reading && <p role="status">{t('create.noFolders')}</p>}
+        {listing?.entries.map(entry => <button type="button" key={entry.path} onClick={() => void browse(entry.path)}><FolderSimple size={15} /><span>{entry.name}</span><CaretRight size={12} /></button>)}
+        {!reading && listing && !listing.entries.length && <p role="status">{t('create.noFolders')}</p>}
         {reading && <p role="status" className="folder-reading"><CircleNotch size={14} className="spin" />{t('create.reading')}</p>}
       </div>
-      {listing.entries.length < listing.total && <p className="folder-note">{t('create.truncated', { shown: listing.entries.length, total: listing.total })}</p>}
-      <footer><button type="button" className="primary" onClick={() => { setCwd(listing.path); setListing(undefined); setFailure(''); }}>{t('create.useFolder')}</button><button type="button" onClick={() => { setListing(undefined); setFailure(''); }}>{t('common.cancel')}</button></footer>
+      {listing && listing.entries.length < listing.total && <p className="folder-note">{t('create.truncated', { shown: listing.entries.length, total: listing.total })}</p>}
+      <footer><button type="button" className="primary" disabled={reading || !listing} onClick={() => { if (!listing) return; setCwd(listing.path); setListing(undefined); setChoosing(false); setFailure(''); }}>{t('create.useFolder')}</button><button type="button" onClick={() => { setListing(undefined); setChoosing(false); setFailure(''); }}>{t('common.cancel')}</button></footer>
     </section>}
     {failure && <p className="folder-error" role="alert">{failure}</p>}
+    {choosing && failure && <p className="folder-hint">{t('create.browseHint')}</p>}
     <label>{t('create.runtime')}<select value={runtimeId} onChange={e => setRuntime(e.target.value)}>{snapshot.runtimes.map(runtime => <option key={runtime.id} value={runtime.id} disabled={!runtime.online}>{runtime.name}{!runtime.online ? t('create.runtimeOffline') : ''}</option>)}</select></label>
     {!snapshot.runtimes.some(r => r.online) && <p role="status">{t('create.noRuntime')}</p>}
     <div className="dialog-actions"><button type="button" onClick={close}>{t('common.cancel')}</button><button className="primary" disabled={busy || !snapshot.runtimes.some(r => r.id === runtimeId && r.online)}>{busy ? t('create.creating') : t('create.create')}<ArrowRight size={16} /></button></div>

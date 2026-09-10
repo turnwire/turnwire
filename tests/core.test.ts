@@ -180,6 +180,16 @@ describe('durable daemon ownership', () => {
     expect((await call(core, 'y', 'session.message', { sessionId: s.id, text: '  ' })).ok).toBe(false);
     expect((await call(core, 'z', 'session.create', { runtimeId: 'demo', cwd: 'relative/path' })).ok).toBe(false);
   });
+  it('answers a request it cannot parse in the name of the client that sent it', async () => {
+    const { core } = setup();
+    // A method this host does not know is how an older host meets a newer client. Answering with some
+    // other id leaves a remote client unable to match the reply at all: it waits for its own timeout,
+    // and the tapped control looks dead for as long as that takes.
+    const unknown = await call(core, 'the-request-id', 'shell.execute', {});
+    expect(unknown).toMatchObject({ ok: false, id: 'the-request-id', error: { code: 'INVALID_REQUEST' } });
+    expect(await core.handle({ v: 9, id: 'wrong-version', method: 'system.snapshot', params: {} })).toMatchObject({ ok: false, id: 'wrong-version' });
+    expect(await core.handle({ nonsense: true })).toMatchObject({ ok: false, id: 'invalid' });
+  });
 });
 describe('workspace browsing', () => {
   it('offers the folders a session could start in, without files or dotfolders', async () => {

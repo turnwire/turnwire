@@ -16,7 +16,7 @@
 
 成功：`{ "v": 1, "id": "...", "ok": true, "result": ... }`。失败：`{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`。
 
-方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`workspace.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
+方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`workspace.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验；主机无法解析或不知道的请求，只要还能读出 `id`，就会用发起方自己的 `id` 作答——未知方法正是旧主机遇到新客户端的情形，而一个无人认领的回复是远程客户端无法匹配的，调用方只能一直等到自己的超时，而不是看到错误。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
 
 会话命令按会话串行化；cancel 保持独立，因此 Stop 不会排在慢 prompt 之后等待。审批命令按审批串行化。每个成功的决定只应用一次。Runtime 断开和 daemon 重启会取消未完成的审批。
 

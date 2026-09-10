@@ -48,7 +48,10 @@ export class TurnwireCore {
   subscribe(listener: (event: TurnwireEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async handle(value: unknown, context?: { clientId: string }): Promise<RpcResponse> {
     const parsed = requestSchema.safeParse(value);
-    if (!parsed.success) return errorResponse('invalid', parsed.error);
+    // A rejected request still has to be answered in the asker's name. An unknown method is exactly
+    // how an older host meets a newer client, and a response addressed to `invalid` is one no client
+    // can match: a remote client drops it and waits for its own timeout, which reads as a dead button.
+    if (!parsed.success) return errorResponse(typeof (value as { id?: unknown })?.id === 'string' ? (value as { id: string }).id : 'invalid', parsed.error);
     const request = parsed.data;
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
     if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'session.queue' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {

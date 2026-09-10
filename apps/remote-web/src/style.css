@@ -128,5 +128,7 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
 .folder-reading { display: flex; gap: 7px; align-items: center; }
 .folder-note { font-size: 10.5px; color: var(--muted); margin: 0 0 8px; }
 .folder-error { margin: 9px 0 0; font-size: 11.5px; color: #a34545; }
+.folder-hint { margin: 3px 0 0; font-size: 10.5px; color: var(--muted); }
+.choose-folder[aria-busy="true"] { opacity: .65; }
 .folder-picker footer { display: flex; gap: 8px; justify-content: flex-end; }
 .folder-picker footer button { font-size: 11.5px; }
