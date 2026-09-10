@@ -57,6 +57,12 @@ while :; do
   sleep 5
 done
 
+# The DSH overlay is config, and the endpoint is the authority for which model ids exist, so its lists are
+# refreshed from their own /v1/models before the Host reads it. An endpoint that cannot be asked leaves its
+# list alone instead of emptying it.
+echo "refreshing the model lists from their endpoints"
+node "$root/scripts/dsh-model-sync.mjs" || echo "a model list could not be refreshed; it stays as it is" >&2
+
 echo "building $root"
 npm run build
 echo "$current" > "$stamp"

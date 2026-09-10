@@ -22,9 +22,8 @@
         api: openai-completions
         apiKeyEnv: TURNWIRE_HARNESS_CODEX_BRIDGE_KEY
         models:
-          # The endpoint's own /v1/models is the authority for these ids, and this list is exactly what
-          # it answers with: the bridge dropped the 5.4 pair and gained gpt-6-astra. A model the
-          # endpoint serves but this list omits is not offered by the Host at all.
+          # Asked of this route's own GET {baseURL}/models by scripts/dsh-model-sync.mjs: an id the endpoint
+          # stops answering with is dropped, so a model it adds appears without anyone editing this file.
           - id: gpt-6-astra
             name: GPT-6 Astra
           - id: gpt-5.6-sol
