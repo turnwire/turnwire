@@ -75,6 +75,9 @@ export class TurnwireCore {
         const cwd = await realpath(p.cwd).catch(() => { throw new TurnwireError('INVALID_WORKSPACE', '工作目录不存在'); });
         if (!(await stat(cwd)).isDirectory()) throw new TurnwireError('INVALID_WORKSPACE', '工作目录必须是文件夹');
         const runtime = this.runtime(p.runtimeId);
+        // Checked before the runtime session exists, so an unlisted model cannot leave a
+        // half-created session behind.
+        if (p.model && runtime.setModel) await this.assertSelectable(runtime, p.model.provider, p.model.model);
         const id = randomUUID();
         const created = await runtime.createSession({ id, cwd });
         // A model chosen at creation time goes through the same path as a later change, so
@@ -122,6 +125,7 @@ export class TurnwireCore {
           const session = this.session(p.sessionId); this.requireActive(session);
           const runtime = this.runtime(session.runtimeId);
           if (!runtime.setModel) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '此运行时不支持选择模型');
+          await this.assertSelectable(runtime, p.provider, p.model);
           const selection = await runtime.setModel(session.runtimeSessionId, { provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) }).catch(error => {
             // A rejected route is a rejected choice, not a session failure. Report it in the
             // client's language instead of leaking the runtime's adapter-internal wording.
@@ -154,6 +158,17 @@ export class TurnwireCore {
   private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `运行时 ${id} 未配置`); return runtime; }
   /** The runtime a client sees a model catalog for when it does not name one. */
   private selectableRuntime() { const runtime = [...this.runtimes.values()].find(candidate => candidate.capabilities().modelSelection && candidate.modelCatalog); if (!runtime) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '当前没有支持选择模型的运行时'); return runtime; }
+  /**
+   * Models belong to the runtime, so a selection is only valid when the runtime's own catalog
+   * lists that provider and model. Without this, a client can store an id the runtime does not
+   * know and the failure only surfaces when the next turn tries to run it.
+   */
+  private async assertSelectable(runtime: AgentRuntime, provider: string, model: string) {
+    if (!runtime.modelCatalog) return;
+    const catalog = await runtime.modelCatalog();
+    const listed = catalog.groups.some(group => group.id === provider && group.models.some(entry => entry.id === model));
+    if (!listed) throw new TurnwireError('MODEL_UNAVAILABLE', '所选模型当前不可用，请从模型目录中重新选择');
+  }
   private requireActive(session: Session) { if (session.archived) throw new TurnwireError('SESSION_ARCHIVED', '请先取消归档，再继续会话'); }
   private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', '会话不存在'); return session; }
   private bind(session: Session) {
