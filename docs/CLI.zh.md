@@ -39,7 +39,7 @@
 | `turnwire devices pair --qr` | 在终端显示手机配对二维码 |
 | `turnwire devices pair --qr-file phone.png` | 保存权限为 0600 的 PNG 二维码，不覆盖现有文件 |
 
-`--json` 输出结构化数据，`--url` / `--token` 覆盖本地连接，`--pairing FILE` 使用文件中的远程配对码。`attach` 的 Ctrl+C 只断开客户端；`stop` 才会停止 Agent。客户端退出不会关闭 daemon 或 DSH。
+`--json` 输出结构化数据，`--url` / `--token` 覆盖本地连接，`--pairing FILE` 使用文件中的远程配对码，`--lang en|zh` 强制界面语言而不是从环境推断。`attach` 的 Ctrl+C 只断开客户端；`stop` 才会停止 Agent。客户端退出不会关闭 daemon 或 DSH。
 
 ## 发送消息的两种方式
 

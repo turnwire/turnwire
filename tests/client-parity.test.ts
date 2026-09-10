@@ -61,7 +61,8 @@ it('CLI, interactive terminal and SDK share session and remote state through the
   const lines = scripted([`send ${session.id} 'A literal $(command), with spaces'`, 'remote off', 'ls', 'quit']);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   await runTui(args => createProgram({ url, token, json: true }).parseAsync(args, { from: 'user' }), '', lines.io);
-  expect(lines.output.filter(line => line.includes('无效'))).toEqual([]);
+  // No command in the script may fail, in either locale, so the check covers both catalogues.
+  expect(lines.output.filter(line => /无效|invalid/i.test(line))).toEqual([]);
   await until(() => stopped() === 1);
   expect((await cli('remote', 'status') as { state: string }).state).toBe('off');
   const events = await local.request<{ events: Array<{ data: { text?: string } }> }>('events.list', { sessionId: session.id });
@@ -78,12 +79,13 @@ it('interactive Relay configuration masks input and relies on the shared saved-k
   const server = 'http://127.0.0.1:' + relay.port;
   const first = scripted(['2', server, secret, '0']);
   await remoteMenu(local, first.io); await until(() => remote.status().state === 'online');
-  expect(first.prompts.some(prompt => prompt.text.includes('密钥') && prompt.secret)).toBe(true);
+  // The key prompt is masked and named as such in either locale; the value itself never echoes.
+  expect(first.prompts.some(prompt => /密钥|key/i.test(prompt.text) && prompt.secret)).toBe(true);
   expect(first.output.join('\n')).not.toContain(secret);
   const second = scripted(['2', '', '', '0']);
   await remoteMenu(local, second.io); await until(() => remote.status().state === 'online');
   const before = await local.remoteStatus();
-  await expect(local.configureRemote({ mode: 'relay', serverUrl: 'https://new.example.com' })).rejects.toThrow('连接密钥');
+  await expect(local.configureRemote({ mode: 'relay', serverUrl: 'https://new.example.com' })).rejects.toThrow('Relay connection key');
   expect((await local.remoteStatus()).relayUrl).toBe(before.relayUrl);
   expect(JSON.stringify(await cli('remote', 'status'))).not.toContain(secret);
 });
@@ -91,7 +93,8 @@ it('interactive Relay configuration masks input and relies on the shared saved-k
 it('local admin SDK reports authentication failures and preserves JSON-only CLI output', async () => {
   const { local, cli, url } = await setup();
   const unauthorized = new LocalClient(url, randomSecret()); cleanup.push(() => unauthorized.close());
-  await expect(unauthorized.remoteStatus()).rejects.toThrow('连接令牌无效');
+  // The error code, not a message in one language, is the contract clients localise from.
+  await expect(unauthorized.remoteStatus()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   await expect(cli('devices', 'pair', '--qr')).rejects.toThrow('--json');
   expect(await local.devices()).toEqual([]);
   await expect(local.configureRemote({ mode: 'relay', serverUrl: 'https://relay.example.com', token: 'x'.repeat(501) })).rejects.toThrow();

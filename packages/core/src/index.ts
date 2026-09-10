@@ -45,8 +45,8 @@ export class TurnwireCore {
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: request.method, params: request.params, ...(request.method.startsWith('notifications.') ? { clientId: context?.clientId } : {}) })).digest('hex');
     const saved = this.store.request(request.id);
     if (saved) {
-      if (saved.fingerprint !== fingerprint) return errorResponse(request.id, new TurnwireError('REQUEST_CONFLICT', '请求 ID 已被另一条命令使用'));
-      return saved.result ?? this.inFlight.get(request.id) ?? errorResponse(request.id, new TurnwireError('OUTCOME_UNKNOWN', 'daemon 在处理此请求时中断；请检查会话状态后再发送新请求'));
+      if (saved.fingerprint !== fingerprint) return errorResponse(request.id, new TurnwireError('REQUEST_CONFLICT', 'Request ID is already used by another command'));
+      return saved.result ?? this.inFlight.get(request.id) ?? errorResponse(request.id, new TurnwireError('OUTCOME_UNKNOWN', 'The daemon was interrupted while handling this request; check session state before sending a new request'));
     }
     this.store.reserveRequest(request.id, fingerprint);
     const task = (async (): Promise<RpcResponse> => {
@@ -63,19 +63,19 @@ export class TurnwireCore {
       case 'system.snapshot': return this.snapshot();
       case 'request.result': { const { requestId } = methodSchemas['request.result'].parse(request.params); const saved = this.store.request(requestId); return !saved ? { state: 'not_found' } : saved.result ? { state: 'completed', response: saved.result } : { state: this.inFlight.has(requestId) ? 'pending' : 'unknown' }; }
       case 'inbox.page': { const p = methodSchemas['inbox.page'].parse(request.params); return this.store.inbox(p.limit, p.status, p.before); }
-      case 'notifications.status': return this.notifications?.status(context?.clientId) ?? { enabled: false, available: false, subscribed: false, queued: 0, message: '此主机尚未配置推送' };
+      case 'notifications.status': return this.notifications?.status(context?.clientId) ?? { enabled: false, available: false, subscribed: false, queued: 0, message: 'Push notifications are not configured on this host' };
       case 'notifications.subscribe':
       case 'notifications.unsubscribe': {
-        if (!context?.clientId || !this.notifications) throw new TurnwireError('NOT_AVAILABLE', '请从已配对的手机启用或关闭本设备通知');
+        if (!context?.clientId || !this.notifications) throw new TurnwireError('NOT_AVAILABLE', 'Enable or disable notifications for this device from a paired phone');
         return request.method === 'notifications.subscribe' ? this.notifications.subscribe(context.clientId, methodSchemas['notifications.subscribe'].parse(request.params)) : this.notifications.unsubscribe(context.clientId);
       }
       case 'history.page': { const p = methodSchemas['history.page'].parse(request.params); this.session(p.sessionId); return this.store.history(p.sessionId, p.limit, p.before); }
       case 'events.list': { const p = methodSchemas['events.list'].parse(request.params); return { events: this.store.events(p.after, p.limit, p.sessionId), cursor: this.store.cursor() }; }
       case 'session.create': {
         const p = methodSchemas['session.create'].parse(request.params);
-        if (!isAbsolute(p.cwd)) throw new TurnwireError('INVALID_WORKSPACE', '工作目录必须使用绝对路径');
-        const cwd = await realpath(p.cwd).catch(() => { throw new TurnwireError('INVALID_WORKSPACE', '工作目录不存在'); });
-        if (!(await stat(cwd)).isDirectory()) throw new TurnwireError('INVALID_WORKSPACE', '工作目录必须是文件夹');
+        if (!isAbsolute(p.cwd)) throw new TurnwireError('INVALID_WORKSPACE', 'Working directory must be an absolute path');
+        const cwd = await realpath(p.cwd).catch(() => { throw new TurnwireError('INVALID_WORKSPACE', 'Working directory does not exist'); });
+        if (!(await stat(cwd)).isDirectory()) throw new TurnwireError('INVALID_WORKSPACE', 'Working directory must be a folder');
         const runtime = this.runtime(p.runtimeId);
         // Checked before the runtime session exists, so an unlisted model cannot leave a
         // half-created session behind.
@@ -101,7 +101,7 @@ export class TurnwireCore {
         const p = methodSchemas['session.archive'].parse(request.params);
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId);
-          if (p.archived && (['running', 'waiting_approval'].includes(session.status) || this.store.approvals().some(a => a.sessionId === session.id && a.status === 'pending'))) throw new TurnwireError('SESSION_BUSY', '请先停止任务或处理审批，再归档会话');
+          if (p.archived && (['running', 'waiting_approval'].includes(session.status) || this.store.approvals().some(a => a.sessionId === session.id && a.status === 'pending'))) throw new TurnwireError('SESSION_BUSY', 'Stop the task or resolve approvals before archiving the session');
           return this.update(session.id, { archived: p.archived });
         });
       }
@@ -110,7 +110,7 @@ export class TurnwireCore {
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId);
           this.requireActive(session);
-          if (session.status === 'interrupted' || session.status === 'error') throw new TurnwireError('RESUME_REQUIRED', '请先恢复此会话，再发送消息');
+          if (session.status === 'interrupted' || session.status === 'error') throw new TurnwireError('RESUME_REQUIRED', 'Resume this session before sending a message');
           // The runtime queues a prompt sent during a turn instead of interrupting it, so record which
           // happened: a client can then say so instead of leaving the user to guess.
           const running = session.status === 'running' || session.status === 'waiting_approval';
@@ -133,12 +133,12 @@ export class TurnwireCore {
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId); this.requireActive(session);
           const runtime = this.runtime(session.runtimeId);
-          if (!runtime.setModel) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '此运行时不支持选择模型');
+          if (!runtime.setModel) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', 'This runtime does not support model selection');
           await this.assertSelectable(runtime, p.provider, p.model);
           const selection = await runtime.setModel(session.runtimeSessionId, { provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) }).catch(error => {
             // A rejected route is a rejected choice, not a session failure. Report it in the
             // client's language instead of leaking the runtime's adapter-internal wording.
-            if (error instanceof TurnwireError && error.code === 'session/model-unavailable') throw new TurnwireError('MODEL_UNAVAILABLE', '所选模型当前不可用，请从模型目录中重新选择');
+            if (error instanceof TurnwireError && error.code === 'session/model-unavailable') throw new TurnwireError('MODEL_UNAVAILABLE', 'The selected model is currently unavailable; choose another from the model catalog');
             throw error;
           });
           return this.update(session.id, { model: selection });
@@ -147,14 +147,14 @@ export class TurnwireCore {
       case 'model.catalog': {
         const p = methodSchemas['model.catalog'].parse(request.params);
         const runtime = p.runtimeId ? this.runtime(p.runtimeId) : this.selectableRuntime();
-        if (!runtime.modelCatalog) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '此运行时不支持选择模型');
+        if (!runtime.modelCatalog) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', 'This runtime does not support model selection');
         return runtime.modelCatalog();
       }
       case 'approval.decide': {
         const p = methodSchemas['approval.decide'].parse(request.params);
         return this.lock(`approval:${p.approvalId}`, async () => {
           const approval = this.store.approval(p.approvalId);
-          if (!approval || approval.status !== 'pending') throw new TurnwireError('APPROVAL_EXPIRED', '审批已处理或已失效');
+          if (!approval || approval.status !== 'pending') throw new TurnwireError('APPROVAL_EXPIRED', 'Approval was already handled or has expired');
           const session = this.session(approval.sessionId);
           const requestId = approval.id.slice(session.id.length + 1);
           await this.runtime(session.runtimeId).approve(session.runtimeSessionId, requestId, p.decision);
@@ -164,9 +164,9 @@ export class TurnwireCore {
       }
     }
   }
-  private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `运行时 ${id} 未配置`); return runtime; }
+  private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `Runtime ${id} is not configured`); return runtime; }
   /** The runtime a client sees a model catalog for when it does not name one. */
-  private selectableRuntime() { const runtime = [...this.runtimes.values()].find(candidate => candidate.capabilities().modelSelection && candidate.modelCatalog); if (!runtime) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '当前没有支持选择模型的运行时'); return runtime; }
+  private selectableRuntime() { const runtime = [...this.runtimes.values()].find(candidate => candidate.capabilities().modelSelection && candidate.modelCatalog); if (!runtime) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', 'No runtime supports model selection'); return runtime; }
   /**
    * Models belong to the runtime, so a selection is only valid when the runtime's own catalog
    * lists that provider and model. Without this, a client can store an id the runtime does not
@@ -176,10 +176,10 @@ export class TurnwireCore {
     if (!runtime.modelCatalog) return;
     const catalog = await runtime.modelCatalog();
     const listed = catalog.groups.some(group => group.id === provider && group.models.some(entry => entry.id === model));
-    if (!listed) throw new TurnwireError('MODEL_UNAVAILABLE', '所选模型当前不可用，请从模型目录中重新选择');
+    if (!listed) throw new TurnwireError('MODEL_UNAVAILABLE', 'The selected model is currently unavailable; choose another from the model catalog');
   }
-  private requireActive(session: Session) { if (session.archived) throw new TurnwireError('SESSION_ARCHIVED', '请先取消归档，再继续会话'); }
-  private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', '会话不存在'); return session; }
+  private requireActive(session: Session) { if (session.archived) throw new TurnwireError('SESSION_ARCHIVED', 'Unarchive this session before continuing'); }
+  private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', 'Session not found'); return session; }
   private bind(session: Session) {
     if (this.subscriptions.has(session.id)) return;
     const runtime = this.runtimes.get(session.runtimeId); if (!runtime) return;

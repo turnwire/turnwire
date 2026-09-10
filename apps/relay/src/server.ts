@@ -56,7 +56,7 @@ export function startRelay(options: { token: string; port: number; host?: string
         const data = frame as { type?: string; clientId?: string; payload?: unknown; connectionId?: string };
         if (data.type === 'push.request' && identity.kind === 'host') {
           const request = pushRequestSchema.parse(frame);
-          try { if (!push) throw new Error('此 Relay 尚未开启 Web Push'); const result = push.handle(identity.hostId, new Set(hosts.get(identity.hostId)?.clients.keys()), request); send(socket, { type: 'push.response', id: request.id, ok: true, result }); }
+          try { if (!push) throw new Error('Web Push is not enabled on this Relay'); const result = push.handle(identity.hostId, new Set(hosts.get(identity.hostId)?.clients.keys()), request); send(socket, { type: 'push.response', id: request.id, ok: true, result }); }
           catch (error) { send(socket, { type: 'push.response', id: request.id, ok: false, error: error instanceof Error ? error.message : 'Push request failed' }); }
           return;
         }

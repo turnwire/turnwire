@@ -10,7 +10,7 @@ export const pushRequestSchema = z.object({ type: z.literal('push.request'), id:
 export function validatePushEndpoint(value: string) {
   const url = new URL(value);
   const allowed = ['web.push.apple.com', 'fcm.googleapis.com', 'updates.push.services.mozilla.com'];
-  if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || url.hash || !allowed.includes(url.hostname)) throw new Error('不支持此推送服务地址');
+  if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || url.hash || !allowed.includes(url.hostname)) throw new Error('Unsupported push service address');
 }
 export class RelayPush {
   private stopped = false;
@@ -71,7 +71,7 @@ export class RelayPush {
         const subscription = JSON.parse(String(row.body)) as PushSubscriptionData;
         try {
           validatePushEndpoint(subscription.endpoint);
-          await this.deliver(subscription, JSON.stringify({ type: 'inbox', title: 'Turnwire 需要你的处理', body: '打开收件箱查看最新待办。', tag: 'turnwire-inbox' }), { vapidDetails: { subject: this.subject, ...this.vapid }, TTL: Math.max(0, Math.min(3600, Math.floor((Number(row.expires) - Date.now()) / 1000))), urgency: 'normal', topic: 'turnwire-inbox', timeout: 10_000 });
+          await this.deliver(subscription, JSON.stringify({ type: 'inbox', title: 'Turnwire needs your attention', body: 'Open the inbox to see the latest pending items.', tag: 'turnwire-inbox' }), { vapidDetails: { subject: this.subject, ...this.vapid }, TTL: Math.max(0, Math.min(3600, Math.floor((Number(row.expires) - Date.now()) / 1000))), urgency: 'normal', topic: 'turnwire-inbox', timeout: 10_000 });
           this.db.prepare('UPDATE notifications SET delivered=1 WHERE host=? AND client=? AND id=?').run(row.host!, row.client!, row.id!);
         } catch (error) {
           const status = (error as { statusCode?: number }).statusCode;

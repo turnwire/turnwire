@@ -7,8 +7,8 @@ import { join, delimiter } from 'node:path';
 import { createHash } from 'node:crypto';
 
 import type { TunnelHandle, TunnelOptions } from '../tunnel.js';
-export const cloudflareNotice = '临时隧道使用 Cloudflare；国内网络可能无法连接或不稳定。长期使用建议选择在目标网络实测可达的自托管 Relay。';
-export const cloudflareNamedNotice = '命名隧道指向你自己 Cloudflare 账号下已存在的隧道和域名；入口由第三方解析，长期使用仍建议在目标网络实测可达的自托管 Relay。';
+export const cloudflareNotice = 'The temporary tunnel uses Cloudflare; networks in mainland China may fail to connect or be unstable. For long-term use, prefer a self-hosted Relay measured as reachable from the target network.';
+export const cloudflareNamedNotice = 'A named tunnel points at a tunnel and hostname that already exist in your own Cloudflare account; the endpoint is resolved by a third party, so for long-term use a self-hosted Relay measured as reachable from the target network is still recommended.';
 const run = promisify(execFile);
 
 async function executable(path: string) { try { await access(path, constants.X_OK); return true; } catch { return false; } }
@@ -17,27 +17,27 @@ async function cloudflared(directory: string, signal: AbortSignal, progress: (me
   const candidates = [process.env.TURNWIRE_CLOUDFLARED_PATH, binary, ...(process.env.PATH ?? '').split(delimiter).map(path => join(path, 'cloudflared'))];
   for (const candidate of candidates) if (candidate && await executable(candidate)) return candidate;
   const arch = process.arch === 'x64' ? 'amd64' : process.arch === 'arm64' ? 'arm64' : undefined;
-  if (!arch || !['darwin', 'linux'].includes(process.platform)) throw new Error('请先安装 cloudflared，并将它加入 PATH');
-  progress('首次使用，正在下载 Cloudflare 隧道组件…');
+  if (!arch || !['darwin', 'linux'].includes(process.platform)) throw new Error('Install cloudflared first and add it to PATH');
+  progress('First run: downloading the Cloudflare tunnel component…');
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
   const release = await fetch('https://api.github.com/repos/cloudflare/cloudflared/releases/latest', { signal: requestSignal, headers: { accept: 'application/vnd.github+json' } });
-  if (!release.ok) throw new Error('无法获取隧道组件，请检查网络后重试，或先安装 cloudflared');
+  if (!release.ok) throw new Error('Cannot fetch the tunnel component; check the network and retry, or install cloudflared first');
   const metadata = await release.json() as { assets?: Array<{ name: string; browser_download_url: string; digest?: string }> };
   const name = `cloudflared-${process.platform}-${arch}${process.platform === 'darwin' ? '.tgz' : ''}`;
   const asset = metadata.assets?.find(asset => asset.name === name);
-  if (!asset?.digest?.match(/^sha256:[a-f0-9]{64}$/) || !asset.browser_download_url.startsWith('https://github.com/cloudflare/cloudflared/releases/download/')) throw new Error('无法验证官方隧道组件，请先安装 cloudflared');
+  if (!asset?.digest?.match(/^sha256:[a-f0-9]{64}$/) || !asset.browser_download_url.startsWith('https://github.com/cloudflare/cloudflared/releases/download/')) throw new Error('Cannot verify the official tunnel component; install cloudflared first');
   const response = await fetch(asset.browser_download_url, { signal: requestSignal });
-  if (!response.ok || !response.body) throw new Error('隧道组件下载失败，请重试');
+  if (!response.ok || !response.body) throw new Error('Tunnel component download failed; try again');
   const chunks: Uint8Array[] = []; let size = 0;
   const reader = response.body.getReader();
   try { while (true) {
     const { value: chunk, done } = await reader.read(); if (done) break;
     size += chunk.length;
-    if (size > 128 * 1024 * 1024) { await reader.cancel(); throw new Error('隧道组件下载大小异常'); }
+    if (size > 128 * 1024 * 1024) { await reader.cancel(); throw new Error('Unexpected tunnel component download size'); }
     chunks.push(chunk);
   } } finally { reader.releaseLock(); }
   const bytes = Buffer.concat(chunks);
-  if (`sha256:${createHash('sha256').update(bytes).digest('hex')}` !== asset.digest) throw new Error('隧道组件校验失败，请重试');
+  if (`sha256:${createHash('sha256').update(bytes).digest('hex')}` !== asset.digest) throw new Error('Tunnel component verification failed; try again');
   await mkdir(join(directory, 'tools'), { recursive: true, mode: 0o700 });
   const temporary = await mkdtemp(join(directory, 'tools', 'download-'));
   try {
@@ -74,9 +74,9 @@ export async function startCloudflareTunnel(options: TunnelOptions): Promise<Tun
   };
   const abort = () => { void close(); };
   signal.addEventListener('abort', abort, { once: true });
-  progress('正在创建临时公网地址…');
+  progress('Creating a temporary public address…');
   return new Promise<TunnelHandle>((resolve, reject) => {
-    const timeout = setTimeout(() => { reject(new Error('创建临时地址超时，请检查网络后重新开启')); void close(); }, 60_000);
+    const timeout = setTimeout(() => { reject(new Error('Creating the temporary address timed out; check the network and turn it on again')); void close(); }, 60_000);
     const consume = (chunk: Buffer) => {
       log.write(chunk); tail = (tail + chunk.toString()).slice(-16_384);
       publicUrl ??= tail.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)?.[0];
@@ -84,10 +84,10 @@ export async function startCloudflareTunnel(options: TunnelOptions): Promise<Tun
       if (publicUrl && registered && !settled && !signal.aborted) { settled = true; clearTimeout(timeout); resolve({ url: publicUrl, close }); }
     };
     child.stdout.on('data', consume); child.stderr.on('data', consume);
-    child.on('error', () => { clearTimeout(timeout); reject(new Error('无法启动隧道组件，请检查 cloudflared 安装')); });
+    child.on('error', () => { clearTimeout(timeout); reject(new Error('Cannot start the tunnel component; check the cloudflared installation')); });
     child.on('close', () => {
       clearTimeout(timeout); log.end(); signal.removeEventListener('abort', abort); resolveClosed();
-      if (!settled) reject(new Error(signal.aborted ? '临时访问启动已取消' : '临时通道启动失败，请检查网络后重试'));
+      if (!settled) reject(new Error(signal.aborted ? 'Temporary access startup was cancelled' : 'Temporary channel startup failed; check the network and try again'));
       else if (!stopping && !signal.aborted) exited();
     });
     if (signal.aborted) abort();
@@ -105,7 +105,7 @@ export async function startCloudflareTunnel(options: TunnelOptions): Promise<Tun
  */
 export async function startCloudflareNamedTunnel(options: TunnelOptions): Promise<TunnelHandle> {
   const { directory, port, signal, progress, exited, namedTunnel } = options;
-  if (!namedTunnel) throw new Error('命名隧道需要先填写隧道名称、公开域名和凭证文件');
+  if (!namedTunnel) throw new Error('A named tunnel requires a tunnel name, public hostname, and credentials file first');
   const { name, hostname, credentialsFile, protocol } = namedTunnel;
   const binary = await cloudflared(directory, signal, progress);
   signal.throwIfAborted();
@@ -140,20 +140,20 @@ export async function startCloudflareNamedTunnel(options: TunnelOptions): Promis
   };
   const abort = () => { void close(); };
   signal.addEventListener('abort', abort, { once: true });
-  progress(`正在连接命名隧道 ${name}…`);
+  progress(`Connecting to the named tunnel ${name}…`);
   const url = `https://${hostname}`;
   return new Promise<TunnelHandle>((resolve, reject) => {
-    const timeout = setTimeout(() => { reject(new Error('连接命名隧道超时，请检查凭证文件和网络后重试')); void close(); }, 60_000);
+    const timeout = setTimeout(() => { reject(new Error('Connecting to the named tunnel timed out; check the credentials file and network, then retry')); void close(); }, 60_000);
     const consume = (chunk: Buffer) => {
       log.write(chunk); tail = (tail + chunk.toString()).slice(-16_384);
       registered ||= tail.includes('Registered tunnel connection');
       if (registered && !settled && !signal.aborted) { settled = true; clearTimeout(timeout); resolve({ url, close }); }
     };
     child.stdout.on('data', consume); child.stderr.on('data', consume);
-    child.on('error', () => { clearTimeout(timeout); reject(new Error('无法启动隧道组件，请检查 cloudflared 安装')); });
+    child.on('error', () => { clearTimeout(timeout); reject(new Error('Cannot start the tunnel component; check the cloudflared installation')); });
     child.on('close', () => {
       clearTimeout(timeout); log.end(); signal.removeEventListener('abort', abort); resolveClosed();
-      if (!settled) reject(new Error(signal.aborted ? '远程访问启动已取消' : `命名隧道 ${name} 启动失败，请检查凭证文件、域名和网络`));
+      if (!settled) reject(new Error(signal.aborted ? 'Remote access startup was cancelled' : `Named tunnel ${name} failed to start; check the credentials file, hostname, and network`));
       else if (!stopping && !signal.aborted) exited();
     });
     if (signal.aborted) abort();

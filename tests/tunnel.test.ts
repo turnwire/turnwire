@@ -35,7 +35,7 @@ it('aborts a tunnel that has not announced an address', async () => {
   const aborter = new AbortController();
   try {
     const task = startCloudflareTunnel({ directory, port: 12345, signal: aborter.signal, progress: () => { aborter.abort(); }, exited: () => {} });
-    await expect(task).rejects.toThrow('取消');
+    await expect(task).rejects.toThrow('cancelled');
   } finally {
     if (previous === undefined) delete process.env.TURNWIRE_CLOUDFLARED_PATH; else process.env.TURNWIRE_CLOUDFLARED_PATH = previous;
     await rm(directory, { recursive: true, force: true });
@@ -45,7 +45,7 @@ it('does not declare a tunnel ready when its URL appears before the edge connect
   const { directory, binary } = await fixture("process.stdout.write('https://unregistered.trycloudflare.com\\n');");
   const previous = process.env.TURNWIRE_CLOUDFLARED_PATH; process.env.TURNWIRE_CLOUDFLARED_PATH = binary;
   try {
-    await expect(startCloudflareTunnel({ directory, port: 12345, signal: new AbortController().signal, progress: () => {}, exited: () => {} })).rejects.toThrow('启动失败');
+    await expect(startCloudflareTunnel({ directory, port: 12345, signal: new AbortController().signal, progress: () => {}, exited: () => {} })).rejects.toThrow('startup failed');
   } finally {
     if (previous === undefined) delete process.env.TURNWIRE_CLOUDFLARED_PATH; else process.env.TURNWIRE_CLOUDFLARED_PATH = previous;
     await rm(directory, { recursive: true, force: true });

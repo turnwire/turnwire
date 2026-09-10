@@ -39,7 +39,7 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | `turnwire devices pair --qr` | Show the phone pairing QR code in the terminal |
 | `turnwire devices pair --qr-file phone.png` | Save a PNG QR code with mode 0600, without overwriting an existing file |
 
-`--json` outputs structured data, `--url` / `--token` override the local connection, and `--pairing FILE` uses a remote pairing code from a file. Ctrl+C in `attach` only disconnects the client; `stop` is what stops the Agent. Exiting a client does not shut down the daemon or DSH.
+`--json` outputs structured data, `--url` / `--token` override the local connection, `--pairing FILE` uses a remote pairing code from a file, and `--lang en|zh` forces the interface language instead of detecting it from the environment. Ctrl+C in `attach` only disconnects the client; `stop` is what stops the Agent. Exiting a client does not shut down the daemon or DSH.
 
 ## Two ways to send a message
 

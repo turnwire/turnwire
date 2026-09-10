@@ -72,7 +72,7 @@ export const methodSchemas = {
   'notifications.status': z.object({}).strict(),
   'notifications.subscribe': pushSubscriptionSchema,
   'notifications.unsubscribe': z.object({}).strict(),
-  'session.create': z.object({ cwd: z.string().min(1).max(4096), title: z.string().trim().min(1).max(200).default('新会话'), runtimeId: idSchema.default('dsh'), model: modelSelectionSchema.optional() }).strict(),
+  'session.create': z.object({ cwd: z.string().min(1).max(4096), title: z.string().trim().min(1).max(200).default('New session'), runtimeId: idSchema.default('dsh'), model: modelSelectionSchema.optional() }).strict(),
   'session.resume': z.object({ sessionId: idSchema }).strict(),
   'session.rename': z.object({ sessionId: idSchema, title: z.string().trim().min(1).max(200) }).strict(),
   'session.archive': z.object({ sessionId: idSchema, archived: z.boolean() }).strict(),
@@ -94,6 +94,44 @@ export const responseSchema = z.discriminatedUnion('ok', [
   z.object({ v: z.literal(1), id: idSchema, ok: z.literal(true), result: z.unknown() }),
   z.object({ v: z.literal(1), id: idSchema, ok: z.literal(false), error: z.object({ code: z.string(), message: z.string() }) }),
 ]);
+/**
+ * Every stable error code the host can return. The code is the shared, localisable contract:
+ * clients render user-visible text from `error.code`, while `error.message` stays an English
+ * fallback that scripts and `--json` consumers can rely on.
+ */
+export const turnwireErrorCodes = [
+  'APPROVAL_EXPIRED',
+  'AUTHENTICATION_FAILED',
+  'DISCONNECTED',
+  'DSH_AUTH_FAILED',
+  'DSH_AUTH_REQUIRED',
+  'DSH_HTTP_ERROR',
+  'EXPIRED_MESSAGE',
+  'HANDSHAKE_REUSED',
+  'HOST_OFFLINE',
+  'HTTP_ERROR',
+  'INVALID_CIPHERTEXT',
+  'INVALID_CURSOR',
+  'INVALID_WORKSPACE',
+  'MODEL_SELECTION_UNSUPPORTED',
+  'MODEL_UNAVAILABLE',
+  'NOT_AVAILABLE',
+  'OUTCOME_UNKNOWN',
+  'PROBE_TIMEOUT',
+  'RATE_LIMITED',
+  'REKEY_REQUIRED',
+  'REMOTE_ERROR',
+  'REPLAYED_MESSAGE',
+  'REQUEST_CONFLICT',
+  'REQUEST_PENDING',
+  'RESUME_REQUIRED',
+  'RUNTIME_UNAVAILABLE',
+  'SESSION_ARCHIVED',
+  'SESSION_BUSY',
+  'SESSION_NOT_FOUND',
+  'STAGE_TIMEOUT',
+] as const;
+export type TurnwireErrorCode = typeof turnwireErrorCodes[number];
 export class TurnwireError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = 'TurnwireError'; }
 }

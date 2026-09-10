@@ -24,7 +24,7 @@ export function mergeCaddy(original: string, c: DeploymentConfig, siteFile: stri
   let text = original;
   if (isIP(c.publicAddress)) {
     const existing = text.match(/^\s*default_sni\s+([^\s#]+)/m);
-    if (existing && existing[1] !== c.publicAddress) throw new Error('Caddy 已有不同的 default_sni；请使用域名入口，或先协调现有 IP 站点配置');
+    if (existing && existing[1] !== c.publicAddress) throw new Error('Caddy already has a different default_sni; use a domain entry point or reconcile the existing IP site configuration first');
     if (!existing) {
       const first = /^(?:\s|#[^\n]*(?:\n|$))*/.exec(text)![0].length;
       if (text[first] === '{') text = text.slice(0, first + 1) + `\n    default_sni ${c.publicAddress}\n` + text.slice(first + 1);
@@ -114,7 +114,7 @@ flock -n 9 || { echo 'Another Turnwire deployment is running' >&2; exit 1; }
 . /etc/os-release
 case "$ID" in debian|ubuntu) ;; *) echo 'One-click deployment supports Debian/Ubuntu with systemd' >&2; exit 1 ;; esac
 [ -d /run/systemd/system ] || { echo 'systemd is required' >&2; exit 1; }
-echo '{"step":"检查系统和安装依赖"}'
+echo '{"step":"Checking system and installing dependencies"}'
 missing=''
 for tool in curl xz sha256sum python3; do command -v "$tool" >/dev/null 2>&1 || missing=yes; done
 if [ -n "$missing" ]; then

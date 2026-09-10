@@ -112,7 +112,7 @@ export class DshRuntime implements AgentRuntime {
   async cancel(sessionId: string) { await this.connect(); await this.rpc('session/cancel', { request: { sessionId } }); }
   async approve(sessionId: string, requestId: string, decision: ApprovalDecision) {
     const pending = this.pending.get(requestId);
-    if (!pending || pending.sessionId !== sessionId || pending.clientId !== this.clientId) throw new TurnwireError('APPROVAL_EXPIRED', 'DSH 审批已失效，请等待新的审批请求');
+    if (!pending || pending.sessionId !== sessionId || pending.clientId !== this.clientId) throw new TurnwireError('APPROVAL_EXPIRED', 'The DSH approval has expired; wait for a new approval request');
     pending.resolving = true;
     try {
       await this.rpc('$events/result', { clientId: pending.clientId, eventId: requestId, outcome: { kind: 'result', value: decision === 'approved' ? 'allowed-once' : 'rejected' } });
@@ -130,11 +130,11 @@ export class DshRuntime implements AgentRuntime {
   }
   private async authenticate() {
     if (this.cookie) return;
-    if (!this.token) throw new TurnwireError('DSH_AUTH_REQUIRED', '请设置 TURNWIRE_DSH_TOKEN，或将 DSH 启动时输出的完整 URL 设置为 TURNWIRE_DSH_URL');
+    if (!this.token) throw new TurnwireError('DSH_AUTH_REQUIRED', 'Set TURNWIRE_DSH_TOKEN, or set TURNWIRE_DSH_URL to the full URL DSH prints at startup');
     const url = new URL(this.url); url.searchParams.set('token', this.token);
     const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
     const cookie = response.headers.get('set-cookie');
-    if (response.status !== 303 || !cookie) throw new TurnwireError('DSH_AUTH_FAILED', 'DSH 启动令牌无效；请从 DSH 的终端输出复制当前令牌');
+    if (response.status !== 303 || !cookie) throw new TurnwireError('DSH_AUTH_FAILED', 'The DSH launch token is invalid; copy the current token from the DSH terminal output');
     this.cookie = cookie.split(';')[0]!;
     await response.body?.cancel();
   }
@@ -143,7 +143,7 @@ export class DshRuntime implements AgentRuntime {
     const rpcId = randomUUID();
     const response = await fetch(new URL(`/api/${endpoint}`, this.url), { method: 'POST', headers: { 'content-type': 'application/json', cookie: this.cookie }, body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }), signal: AbortSignal.timeout(30_000) });
     if (response.status === 401) this.cookie = '';
-    if (!response.ok) throw new TurnwireError('DSH_HTTP_ERROR', `DSH ${endpoint} 返回 HTTP ${response.status}`);
+    if (!response.ok) throw new TurnwireError('DSH_HTTP_ERROR', `DSH ${endpoint} returned HTTP ${response.status}`);
     const envelope = z.object({ type: z.literal('server-response'), rpcId: z.literal(rpcId), result: resultSchema }).parse(await response.json());
     const parsed = envelope.result;
     if (!parsed.ok) throw new TurnwireError(parsed.error.code, parsed.error.message);
@@ -158,7 +158,7 @@ export class DshRuntime implements AgentRuntime {
       const url = new URL('/api/remote.mux', this.url); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(url, { headers: { cookie: this.cookie }, maxPayload: 16 * 1024 * 1024, handshakeTimeout: 8000 }); this.socket = socket;
-        const timer = setTimeout(() => { socket.terminate(); reject(new Error('DSH 事件流握手超时')); }, 10_000);
+        const timer = setTimeout(() => { socket.terminate(); reject(new Error('Timed out while opening the DSH event stream')); }, 10_000);
         socket.on('open', () => this.send({ type: 'open', streamId: 'events', endpoint: '$events', payload: { args: {} } }));
         socket.on('message', raw => {
           try {
@@ -175,15 +175,15 @@ export class DshRuntime implements AgentRuntime {
             }
           } catch (error) { clearTimeout(timer); reject(error); this.fail(error); }
         });
-        socket.on('error', error => { clearTimeout(timer); reject(error); this.lastError = '无法连接 DSH Host，请确认 DSH 已启动及地址、令牌正确'; });
+        socket.on('error', error => { clearTimeout(timer); reject(error); this.lastError = 'Cannot reach the DSH host; check that DSH is running and the address and token are correct'; });
         socket.on('unexpected-response', (_request, response) => { if (response.statusCode === 401) this.cookie = ''; response.resume(); clearTimeout(timer); reject(new Error(`DSH WebSocket returned HTTP ${response.statusCode}`)); socket.terminate(); });
-        socket.on('close', () => { clearTimeout(timer); reject(new Error('DSH 连接已断开')); if (this.socket !== socket) return; this.socket = undefined; this.clientId = undefined; this.streams.clear(); this.live.clear(); this.cancelPending();
+        socket.on('close', () => { clearTimeout(timer); reject(new Error('The DSH connection closed')); if (this.socket !== socket) return; this.socket = undefined; this.clientId = undefined; this.streams.clear(); this.live.clear(); this.cancelPending();
           for (const id of this.listeners.keys()) this.emit(id, { type: 'status', status: 'interrupted' });
           if (!this.closed && this.listeners.size && !this.retry) this.retry = setTimeout(() => { this.retry = undefined; void this.connect().catch(() => {}); }, 2000);
         });
       });
     })();
-    try { await this.connecting; } catch (error) { this.lastError = error instanceof TurnwireError ? error.message : '无法连接 DSH Host，请确认 DSH 已启动及地址、令牌正确'; throw error; } finally {
+    try { await this.connecting; } catch (error) { this.lastError = error instanceof TurnwireError ? error.message : 'Cannot reach the DSH host; check that DSH is running and the address and token are correct'; throw error; } finally {
       this.connecting = undefined;
       if (!this.closed && this.listeners.size && !this.clientId && !this.retry) this.retry = setTimeout(() => { this.retry = undefined; void this.connect().catch(() => {}); }, 2000);
     }

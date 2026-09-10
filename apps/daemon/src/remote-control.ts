@@ -40,7 +40,7 @@ export class RemoteController implements RemoteAccess {
   readonly direct: DirectController;
   readonly notifications: NotificationController;
   private presence = new DevicePresence();
-  private phase: RemoteStatus['state'] = 'off'; private message = '远程访问已关闭';
+  private phase: RemoteStatus['state'] = 'off'; private message = 'Remote access is off';
   private active?: { relayUrl: string; remoteUrl?: string };
   private bridge?: RemoteBridge; private relay?: Awaited<ReturnType<typeof startRelay>>; private tunnel?: TunnelHandle;
   private operation: Promise<void> = Promise.resolve(); private aborter?: AbortController; private disposed = false;
@@ -62,33 +62,33 @@ export class RemoteController implements RemoteAccess {
     let state = this.phase; let message = this.message;
     if (this.phase === 'online' || this.phase === 'offline') {
       state = this.bridge?.connected ? 'online' : 'offline';
-      message = state === 'online' ? '通道已就绪；手机连接状态请查看已配对设备' : this.bridge?.statusMessage ?? '正在连接远程服务…';
+      message = state === 'online' ? 'Channel is ready; check paired devices for phone connection status' : this.bridge?.statusMessage ?? 'Connecting to the remote service…';
     }
     return { mode: this.preferences.mode, state, message, ...this.active, relayServerUrl: this.preferences.relay?.serverUrl, hasRelayToken: !!this.preferences.relay?.token, provider: this.preferences.provider ?? 'cloudflare', hasCpolarToken: !!this.preferences.cpolarToken, providers: (this.options.providers ?? []).map(({ start, ...info }) => info), notices: this.preferences.mode === 'temporary' ? [this.options.providers?.find(p => p.id === (this.preferences.provider ?? 'cloudflare'))?.description, ...(this.options.notices ?? [])].filter((s): s is string => !!s) : [] };
   }
   configure(value: unknown): RemoteStatus {
-    if (this.disposed) throw new Error('远程服务正在关闭');
+    if (this.disposed) throw new Error('The remote service is shutting down');
     const parsed = remoteConfigurationSchema.safeParse(value);
-    if (!parsed.success) throw new Error('远程配置无效；请检查通道名称、地址和 Token 格式（Relay 密钥需 32–500 个字符）');
+    if (!parsed.success) throw new Error('Invalid remote configuration; check the channel name, address, and token format (Relay keys must be 32–500 characters)');
     const request = parsed.data;
     const next: Preferences = { ...this.preferences, mode: request.mode };
     if (request.mode === 'temporary') {
       next.provider = request.provider ?? this.preferences.provider ?? 'cloudflare';
-      if (request.cpolarToken && next.provider !== 'cpolar') throw new Error('cpolar Token 只能用于 cpolar 通道');
+      if (request.cpolarToken && next.provider !== 'cpolar') throw new Error('The cpolar token can only be used with the cpolar channel');
       if (request.cpolarToken) next.cpolarToken = request.cpolarToken;
-      if (next.provider === 'cpolar' && !next.cpolarToken) throw new Error('首次使用 cpolar，请填写账号的 Auth Token');
+      if (next.provider === 'cpolar' && !next.cpolarToken) throw new Error('First cpolar use: enter the account Auth Token');
       // A named tunnel already exists under the operator's account; only its reference is stored.
       if (request.namedTunnel) next.namedTunnel = request.namedTunnel;
-      if (next.provider === 'cloudflare-named' && !next.namedTunnel) throw new Error('命名隧道需要填写隧道名称、公开域名和凭证文件');
-      if (!this.options.providers?.some(p => p.id === next.provider) && !(next.provider === 'cloudflare' && this.options.startTunnel)) throw new Error('此 daemon 未安装所选通道，请更新服务');
+      if (next.provider === 'cloudflare-named' && !next.namedTunnel) throw new Error('A named tunnel requires a tunnel name, public hostname, and credentials file');
+      if (!this.options.providers?.some(p => p.id === next.provider) && !(next.provider === 'cloudflare' && this.options.startTunnel)) throw new Error('This daemon does not include the selected channel; update the service');
     }
     if (request.mode === 'relay') {
       const url = validateEndpoint(request.serverUrl);
-      if (url.search || url.hash) throw new Error('服务器地址不能包含查询参数或 fragment');
+      if (url.search || url.hash) throw new Error('The server address cannot contain query parameters or a fragment');
       const serverUrl = url.href.replace(/\/$/, '');
       const saved = this.preferences.relay;
       const token = request.token ?? (saved?.serverUrl === serverUrl ? saved.token : undefined);
-      if (!token) throw new Error('请输入此服务器的 Relay 连接密钥');
+      if (!token) throw new Error('Enter the Relay connection key for this server');
       const relayUrl = new URL(serverUrl + '/relay'); relayUrl.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       next.relay = { serverUrl, remoteUrl: serverUrl, relayUrl: relayUrl.href, token };
     }
@@ -106,7 +106,7 @@ export class RemoteController implements RemoteAccess {
     this.direct.start();
     this.aborter?.abort(); const aborter = new AbortController(); this.aborter = aborter;
     this.phase = preferences.mode === 'off' ? 'off' : 'starting';
-    this.message = preferences.mode === 'off' ? '远程访问已关闭' : '正在开启远程访问…';
+    this.message = preferences.mode === 'off' ? 'Remote access is off' : 'Turning on remote access…';
     this.active = undefined;
     this.operation = this.operation.catch(() => {}).then(async () => {
       await this.release();
@@ -116,8 +116,8 @@ export class RemoteController implements RemoteAccess {
         if (preferences.mode === 'temporary') {
           const provider = preferences.provider ?? 'cloudflare';
           const startTunnel = this.options.providers?.find(p => p.id === provider)?.start ?? (provider === 'cloudflare' ? this.options.startTunnel : undefined);
-          if (!startTunnel) throw new Error('尚未配置所选隧道服务，请更新 daemon');
-          await access(join(this.options.webRoot, 'index.html')).catch(() => { throw new Error('手机页面尚未构建，请先运行 npm run build'); });
+          if (!startTunnel) throw new Error('The selected tunnel service is not configured; update the daemon');
+          await access(join(this.options.webRoot, 'index.html')).catch(() => { throw new Error('The phone page is not built yet; run npm run build first'); });
           token = randomBytes(32).toString('hex');
           this.relay = await startRelay({ token, port: 0, host: '127.0.0.1', webRoot: this.options.webRoot });
           bridgeUrl = 'ws://127.0.0.1:' + this.relay.port + '/relay';
@@ -128,14 +128,14 @@ export class RemoteController implements RemoteAccess {
             progress: message => { if (!aborter.signal.aborted) this.message = message; },
             exited: () => {
               if (aborter.signal.aborted) return;
-              this.phase = 'error'; this.message = '临时通道已停止，请重新开启；新地址需要重新配对'; this.active = undefined;
+              this.phase = 'error'; this.message = 'The temporary channel stopped; turn it on again — the new address requires re-pairing'; this.active = undefined;
               aborter.abort(); this.operation = this.operation.then(() => this.release());
             },
           });
           remoteUrl = this.tunnel.url;
           relayUrl = remoteUrl.replace(/^http/, 'ws') + '/relay';
         } else {
-          if (!preferences.relay) throw new Error('请先填写自托管 Relay 配置');
+          if (!preferences.relay) throw new Error('Fill in the self-hosted Relay configuration first');
           ({ token, relayUrl, remoteUrl } = preferences.relay);
         }
         aborter.signal.throwIfAborted();
@@ -143,7 +143,7 @@ export class RemoteController implements RemoteAccess {
         this.bridge = new RemoteBridge(this.core, bridgeUrl ?? relayUrl, token, this.presence, () => this.direct.endpoints()); this.notifications.attach(this.bridge, relayUrl); this.bridge.start(); this.phase = 'offline';
       } catch (error) {
         await this.release();
-        if (!aborter.signal.aborted) { this.active = undefined; this.phase = 'error'; this.message = error instanceof Error ? error.message : '远程访问启动失败'; }
+        if (!aborter.signal.aborted) { this.active = undefined; this.phase = 'error'; this.message = error instanceof Error ? error.message : 'Failed to start remote access'; }
       }
     });
   }

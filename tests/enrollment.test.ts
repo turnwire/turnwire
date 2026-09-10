@@ -31,5 +31,5 @@ it('consumes an invitation once, persists the replacement credential and reconne
   const recovery = new RemoteClient(writes[0]!); cleanup.push(() => recovery.close());
   expect((await recovery.request<Snapshot>('system.snapshot')).device.id).toBe('host'); recovery.close();
   const copiedQR = new RemoteClient(invitation); cleanup.push(() => copiedQR.close());
-  await expect(copiedQR.checkConnection()).rejects.toThrow('验证失败');
+  await expect(copiedQR.checkConnection()).rejects.toMatchObject({ code: 'AUTHENTICATION_FAILED' });
 });

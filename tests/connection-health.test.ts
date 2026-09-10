@@ -31,7 +31,7 @@ async function peer(mode: 'silent' | 'valid' | 'wrong-host' | 'wrong-nonce') {
 }
 it('does not equate relay readiness or subscription with a verified Mac connection', async () => {
   const { phone, health } = await peer('silent');
-  await expect(phone.checkConnection()).rejects.toThrow('超时');
+  await expect(phone.checkConnection()).rejects.toMatchObject({ code: 'PROBE_TIMEOUT' });
   expect(health.some(value => value.phase === 'verifying')).toBe(true);
   expect(health.some(value => value.phase === 'connected')).toBe(false);
   expect(health.at(-1)?.phase).toBe('offline');
@@ -44,7 +44,7 @@ it('expires a previously verified connection when the Mac stops replying while t
 });
 it.each(['wrong-host', 'wrong-nonce'] as const)('rejects an encrypted but mismatched %s proof', async mode => {
   const { phone, health } = await peer(mode);
-  await expect(phone.checkConnection()).rejects.toThrow('验证失败');
+  await expect(phone.checkConnection()).rejects.toMatchObject({ code: 'AUTHENTICATION_FAILED' });
   expect(health.some(value => value.phase === 'connected')).toBe(false);
   expect(health.at(-1)?.phase).toBe('error');
 });

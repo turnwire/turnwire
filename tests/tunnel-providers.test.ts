@@ -48,10 +48,10 @@ it('keeps cpolar token in a private per-process file and removes it on close', a
 });
 it('rejects cpolar authentication failure with sanitized feedback and cleans up aborted starts', async () => {
   expect(cpolarAddress('visit https://dashboard.cpolar.com/auth')).toBeUndefined();
-  expect(() => cpolarAddress('Failed to authenticate to switch server: user authToken auth failed. private-test-token')).toThrow('cpolar 认证');
+  expect(() => cpolarAddress('Failed to authenticate to switch server: user authToken auth failed. private-test-token')).toThrow('cpolar authentication');
   const { directory, binary, options } = await fixture("console.log('Failed to authenticate to switch server: user authToken auth failed. private-test-token'); setInterval(()=>{},1000);");
   vi.stubEnv('TURNWIRE_CPOLAR_PATH', binary);
-  await expect(startCpolarTunnel({ ...options, token: 'private-test-token' })).rejects.toThrow('cpolar 认证');
+  await expect(startCpolarTunnel({ ...options, token: 'private-test-token' })).rejects.toThrow('cpolar authentication');
   expect(await readdir(join(directory, 'tunnel', 'cpolar'))).toHaveLength(0);
   await writeFile(binary, '#!' + process.execPath + '\nsetInterval(()=>{},1000);');
   const aborter = new AbortController(); const task = startCpolarTunnel({ ...options, token: 'test', signal: aborter.signal });

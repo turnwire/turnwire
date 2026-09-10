@@ -24,19 +24,19 @@ export class NotificationController implements NotificationService {
       if (frame.type === 'ready') { this.publicKey = (frame.push as { publicKey?: string } | undefined)?.publicKey; void this.restore().catch(() => {}); }
       if (frame.type === 'push.response' && typeof frame.id === 'string') {
         const pending = this.pending.get(frame.id); if (!pending) return; this.pending.delete(frame.id); clearTimeout(pending.timer);
-        if (frame.ok) pending.resolve(frame.result as Record<string, unknown>); else pending.reject(new Error(typeof frame.error === 'string' ? frame.error : '推送服务请求失败'));
+        if (frame.ok) pending.resolve(frame.result as Record<string, unknown>); else pending.reject(new Error(typeof frame.error === 'string' ? frame.error : 'Push service request failed'));
       }
     };
   }
-  detach() { ++this.generation; this.bridge = undefined; this.publicKey = undefined; for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Relay 已断开')); } this.pending.clear(); }
+  detach() { ++this.generation; this.bridge = undefined; this.publicKey = undefined; for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Relay disconnected')); } this.pending.clear(); }
   status(clientId?: string): NotificationStatus {
     return notificationStatusSchema.parse({ enabled: this.enabled, available: !!this.publicKey && !!this.bridge?.connected, subscribed: !!clientId && !!this.subscriptions[clientId], publicKey: this.publicKey,
       queued: this.namespace ? Object.keys(this.core.store.setting<Record<string, string>>(this.key('outbox')) ?? {}).length : 0, lastError: this.lastError,
-      message: !this.enabled ? '主机通知已关闭' : !this.bridge?.connected ? 'Relay 离线，待办保留在主机收件箱' : !this.publicKey ? '此 Relay 尚未配置 Web Push；临时地址不支持长期通知' : '推送服务已就绪；请在手机上授权通知' });
+      message: !this.enabled ? 'Host notifications are off' : !this.bridge?.connected ? 'Relay is offline; pending items stay in the host inbox' : !this.publicKey ? 'This Relay does not have Web Push configured; temporary addresses do not support long-term notifications' : 'Push service is ready; authorize notifications on your phone' });
   }
   configure(enabled: boolean) { this.enabled = enabled; this.core.store.setSetting('notifications-enabled', enabled); if (!enabled && this.namespace) this.core.store.setSetting(this.key('outbox'), {}); void this.restore().catch(() => {}); return this.status(); }
   async subscribe(clientId: string, value: PushSubscriptionData) {
-    if (!this.enabled) throw new Error('主机通知已关闭');
+    if (!this.enabled) throw new Error('Host notifications are off');
     const subscription = pushSubscriptionSchema.parse(value);
     await this.rpc({ action: 'subscribe', clientId, subscription });
     this.subscriptions[clientId] = subscription; this.core.store.setSetting(this.key('subscriptions'), this.subscriptions);
@@ -52,10 +52,10 @@ export class NotificationController implements NotificationService {
   }
   private queue(clientId: string) { const outbox = this.core.store.setting<Record<string, string>>(this.key('outbox')) ?? {}; outbox[clientId] = randomUUID(); this.core.store.setSetting(this.key('outbox'), outbox); }
   private rpc(value: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (!this.bridge?.connected || !this.publicKey) return Promise.reject(new Error('推送服务当前不可用'));
+    if (!this.bridge?.connected || !this.publicKey) return Promise.reject(new Error('Push service is currently unavailable'));
     const id = randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('推送服务响应超时')); }, 10_000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Push service response timed out')); }, 10_000);
       this.pending.set(id, { resolve, reject, timer });
       try { this.bridge!.sendControl({ type: 'push.request', id, ...value }); } catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
@@ -75,7 +75,7 @@ export class NotificationController implements NotificationService {
         if (generation !== this.generation || this.stopped) return;
       }
       this.core.store.setSetting(this.key('subscriptions'), this.subscriptions); this.lastError = undefined;
-    } catch (error) { this.lastError = error instanceof Error ? error.message : '推送服务恢复失败'; }
+    } catch (error) { this.lastError = error instanceof Error ? error.message : 'Failed to restore the push service'; }
   }
   flush(): Promise<void> {
     if (this.running) return this.running;
@@ -99,7 +99,7 @@ export class NotificationController implements NotificationService {
         if (latest[clientId] === notificationId) delete latest[clientId]; store.setSetting(this.key('outbox'), latest);
       }
       this.lastError = undefined;
-    })().catch(error => { this.lastError = error instanceof Error ? error.message : '推送暂未送达'; }).finally(() => { this.running = undefined; }); return this.running;
+    })().catch(error => { this.lastError = error instanceof Error ? error.message : 'Push not delivered yet'; }).finally(() => { this.running = undefined; }); return this.running;
   }
   async close() { this.stopped = true; clearInterval(this.timer); this.detach(); await this.running; }
 }

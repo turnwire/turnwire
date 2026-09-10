@@ -18,8 +18,8 @@ export interface TurnwireClient {
 function unwrap<T>(response: ReturnType<typeof responseSchema.parse>): T { if (!response.ok) throw new TurnwireError(response.error.code, response.error.message); return response.result as T; }
 export function validateEndpoint(value: string, websocket = false): URL {
   const url = new URL(value);
-  if (!(websocket ? ['ws:', 'wss:'] : ['http:', 'https:']).includes(url.protocol) || url.username || url.password) throw new Error('连接地址格式无效');
-  if ((url.protocol === 'http:' || url.protocol === 'ws:') && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('远程连接必须使用 HTTPS / WSS');
+  if (!(websocket ? ['ws:', 'wss:'] : ['http:', 'https:']).includes(url.protocol) || url.username || url.password) throw new Error('Invalid connection URL');
+  if ((url.protocol === 'http:' || url.protocol === 'ws:') && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Remote connections require HTTPS / WSS');
   return url;
 }
 
@@ -32,7 +32,7 @@ export class LocalClient implements TurnwireClient {
     const response = await fetch(new URL(path, this.url), { method, headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000), redirect: 'error' });
     if (!response.ok) {
       const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
-      throw new TurnwireError(response.status === 401 ? 'UNAUTHORIZED' : 'ADMIN_ERROR', response.status === 401 ? '连接令牌无效，请重新连接' : value?.error ?? `Turnwire 返回 HTTP ${response.status}`);
+      throw new TurnwireError(response.status === 401 ? 'UNAUTHORIZED' : 'ADMIN_ERROR', response.status === 401 ? 'Invalid connection token; reconnect' : value?.error ?? `Turnwire returned HTTP ${response.status}`);
     }
     return response.json();
   }
@@ -49,8 +49,8 @@ export class LocalClient implements TurnwireClient {
   async upgradeDevice(id: string): Promise<PairingResult> { return pairingResultSchema.parse(await this.administration('/devices', 'PUT', revokeDeviceSchema.parse({ id }))); }
   async revokeDevice(id: string): Promise<void> { await this.administration('/devices', 'DELETE', revokeDeviceSchema.parse({ id })); }
   async request<T = unknown>(method: Method, params: unknown = {}, id = crypto.randomUUID()): Promise<T> {
-    const response = await fetch(new URL('/rpc', this.url), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.token}` }, body: JSON.stringify({ v: 1, id, method, params }), signal: AbortSignal.timeout(35_000) }).catch(error => { if (method.startsWith('session.') || method === 'approval.decide') throw new TurnwireError('OUTCOME_UNKNOWN', `连接中断，请使用请求 ID ${id} 查询结果`); throw error; });
-    if (!response.ok) throw new TurnwireError('HTTP_ERROR', response.status === 401 ? '连接令牌无效，请重新连接' : `Turnwire 返回 HTTP ${response.status}`);
+    const response = await fetch(new URL('/rpc', this.url), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.token}` }, body: JSON.stringify({ v: 1, id, method, params }), signal: AbortSignal.timeout(35_000) }).catch(error => { if (method.startsWith('session.') || method === 'approval.decide') throw new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`); throw error; });
+    if (!response.ok) throw new TurnwireError('HTTP_ERROR', response.status === 401 ? 'Invalid connection token; reconnect' : `Turnwire returned HTTP ${response.status}`);
     const result = responseSchema.parse(await response.json()); if (result.id !== id) throw new Error('Response ID mismatch');
     return unwrap<T>(result);
   }
@@ -132,12 +132,24 @@ export function applyEvent(snapshot: Snapshot, event: TurnwireEvent): Snapshot {
   return { ...snapshot, sessions, approvals, runtimes, cursor: event.seq };
 }
 
-export function transcriptMarkdown(session: Session, messages: ConversationMessage[]): string {
-  const code = (text: string) => { const longest = Math.max(0, ...text.split('\n').map(line => line.match(/^`*/)?.[0].length ?? 0)); const fence = '`'.repeat(Math.max(3, longest + 1)); return fence + '\n' + text + '\n' + fence; };
-  const sections = ['# ' + session.title, '工作目录：' + session.cwd + '\n\n会话：' + session.id];
+/** User-visible section labels for the transcript export. A client passes its own localized set;
+ * the exported English here is the fallback, not the final UI. */
+export interface TranscriptLabels {
+  workingDirectory: string; session: string; tool: string; input: string; output: string;
+  pendingOutput: string; you: string; steer: string; queued: string; executionError: string; assistant: string;
+}
+export const transcriptLabels: TranscriptLabels = {
+  workingDirectory: 'Working directory: ', session: 'Session: ', tool: 'Tool', input: 'Input', output: 'Output',
+  pendingOutput: 'Not returned yet', you: 'You', steer: 'You (steer)', queued: 'You (queued)',
+  executionError: 'Execution error', assistant: 'Turnwire',
+};
+export function transcriptMarkdown(session: Session, messages: ConversationMessage[], labels: Partial<TranscriptLabels> = {}): string {
+  const text = { ...transcriptLabels, ...labels };
+  const code = (value: string) => { const longest = Math.max(0, ...value.split('\n').map(line => line.match(/^`*/)?.[0].length ?? 0)); const fence = '`'.repeat(Math.max(3, longest + 1)); return fence + '\n' + value + '\n' + fence; };
+  const sections = ['# ' + session.title, text.workingDirectory + session.cwd + '\n\n' + text.session + session.id];
   for (const message of messages) {
-    if (message.role === 'tool') sections.push('## 工具 · ' + message.tool + '\n\n### 输入\n\n' + code(message.input ?? '') + '\n\n### 输出\n\n' + code(message.output ?? '尚未返回'));
-    else sections.push('## ' + (message.role === 'user' ? (message.steer ? '你（插话）' : message.queued ? '你（排队发送）' : '你') : message.role === 'error' ? '执行错误' : 'Turnwire') + '\n\n' + message.text);
+    if (message.role === 'tool') sections.push('## ' + text.tool + ' · ' + message.tool + '\n\n### ' + text.input + '\n\n' + code(message.input ?? '') + '\n\n### ' + text.output + '\n\n' + code(message.output ?? text.pendingOutput));
+    else sections.push('## ' + (message.role === 'user' ? (message.steer ? text.steer : message.queued ? text.queued : text.you) : message.role === 'error' ? text.executionError : text.assistant) + '\n\n' + message.text);
   }
   return sections.join('\n\n') + '\n';
 }

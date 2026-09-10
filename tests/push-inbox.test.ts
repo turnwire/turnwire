@@ -44,7 +44,7 @@ it('uses the encrypted device identity for subscriptions and delivers generic ap
   const invitation = await local.pairDevice('Phone'); await vi.waitFor(() => expect(remote.status().state).toBe('online'), { timeout: 15_000 });
   const phone = new RemoteClient(invitation.pairing); cleanup.push(() => phone.close());
   expect((await phone.request<NotificationStatus>('notifications.status')).available).toBe(true);
-  await expect(local.request('notifications.subscribe', subscription())).rejects.toThrow('已配对');
+  await expect(local.request('notifications.subscribe', subscription())).rejects.toThrow('paired phone');
   expect(await phone.request('notifications.subscribe', subscription())).toMatchObject({ subscribed: true });
   const s = await local.request<Session>('session.create', { title: 'Private title', cwd: directory, runtimeId: 'demo' });
   const requestId = crypto.randomUUID(); const receipt = await phone.request('session.message', { sessionId: s.id, text: 'approval' }, requestId);
@@ -56,7 +56,7 @@ it('uses the encrypted device identity for subscriptions and delivers generic ap
   await local.request('approval.decide', { approvalId: id, decision: 'approved' });
   expect((await local.request<InboxPage>('inbox.page')).items).toHaveLength(0);
   expect((await local.request<InboxPage>('inbox.page', { status: 'all' })).items[0]?.approval.status).toBe('approved');
-  await expect(local.request('approval.decide', { approvalId: id, decision: 'rejected' })).rejects.toThrow('失效');
+  await expect(local.request('approval.decide', { approvalId: id, decision: 'rejected' })).rejects.toThrow('already handled');
   await local.configureNotifications(false); expect(remote.notifications.status().enabled).toBe(false);
   expect((await local.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(s.id);
 });

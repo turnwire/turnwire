@@ -108,7 +108,7 @@ it('keeps configuration local-only and validates changes before disconnecting', 
   const secret = randomSecret(); const relay = await startRelay({ token: secret, port: 0 }); cleanup.push(() => relay.close());
   controller.configure({ mode: 'relay', serverUrl: 'http://127.0.0.1:' + relay.port, token: secret });
   await until(() => controller.status().state === 'online');
-  expect(() => controller.configure({ mode: 'relay', serverUrl: 'https://different.example.com' })).toThrow('连接密钥');
+  expect(() => controller.configure({ mode: 'relay', serverUrl: 'https://different.example.com' })).toThrow('Relay connection key');
   expect(controller.status().state).toBe('online');
   expect(JSON.stringify(await (await admin('/remote')).json())).not.toContain(secret);
 });

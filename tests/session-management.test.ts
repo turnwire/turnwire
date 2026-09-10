@@ -31,8 +31,8 @@ it('renames, archives and restores the same session across local and encrypted c
   expect((await local.request<Snapshot>('system.snapshot')).sessions[0]?.title).toBe('Shared new title');
   await local.request('session.archive', { sessionId: session.id, archived: true });
   expect((await phone.request<Snapshot>('system.snapshot')).sessions[0]?.archived).toBe(true);
-  await expect(phone.request('session.message', { sessionId: session.id, text: 'Too early' })).rejects.toThrow('取消归档');
-  await expect(local.request('session.resume', { sessionId: session.id })).rejects.toThrow('取消归档');
+  await expect(phone.request('session.message', { sessionId: session.id, text: 'Too early' })).rejects.toThrow('Unarchive this session');
+  await expect(local.request('session.resume', { sessionId: session.id })).rejects.toThrow('Unarchive this session');
   await phone.request('session.archive', { sessionId: session.id, archived: false });
   expect(conversation(core.store.events(0, 100), session.id)).toHaveLength(count);
   await local.request('session.message', { sessionId: session.id, text: 'Continue' });
@@ -43,7 +43,7 @@ it('renames, archives and restores the same session across local and encrypted c
 it('refuses to archive a task that still needs an approval', async () => {
   const { local, session, core } = await setup();
   await local.request('session.message', { sessionId: session.id, text: '审批' });
-  await expect(local.request('session.archive', { sessionId: session.id, archived: true })).rejects.toThrow('停止任务');
+  await expect(local.request('session.archive', { sessionId: session.id, archived: true })).rejects.toThrow('Stop the task');
   expect(core.store.session(session.id)?.archived).not.toBe(true);
   expect(core.store.approvals().some(a => a.status === 'pending')).toBe(true);
   await local.request('session.cancel', { sessionId: session.id });

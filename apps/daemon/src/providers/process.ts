@@ -26,7 +26,7 @@ export function processTunnel(options: TunnelOptions, executable: string, args: 
   return new Promise((resolve, reject) => {
     const abort = () => { void close().catch(() => {}); };
     const fail = (error: Error) => { if (stopping) return; failureReason = error; if (settled) options.exited(); abort(); };
-    const timeout = setTimeout(() => fail(new Error(failure + '（启动超时）')), 60_000);
+    const timeout = setTimeout(() => fail(new Error(failure + ' (startup timed out)')), 60_000);
     const consume = () => {
       let pending = '';
       return (chunk: Buffer) => {
@@ -42,10 +42,10 @@ export function processTunnel(options: TunnelOptions, executable: string, args: 
       };
     };
     child.stdout.on('data', consume()); child.stderr.on('data', consume());
-    child.on('error', () => fail(new Error(failure + '（无法启动组件）')));
+    child.on('error', () => fail(new Error(failure + ' (cannot start the component)')));
     child.on('close', () => {
       clearTimeout(timeout); options.signal.removeEventListener('abort', abort); resolveClosed();
-      void clean().then(() => { if (!settled) reject(failureReason ?? new Error(options.signal.aborted ? '临时访问启动已取消' : failure)); else if (!stopping && !options.signal.aborted) options.exited(); }, () => { if (!settled) reject(new Error(failure + '（临时配置清理失败）')); });
+      void clean().then(() => { if (!settled) reject(failureReason ?? new Error(options.signal.aborted ? 'Temporary access startup was cancelled' : failure)); else if (!stopping && !options.signal.aborted) options.exited(); }, () => { if (!settled) reject(new Error(failure + ' (temporary configuration cleanup failed)')); });
     });
     options.signal.addEventListener('abort', abort, { once: true });
     if (options.signal.aborted) abort();

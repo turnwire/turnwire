@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { TurnwireCore, Store } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
 import type { RpcResponse, Session } from '@turnwire/protocol';
@@ -86,5 +88,33 @@ describe('durable daemon ownership', () => {
     expect((await call(core, 'x', 'shell.execute', {})).ok).toBe(false);
     expect((await call(core, 'y', 'session.message', { sessionId: s.id, text: '  ' })).ok).toBe(false);
     expect((await call(core, 'z', 'session.create', { runtimeId: 'demo', cwd: 'relative/path' })).ok).toBe(false);
+  });
+});
+/** Text passed through `error.message` or a status field is the host's English fallback, not UI copy. */
+function stringLiteralTexts(fileName: string, source: string): string[] {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const texts: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteralLike(node)) texts.push(node.text);
+    else if (ts.isTemplateExpression(node)) { texts.push(node.head.text); for (const span of node.templateSpans) texts.push(span.literal.text); }
+    ts.forEachChild(node, visit);
+  };
+  visit(file); return texts;
+}
+describe('host-side internationalisation', () => {
+  it('keeps host-side user-visible text English so --json stays stable', async () => {
+    const repository = fileURLToPath(new URL('..', import.meta.url));
+    const roots = ['packages/core/src', 'apps/daemon/src'];
+    const cjk = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
+    const offenders: string[] = [];
+    for (const root of roots) {
+      const directory = join(repository, root);
+      for (const entry of await readdir(directory, { recursive: true })) {
+        if (!entry.endsWith('.ts')) continue;
+        const source = await readFile(join(directory, entry), 'utf8');
+        for (const text of stringLiteralTexts(entry, source)) if (cjk.test(text)) offenders.push(`${root}/${entry}: ${JSON.stringify(text)}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

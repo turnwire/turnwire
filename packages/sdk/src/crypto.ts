@@ -25,7 +25,7 @@ export class SecureChannel {
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce, additionalData: this.aad(this.role === 'host' ? 'client' : 'host') }, await this.key, unbase64(encrypted.ciphertext));
     const message = secureMessageSchema.parse(JSON.parse(new TextDecoder().decode(plain)));
     const now = Date.now();
-    if (Math.abs(now - message.sentAt) > 60_000) throw new TurnwireError('EXPIRED_MESSAGE', '设备时间相差超过一分钟，请同步设备时间');
+    if (Math.abs(now - message.sentAt) > 60_000) throw new TurnwireError('EXPIRED_MESSAGE', 'Device clocks differ by more than a minute; sync the device time');
     for (const [id, time] of this.seen) if (now - time > 120_000) this.seen.delete(id);
     if (this.seen.has(message.id)) throw new TurnwireError('REPLAYED_MESSAGE', 'Duplicate encrypted message');
     if (this.seen.size >= 50_000) throw new TurnwireError('RATE_LIMITED', 'Too many remote messages');

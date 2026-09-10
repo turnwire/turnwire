@@ -74,3 +74,9 @@
 .model-loading { font-size: 12px; color: var(--muted, #647184); }
 @media(max-width:700px) { .model-picker { gap: 9px; } .model-picker label { font-size: 11px; } .model-picker select { padding: 6px 8px; max-width: 170px; } }
 
+
+/* Language override: compact EN/ZH switch in the composer caption row. First child so the
+   mobile rule that hides the last caption span never hides it. */
+.composer-caption .locale-switch { display: flex; align-items: center; gap: 2px; }
+.locale-switch button { border: 1px solid transparent; border-radius: 5px; background: #f2f4f8; color: #8190a4; font-size: 9px; line-height: 1; padding: 3px 5px; }
+.locale-switch button.active { background: white; border-color: #d0d9e6; color: #26374f; }

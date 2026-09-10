@@ -58,8 +58,8 @@ it('verifies every release file and rejects tampering, extras and symlink escape
   const root=await directory();await mkdir(join(root,'web'));await writeFile(join(root,'relay.mjs'),'server');await writeFile(join(root,'web/index.html'),'page');
   const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
   await writeFile(join(root,'manifest.json'),JSON.stringify({files:{'relay.mjs':hash('server'),'web/index.html':hash('page')}}));
-  await verifyRelease(root);await writeFile(join(root,'relay.mjs'),'modified');await expect(verifyRelease(root)).rejects.toThrow('校验');
-  await writeFile(join(root,'relay.mjs'),'server');await symlink('/etc/passwd',join(root,'web/escape'));await expect(verifyRelease(root)).rejects.toThrow('符号链接');
+  await verifyRelease(root);await writeFile(join(root,'relay.mjs'),'modified');await expect(verifyRelease(root)).rejects.toThrow('verification failed');
+  await writeFile(join(root,'relay.mjs'),'server');await symlink('/etc/passwd',join(root,'web/escape'));await expect(verifyRelease(root)).rejects.toThrow('Symlinks are not allowed');
 });
 it('packs portable archives without macOS AppleDouble sidecar files',async()=>{
   const root=await directory(),payload=join(root,'payload');await mkdir(payload);
@@ -83,7 +83,7 @@ it('shares asynchronous deployment status across local clients, fences administr
   expect((await fetch(url+'/deployment')).status).toBe(401);
   expect((await fetch(url+'/deployment',{headers:{authorization:'Bearer '+token,origin:'https://untrusted.example'}})).status).toBe(403);
   const started=await local.deployRelay(configuration);expect(started.state).toBe('running');
-  await expect(local.deployRelay(configuration)).rejects.toThrow('已有部署');
+  await expect(local.deployRelay(configuration)).rejects.toThrow('already running');
   await expect.poll(async()=>(await local.deploymentStatus()).state).toBe('succeeded');
   expect(starts()).toBe(1);expect(core.store.sessions()).toHaveLength(1);expect(JSON.stringify(await local.deploymentStatus())).not.toContain(secret);
   expect((await local.request('events.list'))).toEqual({events:expect.any(Array),cursor:expect.any(Number)});

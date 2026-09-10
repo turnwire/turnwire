@@ -106,7 +106,7 @@ it('local and encrypted clients fetch the same bounded history without unsolicit
   expect(a).toEqual(b); expect(a.events).toHaveLength(41);
   expect(conversation(await loadHistory(phone, session.id), session.id)).toHaveLength(87);
   await expect(phone.request('history.page', { sessionId: session.id, before: -1 })).rejects.toThrow();
-  await expect(local.request('history.page', { sessionId: 'missing' })).rejects.toThrow('会话不存在');
+  await expect(local.request('history.page', { sessionId: 'missing' })).rejects.toThrow('Session not found');
 }, 20000);
 
 it('bounds multi-record page size without cutting a tool input away from its result', () => {

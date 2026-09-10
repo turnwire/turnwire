@@ -34,19 +34,19 @@ class Transport {
     private failed: (error: Error) => void, private save: (value: Pairing) => Promise<void>) {
     this.ready = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
     this.socket = new WebSocket(validateEndpoint(url, true));
-    this.stage('transport', '正在连接远程入口…');
-    this.socket.onopen = () => { this.stage('relay', '入口已连接，正在确认主机…'); this.socket.send(JSON.stringify({ kind: 'client', hostId: pairing.hostId, clientId: pairing.clientId, token: pairing.token })); };
+    this.stage('transport', 'Connecting to the remote entry…');
+    this.socket.onopen = () => { this.stage('relay', 'Entry connected, confirming the host…'); this.socket.send(JSON.stringify({ kind: 'client', hostId: pairing.hostId, clientId: pairing.clientId, token: pairing.token })); };
     this.socket.onerror = () => {};
-    this.socket.onclose = event => this.abort(new TurnwireError(event.code === 4401 ? 'UNAUTHORIZED' : event.code === 4002 || event.code === 4003 ? 'AUTHENTICATION_FAILED' : 'DISCONNECTED', event.code === 4401 ? '配对凭据已失效或被撤销，请在主机重新配对' : event.code === 4002 ? '加密连接验证失败，请重新配对或更新主机' : event.code === 4404 ? '主机当前离线' : '远程连接已断开'));
+    this.socket.onclose = event => this.abort(new TurnwireError(event.code === 4401 ? 'UNAUTHORIZED' : event.code === 4002 || event.code === 4003 ? 'AUTHENTICATION_FAILED' : 'DISCONNECTED', event.code === 4401 ? 'Pairing credentials are invalid or revoked; pair again on the host' : event.code === 4002 ? 'Encrypted connection verification failed; pair again or update the host' : event.code === 4404 ? 'The host is offline' : 'Remote connection closed'));
     this.socket.onmessage = raw => {
       this.incoming = this.incoming.then(async () => {
         if (!this.active) return;
         const frame = JSON.parse(String(raw.data));
         if (frame.type === 'ready') {
-          if (!frame.online) throw new TurnwireError('HOST_OFFLINE', '主机当前离线');
+          if (!frame.online) throw new TurnwireError('HOST_OFFLINE', 'The host is offline');
           if (this.channel || this.handshake) throw new Error('Duplicate relay ready');
           if (pairing.v === 2) {
-            this.stage('handshake', '正在验证设备身份并建立会话密钥…');
+            this.stage('handshake', 'Verifying the device identity and deriving session keys…');
             this.handshake = await createClientHandshake([pairing.key, ...(pairing.pendingKey ? [pairing.pendingKey] : [])], `${pairing.hostId}:${pairing.clientId}`);
             if (this.active) this.socket.send(JSON.stringify({ type: 'payload', payload: this.handshake.hello }));
           } else { this.channel = new SecureChannel(pairing.key, `${pairing.hostId}:${pairing.clientId}`, 'client'); await this.initialize(); }
@@ -66,32 +66,32 @@ class Transport {
           await this.save({ ...pairing, key: pairing.pendingKey, bootstrap: false, pendingKey: undefined, expiresAt: undefined });
           await this.initialize();
         } else if (value.kind === 'subscribed') {
-          if (!(value.body as { heartbeat?: boolean })?.heartbeat) throw new TurnwireError('AUTHENTICATION_FAILED', '请更新主机上的 Turnwire 服务以验证连接');
+          if (!(value.body as { heartbeat?: boolean })?.heartbeat) throw new TurnwireError('AUTHENTICATION_FAILED', 'Update the Turnwire service on the host to verify the connection');
           if (!this.verified) void this.ping().catch(() => {});
         } else if (value.kind === 'pong') {
           const pong = connectionPongSchema.parse(value.body); const probe = this.probe;
-          if (!probe || pong.nonce !== probe.nonce || pong.hostId !== pairing.hostId) throw new TurnwireError('AUTHENTICATION_FAILED', '加密连接验证失败：回应不匹配');
+          if (!probe || pong.nonce !== probe.nonce || pong.hostId !== pairing.hostId) throw new TurnwireError('AUTHENTICATION_FAILED', 'Encrypted connection verification failed: mismatched response');
           probe.challenge = pong.challenge; await this.send('ack', { challenge: pong.challenge });
           if (pairing.v === 1) this.confirm();
         } else if (value.kind === 'confirmed') {
           if (pairing.v !== 2 || !this.probe?.challenge || (value.body as { challenge?: string })?.challenge !== this.probe.challenge) throw new Error('Invalid confirmation');
           this.confirm();
-        } else if (value.kind === 'error') throw new TurnwireError('REMOTE_ERROR', '主机拒绝了连接，请查看主机诊断');
+        } else if (value.kind === 'error') throw new TurnwireError('REMOTE_ERROR', 'The host refused the connection; check host diagnostics');
         else this.message(value);
-      }).catch(error => { const failure = error instanceof TurnwireError ? error : new TurnwireError('AUTHENTICATION_FAILED', '加密连接验证失败'); if (failure !== error) failure.cause = error; this.abort(failure); });
+      }).catch(error => { const failure = error instanceof TurnwireError ? error : new TurnwireError('AUTHENTICATION_FAILED', 'Encrypted connection verification failed'); if (failure !== error) failure.cause = error; this.abort(failure); });
     };
   }
   private stage(stage: ConnectionHealth['stage'], message: string) {
     clearTimeout(this.deadline); this.health({ phase: stage === 'transport' || stage === 'relay' ? 'connecting' : 'verifying', stage, message });
-    this.deadline = setTimeout(() => this.abort(new TurnwireError('STAGE_TIMEOUT', `${message.replace(/…$/, '')}超时`)), this.options.connectTimeoutMs ?? 5000);
+    this.deadline = setTimeout(() => this.abort(new TurnwireError('STAGE_TIMEOUT', `${message.replace(/…$/, '')} timed out`)), this.options.connectTimeoutMs ?? 5000);
   }
-  private async initialize() { this.stage('verification', '正在验证与主机的双向连接…'); await this.send('subscribe', { after: 'latest' }); }
+  private async initialize() { this.stage('verification', 'Verifying the two-way connection with the host…'); await this.send('subscribe', { after: 'latest' }); }
   private confirm() {
     const probe = this.probe; if (!probe) return;
     const latencyMs = performance.now() - probe.started;
-    if (latencyMs > (this.options.heartbeatTimeoutMs ?? 5000)) throw new TurnwireError('PROBE_TIMEOUT', '连接检测回应已过期');
+    if (latencyMs > (this.options.heartbeatTimeoutMs ?? 5000)) throw new TurnwireError('PROBE_TIMEOUT', 'The connection probe response expired');
     clearTimeout(probe.timer); clearTimeout(this.deadline); this.probe = undefined; this.verified = true;
-    this.verifiedHealth = { phase: 'connected', stage: 'ready', message: '已验证连接到主机', latencyMs: Math.round(latencyMs), lastVerifiedAt: new Date().toISOString() };
+    this.verifiedHealth = { phase: 'connected', stage: 'ready', message: 'Connected to the host, verified', latencyMs: Math.round(latencyMs), lastVerifiedAt: new Date().toISOString() };
     this.health(this.verifiedHealth);
     probe.resolve(); this.resolve();
   }
@@ -99,21 +99,21 @@ class Transport {
     if (this.probe) return this.probe.promise;
     let resolve!: () => void; let reject!: (error: Error) => void;
     const promise = new Promise<void>((ok, fail) => { resolve = ok; reject = fail; });
-    const nonce = crypto.randomUUID(); const timer = setTimeout(() => this.abort(new TurnwireError('PROBE_TIMEOUT', '主机连通检测超时')), this.options.heartbeatTimeoutMs ?? 5000);
+    const nonce = crypto.randomUUID(); const timer = setTimeout(() => this.abort(new TurnwireError('PROBE_TIMEOUT', 'Host connectivity probe timed out')), this.options.heartbeatTimeoutMs ?? 5000);
     this.probe = { nonce, started: performance.now(), promise, resolve, reject, timer };
     void this.send('ping', { nonce }).catch(error => this.abort(error)); return promise;
   }
   activate() { this.heartbeat = setInterval(() => { void this.ping().catch(() => {}); }, this.options.heartbeatIntervalMs ?? 15_000); }
   send(kind: SecureMessage['kind'], body: unknown): Promise<void> {
     const task = this.outgoing.then(async () => {
-      if (!this.active || !this.channel) throw new TurnwireError('DISCONNECTED', '远程连接不可用');
+      if (!this.active || !this.channel) throw new TurnwireError('DISCONNECTED', 'Remote connection unavailable');
       const payload = await this.channel.encrypt(secureMessage(kind, body));
-      if (!this.active || this.socket.readyState !== WebSocket.OPEN) throw new TurnwireError('DISCONNECTED', '远程连接不可用');
+      if (!this.active || this.socket.readyState !== WebSocket.OPEN) throw new TurnwireError('DISCONNECTED', 'Remote connection unavailable');
       this.socket.send(JSON.stringify({ type: 'payload', payload }));
     }); this.outgoing = task.catch(() => {}); return task;
   }
   private abort(error: Error) { if (!this.active) return; this.close(error); this.failed(error); }
-  close(error: Error = new TurnwireError('DISCONNECTED', '连接已关闭')) {
+  close(error: Error = new TurnwireError('DISCONNECTED', 'Connection closed')) {
     if (!this.active) return; this.active = false; clearTimeout(this.deadline); clearInterval(this.heartbeat);
     if (this.probe) { clearTimeout(this.probe.timer); this.probe.reject(error); this.probe = undefined; }
     this.reject(error); this.socket.close();
@@ -124,7 +124,7 @@ export class RemoteClient implements TurnwireClient {
   private stopped = false; private suspended = false; private terminal = false; private generation = 0; private attempts = 0;
   private timer?: ReturnType<typeof setTimeout>; private cursor = 0;
   private listeners = new Set<(event: TurnwireEvent) => void>(); private states = new Set<(state: ConnectionState) => void>(); private state: ConnectionState = 'offline';
-  private health: ConnectionHealth = { phase: 'offline', message: '尚未验证与主机的连接' }; private healthListeners = new Set<(health: ConnectionHealth) => void>();
+  private health: ConnectionHealth = { phase: 'offline', message: 'The host connection is not verified yet' }; private healthListeners = new Set<(health: ConnectionHealth) => void>();
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private saved: Promise<void> = Promise.resolve();
   constructor(private pairing: Pairing, private options: RemoteClientOptions = {}) { this.pairing = pairingSchema.parse(pairing); validateEndpoint(pairing.relayUrl, true); }
@@ -134,13 +134,13 @@ export class RemoteClient implements TurnwireClient {
   private save(value: Pairing) { this.saved = this.saved.then(async () => { await this.options.persistPairing?.(value); this.pairing = value; }); return this.saved; }
   private connect(): Promise<void> {
     if (this.transport) return Promise.resolve(); if (this.ready) return this.ready;
-    if (this.stopped || this.suspended || this.terminal) return Promise.reject(new TurnwireError('DISCONNECTED', this.terminal ? this.health.message : '连接已暂停或关闭'));
+    if (this.stopped || this.suspended || this.terminal) return Promise.reject(new TurnwireError('DISCONNECTED', this.terminal ? this.health.message : 'Connection paused or closed'));
     clearTimeout(this.timer); this.timer = undefined;
     const generation = ++this.generation; const started = performance.now(); this.setState('connecting');
-    this.healthChanged({ phase: 'connecting', message: '正在连接远程入口…', attempt: this.attempts + 1, retryInMs: undefined, protocol: this.pairing.v, code: undefined });
+    this.healthChanged({ phase: 'connecting', message: 'Connecting to the remote entry…', attempt: this.attempts + 1, retryInMs: undefined, protocol: this.pairing.v, code: undefined });
     const task = (async () => {
       if (this.pairing.v === 2 && this.pairing.bootstrap && !this.pairing.pendingKey) await this.save({ ...this.pairing, pendingKey: randomSecret() });
-      if (generation !== this.generation) throw new Error('连接已取消');
+      if (generation !== this.generation) throw new Error('Connection cancelled');
       const direct = this.pairing.v === 2 && !this.pairing.bootstrap ? this.pairing.directUrls ?? [] : [];
       const endpoints = [...new Set([...direct, this.pairing.relayUrl])];
       const transports = endpoints.map(url => {
@@ -154,13 +154,13 @@ export class RemoteClient implements TurnwireClient {
       });
       try {
         const winner = await Promise.any(transports.map(async transport => { await transport.ready; return transport; }));
-        if (generation !== this.generation) throw new Error('连接已取消');
+        if (generation !== this.generation) throw new Error('Connection cancelled');
         this.transport = winner; this.attempts = 0;
         for (const transport of transports) if (transport !== winner) transport.close(); this.candidates.clear();
         winner.activate();
         // Only the verified winner subscribes to history or dispatches commands.
         await winner.send('subscribe', { after: this.listeners.size ? this.cursor : 'latest' });
-        this.healthChanged({ ...winner.verifiedHealth, phase: 'connected', stage: 'ready', message: '已验证连接到主机', route: winner.route, protocol: this.pairing.v, lastVerifiedAt: new Date().toISOString(), elapsedMs: Math.round(performance.now() - started), retryInMs: undefined });
+        this.healthChanged({ ...winner.verifiedHealth, phase: 'connected', stage: 'ready', message: 'Connected to the host, verified', route: winner.route, protocol: this.pairing.v, lastVerifiedAt: new Date().toISOString(), elapsedMs: Math.round(performance.now() - started), retryInMs: undefined });
         this.setState('connected');
       } catch (error) {
         if (generation !== this.generation) throw error;
@@ -193,11 +193,11 @@ export class RemoteClient implements TurnwireClient {
   }
   async request<T = unknown>(method: Method, params: unknown = {}, id = crypto.randomUUID()): Promise<T> {
     await this.connect();
-    if (this.pending.has(id)) throw new TurnwireError('REQUEST_PENDING', '此请求正在等待结果');
+    if (this.pending.has(id)) throw new TurnwireError('REQUEST_PENDING', 'This request is already awaiting a result');
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new TurnwireError('OUTCOME_UNKNOWN', `请求结果未知，请使用请求 ID ${id} 查询结果`)); }, 35_000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new TurnwireError('OUTCOME_UNKNOWN', `Request result unknown; check it with request ID ${id}`)); }, 35_000);
       this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
-      void this.transport!.send('request', { v: 1, id, method, params }).catch(() => { this.pending.delete(id); clearTimeout(timer); reject(new TurnwireError('OUTCOME_UNKNOWN', `连接中断，请使用请求 ID ${id} 查询结果`)); });
+      void this.transport!.send('request', { v: 1, id, method, params }).catch(() => { this.pending.delete(id); clearTimeout(timer); reject(new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`)); });
     });
   }
   subscribe(listener: (event: TurnwireEvent) => void, state?: (state: ConnectionState) => void, after = 0) {
@@ -207,10 +207,10 @@ export class RemoteClient implements TurnwireClient {
   }
   /** Foreground/manual reconnect discards zombie sockets and bypasses background backoff. */
   async checkConnection(): Promise<ConnectionHealth> { this.resume(); await this.connect(); return this.health; }
-  suspend() { this.suspended = true; this.reset(); this.healthChanged({ phase: 'offline', message: '已暂停后台连接，返回时立即恢复', retryInMs: undefined }); }
+  suspend() { this.suspended = true; this.reset(); this.healthChanged({ phase: 'offline', message: 'Background connection paused; it resumes on return', retryInMs: undefined }); }
   resume() { const reset = this.suspended || this.stopped || this.terminal || !!this.transport; this.suspended = false; this.stopped = false; this.terminal = false; this.attempts = 0; if (reset) this.reset(); void this.connect().catch(() => {}); }
   private reset() { ++this.generation; clearTimeout(this.timer); this.timer = undefined; this.transport?.close(); this.transport = undefined; for (const transport of this.candidates) transport.close(); this.candidates.clear(); this.ready = undefined; this.rejectPending(); this.setState('offline'); }
   private setState(value: ConnectionState) { if (this.state === value) return; this.state = value; for (const listener of this.states) listener(value); }
-  private rejectPending() { for (const [id, pending] of this.pending) { clearTimeout(pending.timer); pending.reject(new TurnwireError('OUTCOME_UNKNOWN', `连接中断，请使用请求 ID ${id} 查询结果`)); } this.pending.clear(); }
-  close() { this.stopped = true; this.reset(); this.healthChanged({ phase: 'offline', message: '连接已关闭', retryInMs: undefined }); }
+  private rejectPending() { for (const [id, pending] of this.pending) { clearTimeout(pending.timer); pending.reject(new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`)); } this.pending.clear(); }
+  close() { this.stopped = true; this.reset(); this.healthChanged({ phase: 'offline', message: 'Connection closed', retryInMs: undefined }); }
 }

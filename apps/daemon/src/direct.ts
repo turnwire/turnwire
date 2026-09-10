@@ -14,7 +14,7 @@ export class DirectController {
   readonly presence = new DevicePresence();
   private configuration: DirectConfiguration;
   private activeUrl?: string;
-  private state: DirectStatus['state'] = 'off'; private message = '局域网直连已关闭';
+  private state: DirectStatus['state'] = 'off'; private message = 'LAN direct connection is off';
   private server?: ReturnType<typeof createServer>; private wss?: WebSocketServer;
   private peers = new Map<string, { socket: WebSocket; peer: RemotePeer }>();
   private operation = Promise.resolve(); private generation = 0;
@@ -27,24 +27,24 @@ export class DirectController {
   configure(value: unknown) {
     const configuration = directConfigurationSchema.parse(value);
     if (configuration.enabled) {
-      if (!configuration.url || !configuration.certificatePath || !configuration.privateKeyPath) throw new Error('请填写 WSS 地址、浏览器信任的证书和私钥路径');
+      if (!configuration.url || !configuration.certificatePath || !configuration.privateKeyPath) throw new Error('Enter the WSS address, a browser-trusted certificate, and the private key path');
       const url = new URL(configuration.url);
-      if (url.protocol !== 'wss:' || url.username || url.password || url.search || url.hash) throw new Error('局域网直连需要无凭据的 WSS 地址');
+      if (url.protocol !== 'wss:' || url.username || url.password || url.search || url.hash) throw new Error('LAN direct connection requires a credential-free WSS address');
     }
     this.core.store.setSetting('direct-preferences', configuration); this.configuration = configuration; this.start(); return this.status();
   }
   start() {
     const generation = ++this.generation; const configuration = this.configuration;
     this.state = configuration.enabled && this.allowed() ? 'starting' : 'off';
-    this.message = this.state === 'starting' ? '正在启动局域网加密入口…' : configuration.enabled ? '开启远程控制后启用局域网直连' : '局域网直连已关闭';
+    this.message = this.state === 'starting' ? 'Starting the LAN encrypted endpoint…' : configuration.enabled ? 'Enable LAN direct connection after turning on remote control' : 'LAN direct connection is off';
     this.operation = this.operation.catch(() => {}).then(async () => {
       await this.release(); if (generation !== this.generation || !configuration.enabled || !this.allowed()) return;
       try {
         const url = new URL(configuration.url!);
         const [cert, key] = await Promise.all([readFile(configuration.certificatePath!), readFile(configuration.privateKeyPath!)]);
         const certificate = new X509Certificate(cert);
-        if (!certificate.checkHost(url.hostname) && !certificate.checkIP(url.hostname.replace(/^\[|\]$/g, ''))) throw new Error('证书与局域网 WSS 地址不匹配');
-        if (Date.parse(certificate.validTo) <= Date.now() || Date.parse(certificate.validFrom) > Date.now()) throw new Error('局域网证书尚未生效或已经过期');
+        if (!certificate.checkHost(url.hostname) && !certificate.checkIP(url.hostname.replace(/^\[|\]$/g, ''))) throw new Error('Certificate does not match the LAN WSS address');
+        if (Date.parse(certificate.validTo) <= Date.now() || Date.parse(certificate.validFrom) > Date.now()) throw new Error('LAN certificate is not yet valid or has expired');
         if (generation !== this.generation) return;
         const server = createServer({ cert, key, minVersion: 'TLSv1.2' }, (_req, res) => { res.writeHead(404, { 'cache-control': 'no-store' }); res.end(); });
         const wss = new WebSocketServer({ noServer: true, maxPayload: 3 * 1024 * 1024 }); this.server = server; this.wss = wss;
@@ -78,8 +78,8 @@ export class DirectController {
         await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(configuration.port ?? Number(url.port || 443), configuration.listenHost ?? '0.0.0.0', resolve); });
         if (generation !== this.generation) { await this.release(); return; }
         const address = server.address(); if (address && typeof address !== 'string') { url.port = String(address.port); this.activeUrl = url.href; }
-        this.state = 'online'; this.message = '局域网加密入口已就绪；手机浏览器需信任证书并允许局域网访问';
-      } catch (error) { await this.release(); if (generation === this.generation) { this.state = 'error'; this.message = error instanceof Error ? error.message : '局域网入口启动失败'; } }
+        this.state = 'online'; this.message = 'LAN encrypted endpoint is ready; the phone browser must trust the certificate and allow LAN access';
+      } catch (error) { await this.release(); if (generation === this.generation) { this.state = 'error'; this.message = error instanceof Error ? error.message : 'Failed to start the LAN endpoint'; } }
     });
   }
   refreshDevices() { for (const [id, entry] of this.peers) { const device = this.core.store.devices().find(d => d.clientId === id); if (!device || device.v !== 2 || device.bootstrap) entry.socket.close(4401); } }

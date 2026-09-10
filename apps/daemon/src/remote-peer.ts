@@ -55,7 +55,7 @@ export class RemotePeer {
         void this.core.handle(message.body, { clientId: this.id }).then(response => { if (this.active) this.send('response', response); });
       } else if (message.kind === 'subscribe') {
         const { after } = z.object({ after: z.union([z.number().int().nonnegative(), z.literal('latest')]) }).strict().parse(message.body);
-        if (typeof after === 'number' && after > this.core.store.cursor()) throw new TurnwireError('INVALID_CURSOR', '事件游标超出主机记录，请重新读取状态');
+        if (typeof after === 'number' && after > this.core.store.cursor()) throw new TurnwireError('INVALID_CURSOR', 'Event cursor is beyond the host journal; read state again');
         let cursor = after === 'latest' ? this.core.store.cursor() : after;
         while (true) { const events = this.core.store.events(cursor, 1000); for (const event of events) { this.send('event', event); cursor = event.seq; } if (events.length < 1000) break; }
         this.subscribed = cursor; this.send('subscribed', { cursor, heartbeat: true });

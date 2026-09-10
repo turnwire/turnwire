@@ -7,26 +7,26 @@ import { RemotePeer } from './remote-peer.js';
 export class RemoteBridge {
   private socket?: WebSocket; private timer?: ReturnType<typeof setTimeout>; private stopped = false;
   private registered = false; private attempts = 0; private peers = new Map<string, RemotePeer>();
-  private connectionMessage = '正在连接远程服务…';
+  private connectionMessage = 'Connecting to the remote service…';
   get connected() { return this.registered; }
   get statusMessage() { return this.connectionMessage; }
   onControl?: (frame: Record<string, unknown>) => void;
   constructor(private core: TurnwireCore, private url: string, private token: string, private presence = new DevicePresence(), private routes: () => string[] = () => []) { validateEndpoint(url, true); }
-  sendControl(frame: unknown) { if (!this.connected || this.socket?.readyState !== WebSocket.OPEN) throw new Error('Relay 当前离线'); this.socket.send(JSON.stringify(frame)); }
+  sendControl(frame: unknown) { if (!this.connected || this.socket?.readyState !== WebSocket.OPEN) throw new Error('Relay is offline'); this.socket.send(JSON.stringify(frame)); }
   start() {
     if (this.stopped || this.socket) return;
     const devices = this.core.store.devices();
     const socket = new WebSocket(this.url, { maxPayload: 3 * 1024 * 1024, handshakeTimeout: 5000 }); this.socket = socket;
     let readyTimeout: ReturnType<typeof setTimeout> | undefined;
     socket.on('open', () => {
-      readyTimeout = setTimeout(() => { this.connectionMessage = 'Relay 认证响应超时'; socket.terminate(); }, 5000);
+      readyTimeout = setTimeout(() => { this.connectionMessage = 'Relay authentication response timed out'; socket.terminate(); }, 5000);
       socket.send(JSON.stringify({ kind: 'host', protocol: 2, hostId: this.core.device.id, token: this.token, clients: devices.map(device => ({ id: device.clientId, token: device.token })) }));
     });
     socket.on('message', raw => {
       if (this.socket !== socket) return;
       try {
         const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
-        if (frame.type === 'ready') { clearTimeout(readyTimeout); this.registered = true; this.attempts = 0; this.connectionMessage = '远程服务已连接'; this.onControl?.(frame); return; }
+        if (frame.type === 'ready') { clearTimeout(readyTimeout); this.registered = true; this.attempts = 0; this.connectionMessage = 'Remote service connected'; this.onControl?.(frame); return; }
         if (typeof frame.type === 'string' && frame.type.startsWith('push.')) { this.onControl?.(frame); return; }
         const connectionId = frame.connectionId;
         const id = frame.clientId; if (typeof id !== 'string') return;
@@ -44,16 +44,16 @@ export class RemoteBridge {
         peer.receive(frame.payload);
       } catch { socket.close(4002, 'Invalid relay frame'); }
     });
-    socket.on('error', () => { this.connectionMessage = '无法连接远程服务，请检查地址和网络'; });
+    socket.on('error', () => { this.connectionMessage = 'Cannot reach the remote service; check the address and network'; });
     socket.on('close', code => {
       clearTimeout(readyTimeout); if (this.socket !== socket) return;
-      if (code === 4401) this.connectionMessage = 'Relay 认证失败，请检查密钥或重复的主机连接';
-      else if (this.registered) this.connectionMessage = '远程连接已断开，正在重连…';
+      if (code === 4401) this.connectionMessage = 'Relay authentication failed; check the key or a duplicate host connection';
+      else if (this.registered) this.connectionMessage = 'Remote connection lost; reconnecting…';
       this.registered = false; this.presence.disconnect(); this.socket = undefined;
       for (const peer of this.peers.values()) peer.close(); this.peers.clear();
       if (!this.stopped && code !== 4401) this.timer = setTimeout(() => { this.timer = undefined; this.start(); }, retryDelay(this.attempts++));
     });
   }
-  refreshDevices() { this.presence.disconnect(); this.registered = false; this.attempts = 0; this.connectionMessage = '正在更新配对设备…'; if (this.socket) this.socket.close(4001, 'Pairing changed'); else { clearTimeout(this.timer); this.start(); } }
+  refreshDevices() { this.presence.disconnect(); this.registered = false; this.attempts = 0; this.connectionMessage = 'Updating paired devices…'; if (this.socket) this.socket.close(4001, 'Pairing changed'); else { clearTimeout(this.timer); this.start(); } }
   async close() { this.stopped = true; this.registered = false; clearTimeout(this.timer); const socket = this.socket; this.socket = undefined; socket?.terminate(); for (const peer of this.peers.values()) peer.close(); this.peers.clear(); this.presence.disconnect(); }
 }

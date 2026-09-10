@@ -41,25 +41,25 @@ export function startDaemonServer(options: DaemonServerOptions) {
         if (!authorized(req)) { res.writeHead(401); res.end('Unauthorized'); return; }
         res.setHeader('content-type', 'application/json');
         if (url.pathname === '/notifications') {
-          if (!options.remoteAccess?.notificationStatus || !options.remoteAccess.configureNotifications) throw new Error('此主机尚未配置通知');
+          if (!options.remoteAccess?.notificationStatus || !options.remoteAccess.configureNotifications) throw new Error('Notifications are not configured on this host');
           if (req.method === 'GET') { res.end(JSON.stringify(options.remoteAccess.notificationStatus())); return; }
           if (req.method === 'PUT') { const value = z.object({ enabled: z.boolean() }).strict().parse(await body(req)); res.end(JSON.stringify(options.remoteAccess.configureNotifications(value.enabled))); return; }
           res.writeHead(405); res.end(); return;
         }
         if (url.pathname === '/direct') {
-          if (!options.remoteAccess?.directStatus || !options.remoteAccess.configureDirect) throw new Error('此主机尚未配置局域网入口');
+          if (!options.remoteAccess?.directStatus || !options.remoteAccess.configureDirect) throw new Error('The LAN endpoint is not configured on this host');
           if (req.method === 'GET') { res.end(JSON.stringify(options.remoteAccess.directStatus())); return; }
           if (req.method === 'PUT') { res.end(JSON.stringify(options.remoteAccess.configureDirect(await body(req)))); return; }
           res.writeHead(405); res.end(); return;
         }
         if (url.pathname === '/deployment') {
-          if (!options.deployment) { res.writeHead(503); res.end(JSON.stringify({ error: '请更新并重启 daemon，以使用一键部署' })); return; }
+          if (!options.deployment) { res.writeHead(503); res.end(JSON.stringify({ error: 'Update and restart the daemon to use one-click deployment' })); return; }
           if (req.method === 'GET') { res.end(JSON.stringify(options.deployment.status())); return; }
           if (req.method === 'POST') { res.end(JSON.stringify(options.deployment.start(await body(req)))); return; }
           res.writeHead(405); res.end(); return;
         }
         if (url.pathname === '/remote') {
-          if (!options.remoteAccess) { res.writeHead(503); res.end(JSON.stringify({ error: '请更新并重启 daemon，以管理远程连接方式' })); return; }
+          if (!options.remoteAccess) { res.writeHead(503); res.end(JSON.stringify({ error: 'Update and restart the daemon to manage remote connection modes' })); return; }
           if (req.method === 'GET') { res.end(JSON.stringify(options.remoteAccess.status())); return; }
           if (req.method === 'PUT') { res.end(JSON.stringify(options.remoteAccess.configure(await body(req)))); return; }
           res.writeHead(405); res.end(); return;
@@ -69,11 +69,11 @@ export function startDaemonServer(options: DaemonServerOptions) {
         if (url.pathname === '/devices' && (req.method === 'POST' || req.method === 'PUT')) {
           const input = await body(req);
           const old = req.method === 'PUT' ? core.store.devices().find(d => d.clientId === revokeDeviceSchema.parse(input).id) : undefined;
-          if (req.method === 'PUT' && !old) throw new Error('配对设备不存在');
+          if (req.method === 'PUT' && !old) throw new Error('Paired device not found');
           const name = old?.name ?? pairDeviceSchema.parse(input).name;
           const endpoint = options.remoteAccess ? options.remoteAccess.endpoints() : options.relayUrl ? { relayUrl: options.relayUrl, remoteUrl: options.remoteUrl } : undefined;
-          if (!endpoint) { res.writeHead(409); res.end(JSON.stringify({ error: '请先开启临时访问或连接自托管 Relay，待连接成功后再配对手机' })); return; }
-          if (!old && core.store.devices().length >= 100) { res.writeHead(409); res.end(JSON.stringify({ error: '已达到 100 台设备的配对上限' })); return; }
+          if (!endpoint) { res.writeHead(409); res.end(JSON.stringify({ error: 'Turn on temporary access or connect a self-hosted Relay, then pair the phone once connected' })); return; }
+          if (!old && core.store.devices().length >= 100) { res.writeHead(409); res.end(JSON.stringify({ error: 'Reached the 100-device pairing limit' })); return; }
           validateEndpoint(endpoint.relayUrl, true);
           const pairing: Pairing = { v: 2, bootstrap: true, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), relayUrl: endpoint.relayUrl, hostId: core.device.id, clientId: old?.clientId ?? randomUUID(), token: old?.token ?? randomBytes(32).toString('hex'), key: randomBytes(32).toString('hex'), name };
           if (old) core.store.updateDevice(pairing); else core.store.addDevice(pairing); options.onPairingChanged?.(); options.remoteAccess?.refreshDevices();

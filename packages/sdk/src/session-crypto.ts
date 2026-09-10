@@ -23,10 +23,10 @@ export async function createClientHandshake(credentials: string[], context: stri
   const hello: ClientHello = { ...fields, proofs: await Promise.all(credentials.map(secret => sign(secret, helloData(context, fields)))) };
   let completed = false;
   return { hello, async complete(value: unknown) {
-    if (completed) throw new TurnwireError('HANDSHAKE_REUSED', '握手已经结束');
+    if (completed) throw new TurnwireError('HANDSHAKE_REUSED', 'The handshake already completed');
     const reply = serverHelloSchema.parse(value); const credential = credentials[reply.credential];
     const data = transcript(context, hello, reply);
-    if (!credential || !await verify(credential, reply.proof, data)) throw new TurnwireError('AUTHENTICATION_FAILED', '加密连接验证失败：主机身份不匹配');
+    if (!credential || !await verify(credential, reply.proof, data)) throw new TurnwireError('AUTHENTICATION_FAILED', 'Encrypted connection verification failed: host identity mismatch');
     completed = true;
     return derive(keys.privateKey, reply.publicKey, credential, data, 'client');
   } };
@@ -34,7 +34,7 @@ export async function createClientHandshake(credentials: string[], context: stri
 export async function acceptClientHandshake(value: unknown, credential: string, context: string) {
   const hello = clientHelloSchema.parse(value); let index = -1;
   for (let i = 0; i < hello.proofs.length; i++) if (await verify(credential, hello.proofs[i]!, helloData(context, hello))) { index = i; break; }
-  if (index < 0) throw new TurnwireError('AUTHENTICATION_FAILED', '设备凭据无效，或一次性配对码已被使用');
+  if (index < 0) throw new TurnwireError('AUTHENTICATION_FAILED', 'Device credentials are invalid, or the one-time pairing code was already used');
   const keys = await ephemeral();
   const fields = { type: 'hello.reply' as const, v: 2 as const, nonce: randomSecret(), publicKey: base64(await crypto.subtle.exportKey('raw', keys.publicKey)), credential: index };
   const data = transcript(context, hello, fields);
@@ -58,7 +58,7 @@ export class SessionChannel {
   encrypt(message: SecureMessage): Promise<SessionPayload> {
     const task = this.sending.then(async () => {
       secureMessageSchema.parse(message); const sequence = this.sent++;
-      if (sequence >= (1n << 64n)) throw new TurnwireError('REKEY_REQUIRED', '需要重新建立加密连接');
+      if (sequence >= (1n << 64n)) throw new TurnwireError('REKEY_REQUIRED', 'The encrypted connection must be re-established');
       const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: this.nonce(sequence), additionalData: text('frame', this.session, this.role, sequence.toString()) }, this.transmit, encoder.encode(JSON.stringify(message)));
       return { v: 2 as const, session: this.session, sequence: sequence.toString(), ciphertext: base64(ciphertext) };
     }); this.sending = task.catch(() => {}); return task;
@@ -66,7 +66,7 @@ export class SessionChannel {
   decrypt(value: unknown): Promise<SecureMessage> {
     const task = this.receiving.then(async () => {
       const payload = sessionPayloadSchema.parse(value);
-      if (payload.session !== this.session || BigInt(payload.sequence) !== this.received) throw new TurnwireError('REPLAYED_MESSAGE', '加密会话或消息序号不匹配');
+      if (payload.session !== this.session || BigInt(payload.sequence) !== this.received) throw new TurnwireError('REPLAYED_MESSAGE', 'Encrypted session or message sequence mismatch');
       const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this.nonce(this.received), additionalData: text('frame', this.session, this.role === 'host' ? 'client' : 'host', payload.sequence) }, this.receive, unbase64(payload.ciphertext));
       const message = secureMessageSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));
       this.received++; return message;

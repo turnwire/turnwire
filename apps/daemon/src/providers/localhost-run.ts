@@ -13,11 +13,11 @@ export function localhostAddress(line: string): string | undefined {
 }
 export async function startLocalhostTunnel(options: TunnelOptions) {
   const directory = join(options.directory, 'tunnel', 'localhost-run'); await mkdir(directory, { recursive: true, mode: 0o700 });
-  options.progress('正在通过 localhost.run 创建免注册地址…');
+  options.progress('Creating a registration-free address through localhost.run…');
   return processTunnel(options, process.env.TURNWIRE_SSH_PATH ?? '/usr/bin/ssh', [
     '-F', '/dev/null', '-T', '-o', 'BatchMode=yes', '-o', 'IdentityAgent=none', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityFile=none',
     '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no', '-o', 'StrictHostKeyChecking=accept-new',
     '-o', 'UserKnownHostsFile=' + join(directory, 'known_hosts'), '-o', 'ConnectTimeout=15', '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2', '-R', `80:127.0.0.1:${options.port}`, 'nokey@localhost.run', '--', '--output', 'json',
-  ], localhostAddress, 'localhost.run 连接失败，请检查网络或选择其他通道');
+  ], localhostAddress, 'localhost.run connection failed; check the network or choose another channel');
 }
