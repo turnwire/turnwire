@@ -16,7 +16,7 @@
 
 成功：`{ "v": 1, "id": "...", "ok": true, "result": ... }`。失败：`{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`。
 
-方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queueAction`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
+方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
 
 会话命令按会话串行化；cancel 保持独立，因此 Stop 不会排在慢 prompt 之后等待。审批命令按审批串行化。每个成功的决定只应用一次。Runtime 断开和 daemon 重启会取消未完成的审批。
 
@@ -83,6 +83,8 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 加密的 `subscribe` 接受数字 `after` 或 `"latest"`。后者从当前 journal 游标开始，避免为连接健康检查或快照请求进行历史重放。显式事件监听器从快照游标开始订阅，以覆盖并发变更。客户端不得把位于或早于其快照游标的元数据事件应用到当前状态。页面获取与实时事件使用页面 watermark 进行对账，watermark 之后的 delta 只应用一次。
 
 ## 还没跑的那条提示
+
+`session.queue {sessionId}` 返回 `{items: [{messageId, target, text}]}` —— 还在排队的提示，`next-turn` 在 `next-step` 之前。它是读取，因此刚加载页面的客户端不必"看着队列长出来"就能渲染它；`text` 是 runtime 自己那份，所以任何一端改过的内容，其他端看到的都是改后的。
 
 `session.queueAction {sessionId, messageId, action}` 修改一条还排在运行中回合后面的提示。`messageId` 是客户端拿到的那条消息的 id；runtime 会把它翻译成自己队列里的条目，因此已经过期的行只会失败，不会改到别的提示上。动作有三种：`{kind:"edit", text}`、`{kind:"remove"}`、`{kind:"steer"}` —— 改写它、收回它，或者把它送进正在运行的那个回合。已经离开队列的提示返回 `QUEUE_ITEM_GONE`。
 

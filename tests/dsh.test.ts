@@ -205,6 +205,20 @@ it('changes a waiting prompt by the id the client knows, not the one the Host mi
   await runtime.queueAction('s', 'client-1', { kind: 'remove' });
   expect(host.calls.at(-1)?.args).toMatchObject({ request: { action: { kind: 'remove' } } });
 });
+it('lists what is still waiting, so a page that just loaded knows the queue', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  host.setQueued([
+    { itemId: 'dsh-1', rpcId: 'client-1', text: 'first draft' },
+    // A prompt queued by another client of the same Host has no Turnwire id, so no Turnwire client
+    // could act on it and it is not offered as one of ours.
+    { itemId: 'dsh-2', text: 'from the Host own Web UI' },
+    { itemId: 'dsh-3', rpcId: 'client-3', text: 'steered', step: true },
+  ]);
+  await expect(runtime.listQueue('s')).resolves.toEqual([
+    { messageId: 'client-1', target: 'next-turn', text: 'first draft' },
+    { messageId: 'client-3', target: 'next-step', text: 'steered' },
+  ]);
+});
 it('says a prompt is gone when it is no longer waiting, from either side of the race', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
   host.setQueued([{ itemId: 'dsh-1', rpcId: 'client-1', text: 'first draft' }]);

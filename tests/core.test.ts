@@ -91,7 +91,7 @@ describe('durable daemon ownership', () => {
   it('rewrites the journal when a prompt is changed before it ever runs', async () => {
     class QueueRuntime extends DemoRuntime {
       readonly handled: string[] = [];
-      async queueAction(_sessionId: string, _messageId: string, action: { kind: string }) { this.handled.push(action.kind); }
+      override async queueAction(_sessionId: string, _messageId: string, action: { kind: string }) { this.handled.push(action.kind); }
     }
     const store = new Store(':memory:');
     const runtime = new QueueRuntime();
@@ -111,6 +111,18 @@ describe('durable daemon ownership', () => {
     // Taken back before it ran, so the transcript does not claim it happened.
     expect(queued()).toBeUndefined();
     expect(runtime.handled).toEqual(['edit', 'steer', 'remove']);
+  });
+  it('reads the queue from the runtime, not from what this client happened to watch arrive', async () => {
+    const { core, store } = setup(); const created = await session(core);
+    await call(core, 'first', 'session.message', { sessionId: created.id, text: 'Needs approval' });
+    await call(core, 'second', 'session.message', { sessionId: created.id, text: 'waiting one' });
+    const items = async () => value<{ items: Array<{ messageId: string; target: string; text: string }> }>(await call(core, 'queue', 'session.queue', { sessionId: created.id }));
+    expect(await items()).toEqual({ items: [{ messageId: 'second', target: 'next-turn', text: 'waiting one' }] });
+    // A page that has just loaded asks the same question and gets the same answer, which is the
+    // whole point: the queue is the runtime's, not this tab's memory of the event stream.
+    const approval = store.approvals().find(candidate => candidate.sessionId === created.id && candidate.status === 'pending')!;
+    await call(core, 'approve', 'approval.decide', { approvalId: approval.id, decision: 'approved' });
+    expect((await items()).items).toEqual([]);
   });
   it('does not replay a command whose result was interrupted by a crash', async () => {
     const { core, store } = setup(); const params = { cwd: process.cwd(), runtimeId: 'demo' };

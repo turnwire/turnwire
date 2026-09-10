@@ -93,6 +93,18 @@ export const subagentViewSchema = z.object({
 });
 export type SubagentView = z.infer<typeof subagentViewSchema>;
 /**
+ * One prompt that is still waiting behind a running turn, as the runtime holds it. `messageId` is
+ * the id this prompt was published under, which is also how a client addresses it for an action;
+ * `text` is the runtime's copy, so a client that just loaded the page shows the prompt as it is now
+ * rather than as it was first sent.
+ */
+export const queueItemViewSchema = z.object({
+  messageId: idSchema,
+  target: z.enum(['next-turn', 'next-step']),
+  text: z.string(),
+});
+export type QueueItemView = z.infer<typeof queueItemViewSchema>;
+/**
  * What a client may do to a prompt that is still waiting in the runtime's queue: change its text,
  * take it back, or move it into the turn that is already running.
  */
@@ -121,6 +133,8 @@ export const methodSchemas = {
   'session.cancel': z.object({ sessionId: idSchema }).strict(),
   /** Change a prompt that has not run yet, addressed by the id the client already shows for it. */
   'session.queueAction': z.object({ sessionId: idSchema, messageId: idSchema, action: queueActionSchema }).strict(),
+  /** The prompts still waiting behind the running turn. A read, so any client may render them. */
+  'session.queue': z.object({ sessionId: idSchema }).strict(),
   'session.setModel': z.object({ sessionId: idSchema, provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict(),
   'model.catalog': z.object({ runtimeId: idSchema.optional() }).strict(),
   'approval.decide': z.object({ approvalId: idSchema, decision: z.enum(['approved', 'rejected']) }).strict(),

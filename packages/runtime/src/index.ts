@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
 export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
@@ -37,6 +37,12 @@ export interface AgentRuntime {
    * prompt; the runtime resolves it against its own queue. Runtimes without a queue leave this out.
    */
   queueAction?(sessionId: string, messageId: string, action: QueueAction): Promise<void>;
+  /**
+   * The prompts still waiting behind the running turn, in the order the runtime will run them. A
+   * client that has just loaded the page has seen no events, so this — not its own history — is how
+   * it knows what is queued. Runtimes without a queue leave this out and report nothing queued.
+   */
+  listQueue?(sessionId: string): Promise<QueueItemView[]>;
   /**
    * Apply a selection and return what the runtime accepted. A runtime resolves defaults
    * (for example a reasoning effort) and may reject an unknown route, so callers render

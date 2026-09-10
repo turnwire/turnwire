@@ -16,7 +16,7 @@ Local clients POST `/rpc` with `Authorization: Bearer <local-token>`. Request:
 
 Success: `{ "v": 1, "id": "...", "ok": true, "result": ... }`. Failure: `{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`.
 
-Methods: `system.snapshot`, `session.create`, `session.resume`, `session.message`, `session.cancel`, `session.queueAction`, `session.rename`, `session.archive`, `approval.decide`, `events.list`, `history.page`, `subagent.list`, `inbox.page`, `request.result`, `notifications.status`, `notifications.subscribe`, `notifications.unsubscribe`. Inputs are validated at the daemon boundary. Request IDs persist across restarts for mutations. An identical ID/payload returns the previous receipt. A changed payload conflicts. If the process died after reservation but before receipt persistence, Turnwire returns `OUTCOME_UNKNOWN` rather than replaying a potentially completed operation. This is an at-most-once submission boundary, not a claim of distributed exactly-once execution.
+Methods: `system.snapshot`, `session.create`, `session.resume`, `session.message`, `session.cancel`, `session.queue`, `session.queueAction`, `session.rename`, `session.archive`, `approval.decide`, `events.list`, `history.page`, `subagent.list`, `inbox.page`, `request.result`, `notifications.status`, `notifications.subscribe`, `notifications.unsubscribe`. Inputs are validated at the daemon boundary. Request IDs persist across restarts for mutations. An identical ID/payload returns the previous receipt. A changed payload conflicts. If the process died after reservation but before receipt persistence, Turnwire returns `OUTCOME_UNKNOWN` rather than replaying a potentially completed operation. This is an at-most-once submission boundary, not a claim of distributed exactly-once execution.
 
 Session commands serialize per session; cancel remains independent so Stop cannot wait behind a slow prompt. Approval commands serialize per approval. Each successful decision applies once. Runtime disconnect and daemon restart cancel outstanding approvals.
 
@@ -83,6 +83,8 @@ The local token and every paired device have full control over Turnwire's config
 Encrypted `subscribe` accepts a numeric `after` or `"latest"`. The latter starts at the current journal cursor, avoiding historical replay for a connection health check or snapshot request. An explicit event listener subscribes from the snapshot cursor to cover concurrent changes. Clients must not apply metadata events at or below their snapshot cursor to current state. Page fetches and live events are reconciled using the page watermark, with deltas after the watermark applied once.
 
 ## A prompt that has not run yet
+
+`session.queue {sessionId}` returns `{items: [{messageId, target, text}]}` — the prompts still waiting, `next-turn` before `next-step`. It is a read, so a client that has just loaded the page renders the queue without having watched it fill up, and `text` is the runtime's copy, so an edit made anywhere is what every client shows.
 
 `session.queueAction {sessionId, messageId, action}` changes a prompt that is still waiting behind a running turn. `messageId` is the id the client was given for that prompt; the runtime translates it to its own queue entry, so a stale row fails instead of changing a different prompt. The action is `{kind:"edit", text}`, `{kind:"remove"}` or `{kind:"steer"}` — rewrite it, take it back, or move it into the turn that is already running. A prompt that has left the queue answers `QUEUE_ITEM_GONE`.
 

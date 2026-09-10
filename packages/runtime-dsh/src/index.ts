@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
@@ -30,7 +30,7 @@ const subagentDetailSchema = z.object({ sessionId: z.string(), projections: z.ob
 }).optional() }).passthrough();
 interface SubagentDetail { label?: string; title?: string; elapsedMs?: number; todos: SubagentView['todos'] }
 /** One prompt still waiting in a session's inbox, with the client id it arrived under. */
-const inboxMessageSchema = z.object({ id: z.string(), source: z.object({ rpcId: z.string().optional() }).passthrough().optional() }).passthrough();
+const inboxMessageSchema = z.object({ id: z.string(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()), source: z.object({ rpcId: z.string().optional() }).passthrough().optional() }).passthrough();
 const sessionInboxSchema = z.object({ sessionId: z.string(), projections: z.object({ inbox: z.object({ 'next-turn': z.array(z.unknown()), 'next-step': z.array(z.unknown()) }).optional() }).optional() }).passthrough();
 export interface DshOptions {
   url: string; token?: string;
@@ -153,17 +153,31 @@ export class DshRuntime implements AgentRuntime {
     }
   }
   /** The prompts still waiting in one session, in the order the Host will run them. */
-  private async queuedItems(sessionId: string): Promise<Array<{ itemId: string; rpcId?: string }>> {
+  /**
+   * The prompts this session is still holding behind the running turn. A client that has just
+   * loaded the page has seen no events, so this is the only way it can show what is queued — and
+   * the text is read here rather than remembered from the send, so an edit made anywhere is what
+   * the client renders.
+   */
+  async listQueue(sessionId: string): Promise<QueueItemView[]> {
+    try { await this.connect(); } catch { return []; }
+    return (await this.queuedItems(sessionId))
+      .filter(entry => entry.rpcId !== undefined)
+      .map(entry => ({ messageId: entry.rpcId!, target: entry.step ? 'next-step' as const : 'next-turn' as const, text: entry.text }));
+  }
+  private async queuedItems(sessionId: string): Promise<Array<{ itemId: string; rpcId?: string; step: boolean; text: string }>> {
     const value = z.object({ items: z.array(z.unknown()) }).parse(await this.rpc('session/list', { _request: {} }));
     for (const row of value.items) {
       const parsed = sessionInboxSchema.safeParse(row);
       if (!parsed.success || parsed.data.sessionId !== sessionId) continue;
       const inbox = parsed.data.projections?.inbox;
       if (inbox === undefined) return [];
-      return [...inbox['next-turn'], ...inbox['next-step']].flatMap(entry => {
+      const read = (entries: unknown[], step: boolean) => entries.flatMap(entry => {
         const message = inboxMessageSchema.safeParse(entry);
-        return message.success ? [{ itemId: message.data.id, ...(message.data.source?.rpcId === undefined ? {} : { rpcId: message.data.source.rpcId }) }] : [];
+        if (!message.success) return [];
+        return [{ itemId: message.data.id, step, text: message.data.content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join('\n'), ...(message.data.source?.rpcId === undefined ? {} : { rpcId: message.data.source.rpcId }) }];
       });
+      return [...read(inbox['next-turn'], false), ...read(inbox['next-step'], true)];
     }
     return [];
   }

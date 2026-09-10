@@ -69,20 +69,29 @@ try {
   expect(bounded.rows).toBe(13);
   expect(bounded.height).toBeLessThanOrEqual(bounded.limit + 1);
   expect(bounded.scrolls).toBe(true);
+  // A page that has just loaded has seen no events at all, so the queue has to come from the host.
+  // This is the regression: the list used to be this tab's memory of what it watched arrive, so
+  // re-entering the page silently dropped everything that was waiting.
+  await page.reload();
+  await expect(page.locator('.queued-item')).toHaveCount(1);
+  await expect(page.locator('.queued-item .queued-text')).toHaveAttribute('title', queuedText);
+  await expect(page.locator('.queued-item').getByRole('button')).toHaveText(['Edit', 'Cancel', 'Jump the queue']);
   await page.screenshot({ path: join(output, 'desktop-session.png'), fullPage: true, animations: 'disabled' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
   await page.screenshot({ path: join(output, 'mobile-approval.png'), fullPage: true, animations: 'disabled' });
   const overflowing = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   expect(overflowing).toBe(false);
-  // The queued prompt raised an approval of its own — the demo answers every send — so both are
-  // settled here, one at a time, and the queue row goes with the turn it belonged to.
-  await expect(page.locator('.approval-panel')).toHaveCount(2);
+  // Settling the turn drains the queue: the prompt that was waiting runs, and since its own text
+  // asks for approval it raises one, which is then settled too. The row goes with the turn it
+  // belonged to, and nothing about it survives as a stale control.
+  await expect(page.locator('.approval-panel')).toHaveCount(1);
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
+  await expect(page.locator('.queued-item')).toHaveCount(0);
   await expect(page.locator('.approval-panel')).toHaveCount(1);
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect(page.locator('.approval-panel')).toHaveCount(0);
-  await expect(page.locator('.queued-item')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open session list' }).click();
   await expect(page.getByRole('navigation', { name: 'Session list' })).toBeVisible();
   await page.getByRole('button', { name: 'Close list', exact: true }).click();
@@ -104,6 +113,14 @@ try {
   await page.locator('.session-actions summary').click();
   await page.locator('.composer-area').getByRole('button', { name: 'Unarchive', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+  // The shell survives going offline, and it is the shell this run was using: every successful
+  // navigation replaces the cached page, so the fallback cannot resurrect an older interface.
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker?.controller !== null)).toBe(true);
+  await context.setOffline(true);
+  await page.reload();
+  expect(await page.title()).toBe('Turnwire Remote');
+  await expect(page.locator('#root')).not.toBeEmpty();
+  await context.setOffline(false);
   expect(errors).toEqual([]);
   console.log('UI checks passed: connection, create, prompt, approval, responsive layout, persisted history.');
   console.log(`Screenshots: ${output}`);

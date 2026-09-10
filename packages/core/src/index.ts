@@ -39,7 +39,7 @@ export class TurnwireCore {
     if (!parsed.success) return errorResponse('invalid', parsed.error);
     const request = parsed.data;
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
-    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
+    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'session.queue' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
       try { return { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; } catch (error) { return errorResponse(request.id, error); }
     }
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: request.method, params: request.params, ...(request.method.startsWith('notifications.') ? { clientId: context?.clientId } : {}) })).digest('hex');
@@ -70,6 +70,11 @@ export class TurnwireCore {
         return request.method === 'notifications.subscribe' ? this.notifications.subscribe(context.clientId, methodSchemas['notifications.subscribe'].parse(request.params)) : this.notifications.unsubscribe(context.clientId);
       }
       case 'history.page': { const p = methodSchemas['history.page'].parse(request.params); this.session(p.sessionId); return this.store.history(p.sessionId, p.limit, p.before); }
+      case 'session.queue': {
+        const p = methodSchemas['session.queue'].parse(request.params);
+        const session = this.session(p.sessionId); const runtime = this.runtime(session.runtimeId);
+        return { items: runtime.listQueue ? await runtime.listQueue(session.runtimeSessionId) : [] };
+      }
       case 'subagent.list': {
         const p = methodSchemas['subagent.list'].parse(request.params);
         const session = this.session(p.sessionId); const runtime = this.runtime(session.runtimeId);

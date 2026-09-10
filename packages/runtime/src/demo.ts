@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, RuntimeCapabilities } from '@turnwire/protocol';
+import type { ApprovalDecision, QueueAction, QueueItemView, RuntimeCapabilities } from '@turnwire/protocol';
 import { TurnwireError } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from './index.js';
 
@@ -10,33 +10,63 @@ export class DemoRuntime implements AgentRuntime {
   private sessions = new Map<string, RuntimeSession>();
   private listeners = new Map<string, Set<(event: RuntimeEvent) => void>>();
   private pending = new Map<string, { sessionId: string; messageId: string }>();
-  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: false, backgroundTasks: false, modelSelection: false }; }
+  /**
+   * Prompts that arrived while a turn was still going, held in order like a real runtime's queue.
+   * The demo used to answer every prompt on the spot, which made a client's queue view impossible
+   * to exercise offline: this is what `listQueue` reports and what drains when the turn ends.
+   */
+  private queues = new Map<string, Array<{ messageId: string; text: string }>>();
+  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: true, backgroundTasks: false, modelSelection: false }; }
   async health() { return { online: true, message: 'Offline demo: runs no code and calls no model' }; }
   async createSession(options: { id: string; cwd: string }) { const session: RuntimeSession = { ...options, status: 'idle' }; this.sessions.set(session.id, session); return session; }
   async resumeSession(options: { id: string; cwd: string }) { return this.sessions.get(options.id) ?? this.createSession(options); }
   async listSessions() { return [...this.sessions.values()]; }
+  async listQueue(sessionId: string): Promise<QueueItemView[]> { return (this.queues.get(sessionId) ?? []).map(item => ({ messageId: item.messageId, target: 'next-turn' as const, text: item.text })); }
+  async queueAction(sessionId: string, messageId: string, action: QueueAction) {
+    const queue = this.queues.get(sessionId) ?? [];
+    const index = queue.findIndex(item => item.messageId === messageId);
+    if (index < 0) throw new TurnwireError('QUEUE_ITEM_GONE', 'That prompt is no longer waiting to run');
+    if (action.kind === 'edit') { queue[index] = { ...queue[index]!, text: action.text }; return; }
+    const [item] = queue.splice(index, 1); this.queues.set(sessionId, queue);
+    // Steering takes the prompt out of the queue and into the turn that is already running.
+    if (action.kind === 'steer') this.answer(sessionId, item!.text);
+  }
   async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }) {
     this.emit(sessionId, { type: 'message.user', messageId: input.id, text: input.text });
-    this.emit(sessionId, { type: 'status', status: 'running' });
-    const messageId = randomUUID();
-    const text = `This is Turnwire's offline demo session. Received: ${input.text}\n\nSessions, output and approvals sync to every connected client. Connect DSH to run real development tasks.`;
-    this.emit(sessionId, { type: 'message.delta', messageId, text: text.slice(0, 24) });
-    this.emit(sessionId, { type: 'message.completed', messageId, text });
-    if (/approval|approve|审批|批准/i.test(input.text)) {
-      const requestId = randomUUID(); this.pending.set(requestId, { sessionId, messageId });
-      this.emit(sessionId, { type: 'approval.requested', requestId, tool: 'demo approval', reason: 'Verifies cross-client approval sync. This action runs no command.' });
-    } else this.emit(sessionId, { type: 'status', status: 'idle' });
+    // A prompt that arrives while a turn is going waits behind it, unless it steers that turn.
+    if (input.steer !== true && this.running(sessionId)) {
+      const queue = this.queues.get(sessionId) ?? []; queue.push({ messageId: input.id, text: input.text }); this.queues.set(sessionId, queue);
+      return;
+    }
+    this.answer(sessionId, input.text);
   }
   async cancel(sessionId: string) {
     for (const [id, pending] of this.pending) if (pending.sessionId === sessionId) { this.pending.delete(id); this.emit(sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); }
+    this.queues.delete(sessionId);
     this.emit(sessionId, { type: 'status', status: 'idle' });
   }
   async approve(sessionId: string, requestId: string, decision: ApprovalDecision) {
     if (this.pending.get(requestId)?.sessionId !== sessionId) throw new TurnwireError('APPROVAL_EXPIRED', 'The approval has expired');
     this.pending.delete(requestId); this.emit(sessionId, { type: 'approval.resolved', requestId, decision });
     this.emit(sessionId, { type: 'status', status: 'idle' });
+    // The turn is over, so whatever was waiting behind it runs now.
+    for (const item of this.queues.get(sessionId) ?? []) this.answer(sessionId, item.text);
+    this.queues.delete(sessionId);
   }
   subscribe(id: string, listener: (event: RuntimeEvent) => void) { const listeners = this.listeners.get(id) ?? new Set(); listeners.add(listener); this.listeners.set(id, listeners); return () => { listeners.delete(listener); }; }
+  private running(sessionId: string) { return [...this.pending.values()].some(pending => pending.sessionId === sessionId); }
+  /** Produce the demo's canned answer, and an approval when the prompt asks for one. */
+  private answer(sessionId: string, prompt: string) {
+    this.emit(sessionId, { type: 'status', status: 'running' });
+    const messageId = randomUUID();
+    const text = `This is Turnwire's offline demo session. Received: ${prompt}\n\nSessions, output and approvals sync to every connected client. Connect DSH to run real development tasks.`;
+    this.emit(sessionId, { type: 'message.delta', messageId, text: text.slice(0, 24) });
+    this.emit(sessionId, { type: 'message.completed', messageId, text });
+    if (/approval|approve|审批|批准/i.test(prompt)) {
+      const requestId = randomUUID(); this.pending.set(requestId, { sessionId, messageId });
+      this.emit(sessionId, { type: 'approval.requested', requestId, tool: 'demo approval', reason: 'Verifies cross-client approval sync. This action runs no command.' });
+    } else this.emit(sessionId, { type: 'status', status: 'idle' });
+  }
   private emit(id: string, event: RuntimeEvent) { if (event.type === 'status') { const session = this.sessions.get(id); if (session) session.status = event.status; } for (const listener of this.listeners.get(id) ?? []) listener(event); }
-  async dispose() { this.listeners.clear(); this.pending.clear(); }
+  async dispose() { this.listeners.clear(); this.pending.clear(); this.queues.clear(); }
 }

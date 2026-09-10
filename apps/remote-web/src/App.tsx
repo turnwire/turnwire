@@ -1,10 +1,10 @@
 import { Inbox } from './Inbox';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, SubagentView } from '@turnwire/protocol';
+import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
@@ -75,12 +75,12 @@ export function App() {
   // conversation and the keyboard, so the control appears only when it is wanted.
   const [showModel, setShowModel] = useState(false);
   // Queued prompts are shown as their own list above the composer instead of inside the running
-  // turn's flow. The ids come from the live stream, so history never has to guess what is still
-  // waiting; when the turn ends the list clears and the messages read normally in the transcript.
-  const [queuedIds, setQueuedIds] = useState<string[]>([]);
+  // turn's flow. The list is the runtime's own queue, not this tab's memory of what it saw arrive:
+  // a page that has just loaded, or one that was asleep while another client queued something, must
+  // still show what is waiting.
+  const [queue, setQueue] = useState<QueueItemView[]>([]);
   const turnRunning = ['running', 'waiting_approval'].includes(session?.status ?? '');
-  useEffect(() => { if (!turnRunning) setQueuedIds([]); }, [turnRunning]);
-  const pending = useMemo(() => turnRunning ? messages.filter(message => message.role === 'user' && message.queued && queuedIds.includes(message.id)) : [], [messages, turnRunning, queuedIds]);
+  const pending = useMemo(() => queue.map(item => ({ id: item.messageId, text: item.text })), [queue]);
   const visible = useMemo(() => pending.length ? messages.filter(message => !pending.some(item => item.id === message.id)) : messages, [messages, pending]);
   /**
    * Background agents the session has delegated to. A delegation returns at once, so the transcript
@@ -109,10 +109,25 @@ export function App() {
   // turn that is already going. The row owns those actions, so nothing else in the page repeats them.
   const [editingQueued, setEditingQueued] = useState<string>();
   const [queuedDraft, setQueuedDraft] = useState('');
+  const refreshQueue = useCallback(async (sessionId: string) => {
+    const client = clientRef.current; if (!client) return;
+    try { const result = await client.request<{ items: QueueItemView[] }>('session.queue', { sessionId }); setQueue(result.items); }
+    catch { setQueue([]); }
+  }, []);
+  useEffect(() => {
+    if (!selected || !session || session.archived || !clientRef.current) { setQueue([]); return; }
+    void refreshQueue(selected);
+    // A queued prompt is short-lived and can change from another client, so it is polled while the
+    // turn runs and once more when it settles rather than trusted to a local guess.
+    if (!turnRunning) return;
+    const timer = setInterval(() => void refreshQueue(selected), 4000);
+    return () => clearInterval(timer);
+  }, [selected, session?.archived, session?.status, turnRunning, state, refreshQueue]);
   async function changeQueued(messageId: string, action: { kind: 'remove' | 'steer' } | { kind: 'edit'; text: string }) {
     if (!session) return;
     await perform(async c => { await c.request('session.queueAction', { sessionId: session.id, messageId, action }); });
     setEditingQueued(undefined);
+    await refreshQueue(session.id);
   }
   /** Adjacent tool calls become one row; everything else renders on its own. */
   const rows = useMemo(() => {
@@ -138,9 +153,13 @@ export function App() {
   /** Sending is always queueing; steering is the separate action that jumps the queue. */
   function submit(text: string, asSteer: boolean) {
     if (!session) return;
+    const sessionId = session.id;
     void perform(async c => {
-      await c.request('session.message', { sessionId: session.id, text, ...(asSteer ? { steer: true } : {}) });
+      await c.request('session.message', { sessionId, text, ...(asSteer ? { steer: true } : {}) });
       setPrompt('');
+      // The prompt may have been accepted into the queue rather than run, so read the queue back
+      // instead of assuming which of the two happened.
+      await refreshQueue(sessionId);
     });
   }
   function chooseModel(provider: string, model: string, reasoningEffort?: string) { void perform(async c => { await c.request('session.setModel', { sessionId: session!.id, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) }); }); }
@@ -164,8 +183,6 @@ export function App() {
         if (!active) return;
         pending.push(event);
         // Narrow before the closure: the checker does not keep it inside the updater.
-        const queuedId = event.data.type === 'message.user' && event.data.queued ? event.data.messageId : undefined;
-        if (queuedId) setQueuedIds(ids => ids.includes(queuedId) ? ids : [...ids, queuedId]);
         const history = historyRef.current; const d = event.data;
         if (history && ('sessionId' in d ? d.sessionId : 'approval' in d ? d.approval.sessionId : undefined) === history.sessionId) history.buffer.apply(event);
         if (!flush) flush = setTimeout(() => {
