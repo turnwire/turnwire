@@ -130,6 +130,20 @@ try {
   await expect(question.getByRole('button', { name: /SQLite/ })).toHaveClass(/chosen/);
   await question.getByRole('button', { name: 'Send answer', exact: true }).click();
   await expect(page.locator('.question-panel')).toHaveCount(0);
+  // A turn of several steps reads as one speaker: the tool call is the assistant acting, so the
+  // reply after it continues that run and carries no name, avatar or time of its own.
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('toolme: run something');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.locator('.tool-message').last()).toBeVisible();
+  const followUp = page.locator('.message.assistant').last();
+  await expect(followUp).toHaveClass(/follow/);
+  await expect(followUp.locator('.message-author')).toHaveCount(0);
+  // The next prompt opens a run of its own, so it carries its author again.
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('普通一条');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const nextUser = page.locator('.message.user').last();
+  expect(await nextUser.getAttribute('class')).not.toContain('follow');
+  await expect(nextUser.locator('.message-author')).toHaveCount(1);
   await page.getByRole('button', { name: 'Open session list' }).click();
   await expect(page.getByRole('navigation', { name: 'Session list' })).toBeVisible();
   await page.getByRole('button', { name: 'Close list', exact: true }).click();

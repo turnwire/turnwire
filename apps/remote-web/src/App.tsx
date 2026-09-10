@@ -156,13 +156,20 @@ export function App() {
     setEditingQueued(undefined);
     await refreshQueue(session.id);
   }
-  /** Adjacent tool calls become one row; everything else renders on its own. */
+  /**
+   * Adjacent tool calls become one row, and a row is marked when it opens a run by a new author —
+   * a tool call is the assistant acting, so it continues the assistant's run. Only the row that
+   * opens a run carries the name, avatar and time; repeating that on every reply is chrome the
+   * conversation pays for on a phone.
+   */
   const rows = useMemo(() => {
-    const output: Array<{ key: string; tools?: ConversationMessage[]; message?: ConversationMessage }> = [];
+    const output: Array<{ key: string; tools?: ConversationMessage[]; message?: ConversationMessage; lead: boolean }> = [];
     for (const message of visible) {
+      const author = message.role === 'user' ? 'user' : 'assistant';
       const last = output[output.length - 1];
-      if (message.role === 'tool') { if (last?.tools) last.tools.push(message); else output.push({ key: message.id, tools: [message] }); }
-      else output.push({ key: message.id, message });
+      const lastAuthor = last === undefined ? undefined : last.tools !== undefined || last.message?.role !== 'user' ? 'assistant' : 'user';
+      if (message.role === 'tool' && last?.tools !== undefined) { last.tools.push(message); continue; }
+      output.push({ key: message.id, ...(message.role === 'tool' ? { tools: [message] } : { message }), lead: lastAuthor !== author });
     }
     return output;
   }, [visible]);
@@ -295,7 +302,7 @@ export function App() {
             {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? t('conversation.loadingEarlier') : historyError ? t('conversation.retryEarlier') : t('conversation.loadEarlier')}</button>}
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />{t('conversation.loading')}</div>}
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
-            {rows.map(row => row.tools ? <ToolRun key={row.key} items={row.tools} running={turnRunning} /> : <article className={`message ${row.message!.role}`} key={row.key}><div className="message-author">{row.message!.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon.svg" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(row.message!.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>{row.message!.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{row.message!.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div><div className="message-text">{row.message!.role === 'assistant' ? <MarkdownMessage text={row.message!.text} id={row.message!.id} /> : row.message!.text}{!row.message!.complete && <span className="cursor" />}</div></article>)}
+            {rows.map(row => row.tools ? <ToolRun key={row.key} items={row.tools} running={turnRunning} /> : <article className={`message ${row.message!.role}${row.lead ? '' : ' follow'}`} key={row.key}>{row.lead && <div className="message-author">{row.message!.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon.svg" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(row.message!.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>}{(row.message!.queued || row.message!.steer) && <div className="message-tags">{row.message!.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{row.message!.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div>}<div className="message-text">{row.message!.role === 'assistant' ? <MarkdownMessage text={row.message!.text} id={row.message!.id} /> : row.message!.text}{!row.message!.complete && <span className="cursor" />}</div></article>)}
             <div ref={bottom} /></div></section>
           <footer className="composer-area"><div className="composer-width">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
             {questions.map(question => <QuestionPanel key={question.id} question={question} disabled={busy || !connected} onAnswer={answers => void perform(async c => { await c.request('question.answer', { questionId: question.id, answers }); })} />)}

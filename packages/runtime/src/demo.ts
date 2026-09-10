@@ -71,6 +71,13 @@ export class DemoRuntime implements AgentRuntime {
   /** Produce the demo's canned answer, and an approval when the prompt asks for one. */
   private answer(sessionId: string, prompt: string) {
     this.emit(sessionId, { type: 'status', status: 'running' });
+    // A prompt that asks for a tool call produces one first, so a turn of several steps — a step
+    // that acts, then a step that reports — can be exercised without a model behind it.
+    if (/toolme/i.test(prompt)) {
+      const callId = randomUUID();
+      this.emit(sessionId, { type: 'tool.started', callId, tool: 'shell', detail: '{"command":"echo demo"}' });
+      this.emit(sessionId, { type: 'tool.finished', callId, tool: 'shell', detail: 'demo' });
+    }
     const messageId = randomUUID();
     const text = `This is Turnwire's offline demo session. Received: ${prompt}\n\nSessions, output and approvals sync to every connected client. Connect DSH to run real development tasks.`;
     this.emit(sessionId, { type: 'message.delta', messageId, text: text.slice(0, 24) });
