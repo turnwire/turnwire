@@ -151,22 +151,11 @@ try {
   const available = candidates.length ? candidates : routable;
   const target = available.find(entry => entry.model.reasoning?.efforts.length) ?? available[0];
   const targetButton = modelButton(target.provider, target.model.id);
-  const search = picker.getByRole('searchbox', { name: 'Search models', exact: true });
-  await expect(search).toBeFocused();
-  await search.fill(target.model.id);
+  await expect(picker.getByRole('searchbox')).toHaveCount(0);
+  await expect(picker).toBeFocused();
   await expect(targetButton).toBeVisible();
-  const query = target.model.id.toLowerCase();
-  const matches = entries.filter(entry => [entry.provider, entry.group.name, entry.model.id, entry.model.name].some(value => value.toLowerCase().includes(query)));
-  await expect(modelButtons).toHaveCount(matches.length);
-  // Generate a query absent from this catalog, rather than assuming a particular name is absent.
-  let absent = 'no-matching-runtime-model';
-  while (entries.some(entry => [entry.provider, entry.group.name, entry.model.id, entry.model.name].some(value => value.toLowerCase().includes(absent)))) absent += '-x';
-  await search.fill(absent);
-  await expect(modelButtons).toHaveCount(0);
-  await expect(picker.getByRole('status')).toHaveText('No matching models');
-  await search.fill('');
   await expect(modelButtons).toHaveCount(entries.length);
-  await search.press('Escape');
+  await picker.press('Escape');
   await expect(picker).toHaveCount(0);
   await expect(chip).toBeFocused();
   // Refresh failures retain runtime-owned stale options and provide a retry, not an endless spinner.
@@ -208,12 +197,11 @@ try {
   };
   await page.route(rpcUrl, failureRoute);
   try {
-    await search.fill(target.model.id);
-    await search.press('Enter');
-    await expect(search).toBeFocused();
+    await picker.focus();
+    await picker.press('Enter');
+    await expect(picker).toBeFocused();
     await expect(picker).toBeVisible();
     expect(setModelCalls).toBe(0);
-    await search.fill('');
     await targetButton.click();
     await expect.poll(() => setModelCalls).toBe(1);
     await expect(picker).toBeVisible();
@@ -236,8 +224,8 @@ try {
     await page.unroute(rpcUrl, failureRoute);
   }
 
-  await search.fill(target.model.id);
-  await search.press('ArrowDown');
+  await picker.focus();
+  await picker.press('ArrowDown');
   await expect(modelButtons.and(page.locator(':focus'))).toHaveCount(1);
   // A runtime may reuse model IDs across providers: walk the enabled matches to the chosen tuple.
   for (let index = 0; index < await modelButtons.count(); index++) {
@@ -258,7 +246,7 @@ try {
   try {
     await page.keyboard.press('Enter');
     await expect.poll(() => successHeld).toBe(true);
-    await search.press('Escape');
+    await picker.press('Escape');
     const composerInput = page.locator('.composer textarea');
     await composerInput.focus();
     releaseSuccess();
@@ -324,7 +312,7 @@ try {
   await expect(picker.getByRole('alert')).toHaveCount(0);
 
   expect(errors).toEqual([]);
-  console.log('UI model checks passed: mobile sidebar inert/open-close focus and desktop availability, catalog loading/initial failure/stale failure/retry, delayed selection preserves composer focus, long default wrapping,  phone geometry, runtime-grouped searchable list, checked current model, Escape focus restoration, pending duplicate lock, inline failure/retry, success closes, runtime effort options where available, selection survives reload.');
+  console.log('UI model checks passed: mobile sidebar inert/open-close focus and desktop availability, catalog loading/initial failure/stale failure/retry, delayed selection preserves composer focus, long default wrapping,  phone geometry, runtime-grouped list without search input, checked current model, Escape focus restoration, pending duplicate lock, inline failure/retry, success closes, runtime effort options where available, selection survives reload.');
 } catch (error) {
   console.error('Page errors:', errors);
   console.error(await page.locator('body').innerText());
