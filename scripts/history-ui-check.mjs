@@ -24,21 +24,24 @@ const token = randomSecret(); const relay = await startRelay({ token, port: 0, w
 const origin = `http://127.0.0.1:${relay.port}`;
 const pairing = { v: 1, hostId: core.device.id, clientId: crypto.randomUUID(), name: 'Browser', relayUrl: origin.replace('http:', 'ws:') + '/relay', token: randomSecret(), key: randomSecret() };
 core.store.addDevice(pairing); const bridge = new RemoteBridge(core, pairing.relayUrl, token); bridge.start();
-const browser = await chromium.launch({ channel: 'chrome', headless: true }); const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+await context.addInitScript(() => { try { localStorage.setItem('turnwire.locale', 'en'); } catch { /* the app still defaults to English */ } });
+const page = await context.newPage();
 const errors = []; page.on('pageerror', e => errors.push(e.message));
 try {
   await expect.poll(() => bridge.connected).toBe(true);
   const start = Date.now(); await page.goto(origin + '/#pair=' + encodePairing(pairing));
   await expect(page.getByRole('heading', { name: '已完成的结果' })).toBeVisible();
-  await expect(page.locator('.status')).toHaveText('就绪');
+  await expect(page.locator('.status')).toHaveText('Ready');
   await expect(page.locator('.message, .tool-message')).toHaveCount(40);
-  await expect(page.locator('.tool-message summary')).toContainText('失败');
+  await expect(page.locator('.tool-message summary')).toContainText('Failed');
   const initialMs = Date.now() - start;
   // Holding the conversation at its oldest record pulls the next page in without a click.
   await page.locator('.conversation').evaluate(el => { el.scrollTop = 0; });
   await expect(page.locator('.message, .tool-message')).toHaveCount(80);
   // The manual control stays available as the fallback while more records remain.
-  await expect(page.getByRole('button', { name: '加载更早记录', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Load earlier records', exact: true })).toHaveCount(1);
   // Adding older history preserves the reading position, rather than jumping to the newest message.
   const scroll = await page.locator('.conversation').evaluate(el => ({ top: el.scrollTop, remaining: el.scrollHeight - el.scrollTop - el.clientHeight }));
   expect(scroll.top).toBeGreaterThan(500); expect(scroll.remaining).toBeGreaterThan(500);
@@ -47,15 +50,15 @@ try {
   runtime.emitFixture(session.id, { type: 'message.completed', messageId: 'live', text: 'New task finished' });
   runtime.emitFixture(session.id, { type: 'status', status: 'idle' });
   await expect(page.locator('.message.assistant').last()).toContainText('New task finished');
-  await expect(page.locator('.status')).toHaveText('就绪');
+  await expect(page.locator('.status')).toHaveText('Ready');
   await expect(page.locator('.cursor')).toHaveCount(0);
   await page.locator('.conversation').evaluate(el => { el.scrollTop = 0; });
   await expect(page.locator('.message, .tool-message')).toHaveCount(93);
-  await expect(page.getByRole('button', { name: '加载更早记录', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Load earlier records', exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.locator('.message.assistant').last()).toContainText('New task finished');
   await expect(page.locator('.message, .tool-message')).toHaveCount(40);
-  await expect(page.locator('.status')).toHaveText('就绪');
+  await expect(page.locator('.status')).toHaveText('Ready');
   expect(errors).toEqual([]);
   console.log(JSON.stringify({ initialMs, recordsFirstPage: 40, totalRecords: 93, autoLoadOnTop: true, scrollAnchor: true, liveCompletion: true, refreshedLatest: true }));
 } finally { await browser.close(); await bridge.close(); await relay.close(); await core.dispose(); }
