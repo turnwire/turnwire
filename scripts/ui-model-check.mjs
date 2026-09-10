@@ -28,6 +28,10 @@ try {
   // The picker has to survive the phone layout, which is where it is actually used.
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // The page itself must not move: the document fits the viewport and the conversation is the only
+  // scroller, so a thumb swipe cannot drag the topbar or the composer out from under the finger.
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1)).toBe(true);
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('.conversation')).overflowY)).toBe('auto');
 
   // The picker stays collapsed behind a chip so the composer keeps its height on a phone. The chip
   // itself has to be reachable without scrolling, and it must not live inside the conversation
