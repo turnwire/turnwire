@@ -34,9 +34,11 @@ try {
   await expect(page.locator('.message, .tool-message')).toHaveCount(40);
   await expect(page.locator('.tool-message summary')).toContainText('失败');
   const initialMs = Date.now() - start;
+  // Holding the conversation at its oldest record pulls the next page in without a click.
   await page.locator('.conversation').evaluate(el => { el.scrollTop = 0; });
-  await page.getByRole('button', { name: '加载更早记录', exact: true }).click();
   await expect(page.locator('.message, .tool-message')).toHaveCount(80);
+  // The manual control stays available as the fallback while more records remain.
+  await expect(page.getByRole('button', { name: '加载更早记录', exact: true })).toHaveCount(1);
   // Adding older history preserves the reading position, rather than jumping to the newest message.
   const scroll = await page.locator('.conversation').evaluate(el => ({ top: el.scrollTop, remaining: el.scrollHeight - el.scrollTop - el.clientHeight }));
   expect(scroll.top).toBeGreaterThan(500); expect(scroll.remaining).toBeGreaterThan(500);
@@ -48,7 +50,6 @@ try {
   await expect(page.locator('.status')).toHaveText('就绪');
   await expect(page.locator('.cursor')).toHaveCount(0);
   await page.locator('.conversation').evaluate(el => { el.scrollTop = 0; });
-  await page.getByRole('button', { name: '加载更早记录', exact: true }).click();
   await expect(page.locator('.message, .tool-message')).toHaveCount(93);
   await expect(page.getByRole('button', { name: '加载更早记录', exact: true })).toHaveCount(0);
   await page.reload();
@@ -56,5 +57,5 @@ try {
   await expect(page.locator('.message, .tool-message')).toHaveCount(40);
   await expect(page.locator('.status')).toHaveText('就绪');
   expect(errors).toEqual([]);
-  console.log(JSON.stringify({ initialMs, recordsFirstPage: 40, totalRecords: 93, scrollAnchor: true, liveCompletion: true, refreshedLatest: true }));
+  console.log(JSON.stringify({ initialMs, recordsFirstPage: 40, totalRecords: 93, autoLoadOnTop: true, scrollAnchor: true, liveCompletion: true, refreshedLatest: true }));
 } finally { await browser.close(); await bridge.close(); await relay.close(); await core.dispose(); }

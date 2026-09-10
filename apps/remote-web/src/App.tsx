@@ -6,6 +6,7 @@ import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, enc
 import type { ConnectionState, ConnectionHealth, TurnwireClient } from '@turnwire/sdk';
 import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
+import { shouldLoadEarlier } from './historyScroll';
 
 type Connection = { kind: 'local'; url: string; token: string } | { kind: 'remote'; code: string };
 const labels: Record<SessionStatus, string> = { idle: '就绪', running: '进行中', waiting_approval: '等待审批', interrupted: '已中断', error: '需要处理' };
@@ -31,6 +32,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [selected, setSelected] = useState<string>();
   const historyRef = useRef<{ sessionId: string; buffer: HistoryBuffer } | undefined>(undefined);
   const [before, setBefore] = useState<number | null>(null);
+  const autoPages = useRef(0); const historyBusy = useRef(false);
   const [historyError, setHistoryError] = useState(false);
   const scroller = useRef<HTMLElement>(null); const follow = useRef(true); const prepend = useRef<{ height: number; top: number } | undefined>(undefined);
   const [events, setEvents] = useState<TurnwireEvent[]>([]); const [state, setState] = useState<ConnectionState>('offline');
@@ -105,21 +107,23 @@ export function App() {
     if (!selected || !clientRef.current) { historyRef.current = undefined; setEvents([]); return; }
     let active = true; const buffer = new HistoryBuffer(); historyRef.current = { sessionId: selected, buffer };
     setEvents([]); setBefore(null); setLoading(true); setHistoryError(false); setRenameTitle(undefined); follow.current = true; buffer.begin();
+    autoPages.current = 0; historyBusy.current = false;
     void loadHistoryPage(clientRef.current, selected).then(page => {
       if (!active) return; buffer.merge(page, true); setEvents(buffer.events); setBefore(page.nextBefore); setLoading(false);
     }).catch(error => { if (active) { buffer.cancel(); setHistoryError(true); setError(String(error)); setLoading(false); } });
     return () => { active = false; };
   }, [selected, connection]);
-  async function earlier() {
-    const c = clientRef.current, history = historyRef.current; if (!c || !history || loading) return;
-    const replace = historyError; history.buffer.begin(); setLoading(true);
+  /** `auto` marks a load the reader triggered by holding the conversation at its oldest record. */
+  async function earlier(auto = false) {
+    const c = clientRef.current, history = historyRef.current; if (!c || !history || loading || historyBusy.current) return;
+    const replace = historyError; history.buffer.begin(); historyBusy.current = true; setLoading(true);
     try {
       const page = await loadHistoryPage(c, history.sessionId, replace ? undefined : before ?? undefined);
       if (historyRef.current !== history) return;
       if (!replace && scroller.current) { follow.current = false; prepend.current = { height: scroller.current.scrollHeight, top: scroller.current.scrollTop }; }
-      history.buffer.merge(page, replace); setEvents(history.buffer.events); setBefore(page.nextBefore); setHistoryError(false);
+      history.buffer.merge(page, replace); setEvents(history.buffer.events); setBefore(page.nextBefore); setHistoryError(false); if (auto) autoPages.current++;
     } catch (error) { if (historyRef.current === history) { history.buffer.cancel(); setError(String(error)); } }
-    finally { if (historyRef.current === history) setLoading(false); }
+    finally { if (historyRef.current === history) setLoading(false); historyBusy.current = false; }
   }
   useLayoutEffect(() => {
     if (prepend.current && scroller.current) { const old = prepend.current; scroller.current.scrollTop = old.top + scroller.current.scrollHeight - old.height; prepend.current = undefined; }
@@ -153,7 +157,7 @@ export function App() {
         : showInbox && clientRef.current ? <Inbox client={clientRef.current} cursor={snapshot?.cursor ?? 0} connected={connected} remember={rememberDevice} onOpen={id => { setSelected(id); setShowInbox(false); }} />
         : !session ? <div className="empty-workspace"><div className="empty-symbol"><TerminalWindow size={38} weight="light" /></div><span className="eyebrow">一个会话，随处接续</span><h1>工作从这里开始。</h1><p>在主机上运行 Agent，<br />在这里查看进度、补充想法和处理审批。</p><button className="primary" onClick={() => setCreate(true)} disabled={!snapshot}><Plus size={17} />新建会话</button></div>
         : <>
-          <section className="conversation" aria-label="会话内容" ref={scroller} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && ' · 不执行真实代码'}</p>{modelSupport && <div className="model-picker">{catalog?.runtimeId === runtime?.id ? <><label>模型<select aria-label="模型" value={session.model ? `${session.model.provider}/${session.model.model}` : ''} disabled={!connected || busy || session.archived} onChange={event => { const [provider, model] = event.target.value.split('/'); if (provider && model) chooseModel(provider, model, session.model?.reasoningEffort); }}>{!session.model && <option value="">运行时默认（{catalog.value.default.provider}/{catalog.value.default.model}）</option>}{catalog.value.groups.map(group => <optgroup key={group.id} label={group.name}>{group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}{catalog.value.routableProviders.includes(group.id) ? '' : ' · 当前不可用'}</option>)}</optgroup>)}</select></label>{session.model && effortOptions.length > 0 && <label>思考强度<select aria-label="思考强度" value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">运行时默认</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? '（默认）' : ''}</option>)}</select></label>}</> : <span className="model-loading">正在读取模型目录…</span>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => `${failure.name} 不可用`).join('、')}</span>}</div>}</div>
+          <section className="conversation" aria-label="会话内容" ref={scroller} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; if (shouldLoadEarlier({ scrollTop: el.scrollTop, before, loading, failed: historyError, pages: autoPages.current })) void earlier(true); }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && ' · 不执行真实代码'}</p>{modelSupport && <div className="model-picker">{catalog?.runtimeId === runtime?.id ? <><label>模型<select aria-label="模型" value={session.model ? `${session.model.provider}/${session.model.model}` : ''} disabled={!connected || busy || session.archived} onChange={event => { const [provider, model] = event.target.value.split('/'); if (provider && model) chooseModel(provider, model, session.model?.reasoningEffort); }}>{!session.model && <option value="">运行时默认（{catalog.value.default.provider}/{catalog.value.default.model}）</option>}{catalog.value.groups.map(group => <optgroup key={group.id} label={group.name}>{group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}{catalog.value.routableProviders.includes(group.id) ? '' : ' · 当前不可用'}</option>)}</optgroup>)}</select></label>{session.model && effortOptions.length > 0 && <label>思考强度<select aria-label="思考强度" value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">运行时默认</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? '（默认）' : ''}</option>)}</select></label>}</> : <span className="model-loading">正在读取模型目录…</span>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => `${failure.name} 不可用`).join('、')}</span>}</div>}</div>
             {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? '正在读取更早记录…' : historyError ? '重试加载记录' : '加载更早记录'}</button>}
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />正在读取会话…</div>}
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>这个会话准备好了。<br />告诉 Agent 你想完成什么。</p></div>}

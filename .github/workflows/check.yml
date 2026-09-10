@@ -22,3 +22,7 @@ jobs:
         run: |
           npm ci --prefix config/dsh-runtime
           bash scripts/ui-model-check.sh
+      # History paging only needs the built PWA and a browser, which the runner already has.
+      # It imports the TypeScript sources directly, so it runs through tsx like the suite does.
+      - name: History paging in the phone PWA
+        run: node --import tsx scripts/history-ui-check.mjs
