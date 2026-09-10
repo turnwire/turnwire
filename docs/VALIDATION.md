@@ -1,3 +1,5 @@
+English · [中文](VALIDATION.zh.md)
+
 # Verification record
 
 Executed on 2026-09-09 and 2026-09-10 with Node 22.22.1 and Apple Swift 6.3.3.

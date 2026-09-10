@@ -1,78 +1,80 @@
-# 一键部署 Relay
+English · [中文](RELAY-INSTALL.zh.md)
 
-Turnwire 的部署服务统一运行在 daemon 中。CLI、TUI 和原生 macOS 表单提交同一个本地管理请求；窗口或终端关闭后任务继续。服务器安装逻辑在 `apps/deployer`，部署状态与私有设置由 `apps/daemon/src/deployment.ts` 管理。配对手机不能调用该管理接口。
+# One-command Relay deployment
 
-## 环境
+Turnwire's deployment service runs uniformly inside the daemon. The CLI, TUI and native macOS form submit the same local administration request; the task continues after the window or terminal closes. The server installation logic lives in `apps/deployer`, and deployment state and private settings are managed by `apps/daemon/src/deployment.ts`. A paired phone cannot call this administration interface.
 
-服务器支持 Debian / Ubuntu、systemd，以及 x86_64 或 arm64。SSH 账号需具有管理员权限，或可以使用 `sudo -n`；使用私钥或已解锁的 SSH agent，不收集账号密码。手机入口使用服务器公网 IP 或已解析到该服务器的域名。公网 TCP 80/443 必须可达，服务器需要能下载官方 Node、系统软件包和 Certbot。
+## Environment
 
-已有 Caddy 时保留其他站点，只增加 Turnwire 站点并验证后重载。其他服务占用 80/443、已有冲突的 IP TLS 设置、不同实例占用端口时会返回具体错误，避免覆盖现有服务。目前每台服务器由安装器管理一个 Turnwire Relay 实例。
+The server supports Debian / Ubuntu, systemd, and x86_64 or arm64. The SSH account needs administrator privileges, or the ability to use `sudo -n`; use a private key or an unlocked SSH agent — account passwords are not collected. The phone entry point uses the server's public IP or a domain that resolves to that server. Public TCP 80/443 must be reachable, and the server must be able to download official Node, system packages and Certbot.
 
-首次使用源码构建，需要 `npm ci`、`npm run build` 并启动新版 daemon。Node、手机页面及服务器安装器的独立产物随构建生成；部署时服务器不需要源码、npm 或 `node_modules`。部署参数全部来自运行时配置，没有内置服务器地址、SSH 账号或私钥。
+If Caddy is already present, keep the other sites, only add the Turnwire site, and reload after verifying. When other services occupy 80/443, conflicting IP TLS settings already exist, or different instances occupy the port, a specific error is returned instead of overwriting existing services. Currently the installer manages one Turnwire Relay instance per server.
 
-## 三种入口
+The first use builds from source, requiring `npm ci`, `npm run build` and starting the new daemon. Node, the phone page and the server installer's standalone artifacts are produced by the build; deployment does not need source, npm or `node_modules` on the server. All deployment parameters come from runtime configuration; no server address, SSH account or private key is built in.
 
-**macOS**：「远程控制」→「自托管 Relay」→「一键部署 / 更新服务器」。填写 SSH 地址、登录账号、私钥文件或 agent、手机入口，可展开高级配置，也可导入私有 JSON。点击「一键部署」后显示共享进度。成功后默认自动连接本机，再生成手机配对二维码。
+## Three entry points
 
-**CLI**：运行 `turnwire deploy` 打开交互表单，或者使用配置文件：
+**macOS**: "Remote Control" → "Self-hosted Relay" → "One-command Deploy / Update Server". Fill in the SSH address, login account, private key file or agent and the phone entry point; you can expand advanced configuration or import a private JSON file. After clicking "One-command Deploy" a shared progress view appears. On success it connects this machine automatically by default, then generates the phone pairing QR code.
+
+**CLI**: run `turnwire deploy` to open the interactive form, or use a configuration file:
 
 ```sh
 npm run deploy:relay -- --config "$TURNWIRE_DEPLOY_CONFIG"
-# 已安装 CLI 时：
+# With the CLI already installed:
 turnwire deploy --config "$TURNWIRE_DEPLOY_CONFIG"
 turnwire deploy --status
 ```
 
-`TURNWIRE_DEPLOY_CONFIG` 指向用户自己的 JSON 文件。使用 `--no-wait` 立即返回；稍后用 `deploy --status` 查看。默认等待完成，Ctrl+C 仅退出进度查看。`--json` 只返回结构化状态，不返回服务器连接密钥。
+`TURNWIRE_DEPLOY_CONFIG` points at the user's own JSON file. Use `--no-wait` to return immediately; check later with `deploy --status`. By default it waits for completion, and Ctrl+C only exits the progress view. `--json` returns only structured status, not the server connection secret.
 
-**TUI**：`turnwire tui` 中输入 `deploy`，或在 `remote` 菜单选择「一键部署服务器」。与 CLI 相同，也支持 `deploy --config ...`。
+**TUI**: type `deploy` in `turnwire tui`, or choose "One-command server deployment" from the `remote` menu. As with the CLI, `deploy --config ...` is also supported.
 
-## 私有配置
+## Private configuration
 
-以 `deploy/relay.example.json` 为格式参考，把示例地址与账号替换成自己的值，保存到仓库之外。仓库忽略 `*.deploy.local.json`、`.turnwire/` 和私钥 `.pem` 文件。建议配置文件权限为 0600。`host`、`sshUser` 和 `publicAddress` 必填，没有内置默认值。
+Use `deploy/relay.example.json` as a format reference, replace the example addresses and account with your own values, and save it outside the repository. The repository ignores `*.deploy.local.json`, `.turnwire/` and private key `.pem` files. A configuration file mode of 0600 is recommended. `host`, `sshUser` and `publicAddress` are required and have no built-in defaults.
 
-| 字段 | 含义 / 默认 |
+| Field | Meaning / default |
 | --- | --- |
-| `host` | SSH IP 或完整域名，不含协议 |
-| `sshUser` | SSH 登录账号，必须填写 |
-| `sshPort` | SSH 端口，默认 22 |
-| `identityFile` | daemon 所在机器上的私钥绝对路径；省略则使用 SSH agent |
-| `publicAddress` | 手机使用的 IP 或完整域名，不含协议、端口和路径 |
-| `email` | 可选的证书通知邮箱 |
-| `connectAfterDeploy` | 成功后配置本机连接，默认 true |
-| `relayPort` | 服务器 loopback 端口，默认 9899，不暴露公网 |
-| `serviceUser` | Relay 系统账号，默认 `turnwire-relay`，不能是 root |
-| `installDir` | 安装目录，默认 `/opt/turnwire-relay` |
-| `configDir` | 私有配置目录，默认 `/etc/turnwire-relay` |
-| `caddyfile` | 共享配置文件，默认 `/etc/caddy/Caddyfile` |
-| `caddyService` / `caddyGroup` | Caddy 服务名称及证书读取组，默认 `caddy` |
-| `certbotDir` | 独立 Certbot 目录，默认 `/opt/turnwire-certbot` |
-| `certName` | 证书名称，默认 `turnwire-relay`；接管旧部署时沿用原名 |
-| `acmeWebroot` | 公网证书验证目录，默认 `/var/lib/turnwire-acme` |
+| `host` | SSH IP or full domain, without a protocol |
+| `sshUser` | SSH login account, required |
+| `sshPort` | SSH port, default 22 |
+| `identityFile` | Absolute path to the private key on the machine running the daemon; omit to use the SSH agent |
+| `publicAddress` | IP or full domain the phone uses, without protocol, port or path |
+| `email` | Optional email address for certificate notifications |
+| `connectAfterDeploy` | Configure the local connection after success, default true |
+| `relayPort` | Server loopback port, default 9899, not exposed publicly |
+| `serviceUser` | Relay system account, default `turnwire-relay`, cannot be root |
+| `installDir` | Installation directory, default `/opt/turnwire-relay` |
+| `configDir` | Private configuration directory, default `/etc/turnwire-relay` |
+| `caddyfile` | Shared configuration file, default `/etc/caddy/Caddyfile` |
+| `caddyService` / `caddyGroup` | Caddy service name and certificate-reading group, default `caddy` |
+| `certbotDir` | Separate Certbot directory, default `/opt/turnwire-certbot` |
+| `certName` | Certificate name, default `turnwire-relay`; keep the original name when taking over an older deployment |
+| `acmeWebroot` | Public certificate validation directory, default `/var/lib/turnwire-acme` |
 
-上述目录、端口及服务账号是可覆盖的产品默认值，不包含用户机器信息。已管理实例再次部署时保留其入口、目录、端口、服务账号和证书名称；迁移这些资源不属于原地更新。
+The directories, ports and service account above are overridable product defaults and contain no user machine information. Redeploying an already-managed instance keeps its entry point, directories, ports, service account and certificate name; migrating those resources is not an in-place update.
 
-## 自动执行的工作
+## What it does automatically
 
-1. 验证配置、SSH 身份、权限、系统类型、CPU 和端口；首次记录 SSH 主机指纹，后续检查变更。
-2. 打包 Relay 与 PWA，排除源码映射，上传后逐文件验证 SHA-256。
-3. 安装经官方校验文件验证的独立 Node，以及 Caddy、独立 Certbot。已有可用组件复用。
-4. 首次在服务器生成随机 Relay 密钥；更新复用原值。写入 root 所有的 0600 环境文件。
-5. 通过 HTTP webroot 验证入口、测试签发再申请正式 HTTPS 证书。IP 使用短期证书；已有仍有效的证书复用。
-6. 在新发布目录安装服务，验证 Caddy 配置后切换当前版本，启用开机启动、故障重启与每小时证书续期检查。
-7. 验证服务器和本机的公网 HTTPS；默认自动保存本机 Relay 设置并确认主机注册。
+1. Validates the configuration, SSH identity, privileges, system type, CPU and ports; records the SSH host fingerprint on first use and checks for changes afterwards.
+2. Packages the Relay and PWA, excluding source maps, and verifies each file by SHA-256 after upload.
+3. Installs a standalone Node verified against official checksums, plus Caddy and a separate Certbot. Existing usable components are reused.
+4. Generates a random Relay secret on the server the first time; updates reuse the original value. Writes a root-owned 0600 environment file.
+5. Validates the entry point over HTTP webroot, issues a test certificate, then requests the production HTTPS certificate. IPs use short-lived certificates; an existing still-valid certificate is reused.
+6. Installs the service in a new release directory, verifies the Caddy configuration and then switches the current version, enabling startup at boot, restart on failure and an hourly certificate-renewal check.
+7. Verifies public HTTPS from the server and from this machine; by default it saves the local Relay settings automatically and confirms host registration.
 
-密钥文件只临时复制到 daemon 的私有任务目录，结束后删除，不上传 SSH 私钥。Relay 密钥只在服务器与 daemon 间传递，不写入网页、命令行参数、部署状态或日志。模型环境变量不会传给 SSH、打包或服务器安装进程。机器配置和部署状态保存在 daemon 的私有 SQLite；SSH `known_hosts` 位于 `TURNWIRE_HOME/deployments/`。
+Key files are copied only temporarily into the daemon's private task directory and deleted afterwards; the SSH private key is never uploaded. The Relay secret is passed only between the server and the daemon and is not written to web pages, command-line arguments, deployment state or logs. Model environment variables are not passed to SSH, packaging or server installation processes. Machine configuration and deployment state are stored in the daemon's private SQLite; SSH `known_hosts` lives in `TURNWIRE_HOME/deployments/`.
 
-IP 证书需要自动续期；参见 [Let's Encrypt 的 Certbot 指南](https://letsencrypt.org/2026/03/11/shorter-certs-certbot)。安装器配置小时计时器和证书部署钩子。Caddy 的 IP 默认 SNI 配置参见[官方文档](https://caddyserver.com/docs/caddyfile/options#default-sni)。
+IP certificates need automatic renewal; see [Let's Encrypt's Certbot guide](https://letsencrypt.org/2026/03/11/shorter-certs-certbot). The installer configures an hourly timer and a certificate deployment hook. For Caddy's default SNI configuration for IPs, see the [official documentation](https://caddyserver.com/docs/caddyfile/options#default-sni).
 
-## 更新、诊断与恢复
+## Update, diagnostics and recovery
 
-使用同一配置再次点击部署，或重复同一条命令。安装器保留凭据与有效证书，生成新发布目录并保存上一个版本。更新服务会使手机短暂重连，Mac 的 Core 和 DSH 不因此重启。
+Click deploy again with the same configuration, or repeat the same command. The installer keeps credentials and valid certificates, creates a new release directory and keeps the previous version. Updating the service briefly reconnects the phone; the Mac's Core and DSH are not restarted by this.
 
-安装中发生错误会恢复本次修改的服务/站点文件及原发布链接。系统依赖、已签发证书和诊断记录保留。网络中断或 daemon 退出时，不能仅凭本机错误判断服务器状态；界面会标记中断，可先检查服务器，再使用同一配置重试。
+An error during installation restores the service/site files modified this time and the original release link. System dependencies, issued certificates and diagnostic records are kept. When the network drops or the daemon exits, local errors alone cannot determine the server's state; the interface marks the interruption, and you can inspect the server first and then retry with the same configuration.
 
-服务器部署目录中的 `install.log` 仅管理员可读；失败状态会显示诊断目录。常用运维命令：
+The `install.log` in the server deployment directory is readable only by administrators; a failed state shows the diagnostics directory. Common operations commands:
 
 ```sh
 systemctl status turnwire-relay --no-pager
@@ -81,10 +83,10 @@ journalctl -u turnwire-relay -n 50 --no-pager
 journalctl -u turnwire-certbot-renew -n 50 --no-pager
 ```
 
-生效版本、上一版本和服务器配置记录在 `configDir/deployment.json`。回滚可将 `installDir/current` 原子指回上一版本并重启 `turnwire-relay`；站点配置备份位于 `configDir/backups/`，恢复时保留部署后新增的其他站点。不要停止共享 Caddy。
+The active version, the previous version and the server configuration are recorded in `configDir/deployment.json`. Rolling back can atomically point `installDir/current` back at the previous version and restart `turnwire-relay`; site configuration backups live in `configDir/backups/`, and restoring keeps other sites added after the deployment. Do not stop the shared Caddy.
 
-部署完成和 Mac 注册不等于实际手机已连接。手机扫码后必须看到「已连接到 Mac」，Mac 设备列表也应显示最近确认时间。实际 iPhone、蜂窝网络和不同运营商仍需各自验收。
+A completed deployment and Mac registration do not mean the actual phone is connected. After scanning the code the phone must show "Connected to Mac", and the Mac device list should also show the last confirmation time. Actual iPhones, cellular networks and different carriers still each need their own acceptance testing.
 
-## Web Push 持久状态
+## Web Push persistent state
 
-新版安装器创建 `${installDir}/state`（0700、服务账号所有），并给 systemd 只增加此目录的写权限。环境文件自动设置 `TURNWIRE_PUSH_DB=${installDir}/state/push.db`、`TURNWIRE_VAPID_SUBJECT` 为配置的公网 HTTPS 地址。首次启动生成 VAPID 密钥；原地更新保留数据库，避免使手机订阅失效。备份此目录时按凭据文件保护。Relay 更新不替换用户已配对设备的 E2EE 凭据。
+The new installer creates `${installDir}/state` (0700, owned by the service account) and adds write permission for only this directory to systemd. The environment file automatically sets `TURNWIRE_PUSH_DB=${installDir}/state/push.db` and `TURNWIRE_VAPID_SUBJECT` to the configured public HTTPS address. VAPID keys are generated on first start; an in-place update keeps the database so phone subscriptions are not invalidated. Protect this directory like a credential file when backing it up. Relay updates do not replace the E2EE credentials of already-paired user devices.

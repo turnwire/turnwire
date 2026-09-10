@@ -1,3 +1,5 @@
+English · [中文](CLIENTS.zh.md)
+
 # Capability parity and code ownership
 
 CLI, the interactive terminal (`turnwire tui`) and the native desktop are clients of the same Turnwire host. With the same connection permissions, they must support the same product operations and observe the same state. UI mechanics may differ: a workspace path vs NSOpenPanel, a terminal QR vs NSImage, or a printed link vs a clipboard button.

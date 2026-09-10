@@ -1,3 +1,5 @@
+English · [中文](DESIGN.zh.md)
+
 # Turnwire client design
 
 Turnwire is a developer's session workbench. Its single job is to make the same local task legible and controllable from another device.

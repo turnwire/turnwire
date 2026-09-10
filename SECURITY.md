@@ -1,32 +1,34 @@
-# 安全策略
+English · [中文](SECURITY.zh.md)
 
-## 报告漏洞
+# Security Policy
 
-**不要**用公开 issue 报告安全问题。请任选一条私有渠道：
+## Reporting vulnerabilities
 
-- 仓库 **Security** 标签页的私有漏洞报告（`Report a vulnerability`，若已在该仓库启用）
-- 邮件：**github@arjenzhou.com**
+**Do not** report security problems through a public issue. Use any one of these private channels:
 
-报告里请包含：受影响的组件（CLI / 交互终端 / 原生 Mac 应用 / 手机 PWA / Relay / 隧道 provider / 部署器）、复现步骤、你实际观察到的影响（不只是理论可能），以及是否牵涉他人数据。
+- The private vulnerability report on the repository's **Security** tab (`Report a vulnerability`, if it is enabled for that repository)
+- Email: **github@arjenzhou.com**
 
-## 我们会怎么处理
+Please include in your report: the affected component (CLI / interactive terminal / native Mac app / phone PWA / Relay / tunnel provider / deployer), reproduction steps, the impact you actually observed (not just a theoretical possibility), and whether other people's data is involved.
 
-这是个人维护的项目，**没有 SLA**。但会做到：确认收到 → 判断影响范围与严重度 → 修复 → 在修复说明里致谢（除非你要求匿名）。细节在修复可用之前不公开。
+## How we handle it
 
-## 支持范围
+This is a personally maintained project with **no SLA**. But we will do this: acknowledge receipt → assess the scope and severity → fix → credit you in the fix notes (unless you ask to stay anonymous). Details stay private until a fix is available.
 
-目前**没有发行版本**，以主干最新提交为准；旧提交不单独出补丁。原生客户端与主仓库一起演进，安全问题请说明你测的是哪个仓库的哪次提交。
+## Supported scope
 
-## 设计边界（这些不是漏洞）
+There is currently **no released version**, so the latest commit on main is the reference; older commits do not get separate patches. The native client evolves together with the main repository, so for a security problem, please say which commit of which repository you tested.
 
-- **已配对设备不能做主机管理**：管理请求只在本机被接受。这是故意的权限边界，不是缺失功能；如果你能让远程设备改主机设置，那才是漏洞。
-- **模型凭据不在客户端**：`TURNWIRE_HARNESS_DEEPSEEK_API_KEY` 只由主机上的 DSH 读取，客户端、Relay、隧道进程都拿不到它。若你在这些地方看到了 key，那是漏洞。
-- **Relay 只转发密文**：每连接 ECDH 会话加密；Relay 的连接路由在内存中，推送密钥与投递队列持久化。Relay 看不到会话内容。
-- **临时隧道是第三方服务**：localhost.run、cpolar、Cloudflare 不在本项目控制范围内。`127.0.0.1` 只代表当前设备，不是"这台 Mac"。
-- **国内网络连不上 Cloudflare、手机推送在临时地址下不可用**：可用性限制，不是安全漏洞（推送需要自托管 Relay）。
+## Design boundaries (these are not vulnerabilities)
 
-## 测试纪律
+- **Paired devices cannot do host administration**: administration requests are accepted only locally. This is a deliberate permission boundary, not a missing feature; if you can make a remote device change host settings, that is a vulnerability.
+- **Model credentials are not in the clients**: `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` is read only by DSH on the host, and clients, the Relay, and tunnel processes cannot obtain it. If you see the key in any of those places, that is a vulnerability.
+- **The Relay forwards ciphertext only**: per-connection ECDH session encryption; the Relay's connection routing is in memory, while push keys and the delivery queue are persisted. The Relay cannot see session contents.
+- **Temporary tunnels are third-party services**: localhost.run, cpolar, and Cloudflare are outside this project's control. `127.0.0.1` refers only to the current device, not to "this Mac".
+- **Networks in mainland China cannot reach Cloudflare, and phone push is unavailable behind a temporary address**: availability limitations, not security vulnerabilities (push requires a self-hosted Relay).
 
-- 只测试**你自己的**主机、账号与设备；不要扫描或试探别人的实例。
-- 不要为了证明漏洞而读取、导出或保留他人的会话数据；能证明影响的最小证据即可。
-- 如果你怀疑某个凭据已泄露，立即报告，并同时轮换它（`TURNWIRE_HARNESS_DEEPSEEK_API_KEY`、Relay token、配对凭据）。
+## Testing discipline
+
+- Test only **your own** host, accounts, and devices; do not scan or probe other people's instances.
+- Do not read, export, or retain other people's session data in order to prove a vulnerability; the minimum evidence that demonstrates the impact is enough.
+- If you suspect a credential has leaked, report it immediately and rotate it at the same time (`TURNWIRE_HARNESS_DEEPSEEK_API_KEY`, Relay token, pairing credentials).

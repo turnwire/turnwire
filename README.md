@@ -1,36 +1,38 @@
+English · [中文](README.zh.md)
+
 # Turnwire
 
-同一个 Agent 会话，在 Mac、终端和手机上接续：**主机负责干活，手机负责随时接话和审批。**
+One agent session, continued across a Mac, a terminal, and a phone: **the host does the work, the phone lets you jump in and approve at any time.**
 
 ```text
 CLI ───────────────┐
 SwiftUI Desktop ──┼── turnwire-host ── Turnwire Core ── AgentRuntime ── DSH Host
                   │     │
 Phone PWA ─ Relay ┘     SQLite
-           密文转发     元数据 / 事件缓存 / 审批 / 命令回执
+           encrypted    metadata · event cache · approvals · receipts
 ```
 
-## 它能给你什么
+## What it gives you
 
-- **离开电脑也不断线**：手机上看到同一条会话的实时进度，把下一步想法发回主机；消息要么排队等当前回合结束，要么直接插话引导它。
-- **审批在手机上完成**：需要放行的操作弹到手机，批准或拒绝一次有效，处理结果留在收件箱里可回查。
-- **一份状态，四端一致**：CLI、交互终端、原生 Mac 应用和手机 PWA 共享会话、历史、审批与模型选择，不是四套各记各的。
-- **模型由主机决定**：手机上也能切换会话模型与思考强度，只列出主机 runtime 真正注册的模型。
-- **跑在你自己的机器上**：异地连接走临时隧道或你自己部署的 Relay；主机主动连出，不需要把 daemon 端口暴露到公网。
+- **No disconnection when you leave the computer**: See the live progress of the same session on your phone and send your next idea back to the host; a message either queues until the current turn ends or steers it directly.
+- **Approvals happen on your phone**: An operation that needs a green light pops up on your phone; a single approval or rejection covers it, and the outcome stays in the inbox for later review.
+- **One state, consistent across all four clients**: The CLI, the interactive terminal, the native Mac app, and the phone PWA share sessions, history, approvals, and model selection — not four separate records.
+- **The host decides the models**: You can switch a session's model and reasoning effort from the phone too, and only models actually registered by the host runtime are listed.
+- **It runs on your own machine**: Remote connections go through a temporary tunnel or a Relay you deploy yourself; the host dials out, so you never expose the daemon port to the public internet.
 
-## 开始之前，先看这三条
+## Three things to look at before you start
 
-诚实前置，免得你走到一半才发现：
+Honest up front, so you do not discover them halfway through:
 
-1. **目前没有签名的发行版**。要装就得从源码构建，或运行仓库里的安装脚本；两个仓库现在也是私有的。没有"下载双击即用"这一步。
-2. **需要一台常开的主机**。Mac（推荐，能跑原生应用）或一台 Linux 机器都可以 —— 主机睡着，手机就连不上。
-3. **需要模型凭据，而且只留在主机上**。API key 由主机上的 DSH 读取，不进客户端、不进 Relay、不进隧道进程。
+1. **There is no signed release yet.** To install it you have to build from source or run the install scripts in the repository; both repositories are private for now. There is no "download, double-click, done" step.
+2. **You need an always-on host.** A Mac (recommended, since it can run the native app) or a Linux machine both work — if the host is asleep, the phone cannot connect.
+3. **You need model credentials, and they stay on the host only.** The API key is read by DSH on the host and does not enter a client, the Relay, or a tunnel process.
 
-## 开始使用
+## Getting started
 
-### 第 1 步：主机跑起来
+### Step 1: Get the host running
 
-最快看到全貌的方式是用离线 Demo（不需要任何模型凭据）：
+The fastest way to see the whole picture is the offline Demo (no model credentials required):
 
 ```bash
 git clone https://github.com/turnwire/turnwire.git
@@ -40,69 +42,69 @@ npm run build
 TURNWIRE_RUNTIME=demo npm run dev
 ```
 
-浏览器打开 `http://127.0.0.1:9898`，选「本机连接」，填入 `npm run turnwire -- connect` 输出的地址和令牌。Demo 不调用模型、不运行 shell、不修改文件；输入包含「审批」时会产生一条演示审批。
+Open `http://127.0.0.1:9898` in a browser, choose "Local connection", and fill in the address and token printed by `npm run turnwire -- connect`. The Demo does not call a model, run a shell, or modify files; when the input contains "approval" it produces a demo approval.
 
-要接上真实模型（DeepSeek via DSH），见 [从源码开发](docs/DEVELOPING.md)。
+To connect a real model (DeepSeek via DSH), see [Developing from source](docs/DEVELOPING.md).
 
-### 第 2 步：装上你要的客户端
+### Step 2: Install the clients you want
 
-| 你想要 | 怎么装 | 需要什么 |
+| What you want | How to install | What you need |
 | --- | --- | --- |
-| Mac 原生应用（最完整） | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+、Xcode 16+ / Swift 6；产物是 ad-hoc 签名，对外发布还需 Developer ID 与 notarization |
-| 常驻主机（Linux，无界面） | 在构建好的 release 里运行 `scripts/install-linux-host.sh` | Linux + systemd，且先写好 `config/dsh.env.json` |
-| 自托管 Relay（长期稳定地址） | `deploy/` 下有 Dockerfile、compose.yaml 与 Caddyfile | 一台服务器；详见[一键部署 Relay](docs/RELAY-INSTALL.md) |
-| 终端 / 脚本 | `npm run turnwire -- ...`，或构建后 `node apps/cli/dist/main.js ...` | Node.js 22.13+；命令见[命令行参考](docs/CLI.md) |
+| Mac native app (the most complete) | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+, Xcode 16+ / Swift 6; the artifact is ad-hoc signed, and public distribution still needs a Developer ID and notarization |
+| Resident host (Linux, headless) | Run `scripts/install-linux-host.sh` from a built release | Linux + systemd, with `config/dsh.env.json` written first |
+| Self-hosted Relay (stable long-term address) | `deploy/` contains a Dockerfile, compose.yaml, and Caddyfile | A server; see [One-click Relay deployment](docs/RELAY-INSTALL.md) |
+| Terminal / scripts | `npm run turnwire -- ...`, or after building `node apps/cli/dist/main.js ...` | Node.js 22.13+; for the commands see the [CLI reference](docs/CLI.md) |
 
-### 第 3 步：让手机连上
+### Step 3: Get your phone connected
 
-本机地址 `127.0.0.1` 只代表那台机器自己，手机上的 `127.0.0.1` 是手机自己 —— 所以异地连接必须有一条公网通道。三种选择：
+The local address `127.0.0.1` refers only to that machine itself, and `127.0.0.1` on your phone is the phone itself — so a remote connection must have a public channel. Three options:
 
-| 方式 | 使用流程 |
+| Approach | How it works |
 | --- | --- |
-| 临时隧道 | 选 localhost.run、cpolar 或 Cloudflare，点「开启临时访问」；不需要自己的服务器。cpolar 首次需要账号 Auth Token。**地址会在 daemon 下次启动时变化，需要重新配对** |
-| Cloudflare 命名隧道 | 用你自己 Cloudflare 账号下**已存在**的隧道与固定域名，地址不随重启变化；需要隧道名、公开域名与隧道凭据文件 |
-| 自托管 Relay | 填服务器的 HTTPS 地址与 Relay 连接密钥，点「保存并连接」；长期使用推荐，也是手机推送的前提 |
+| Temporary tunnel | Choose localhost.run, cpolar, or Cloudflare and click "Enable temporary access"; you do not need a server of your own. cpolar requires an account Auth Token the first time. **The address changes the next time the daemon starts, so you have to pair again** |
+| Cloudflare named tunnel | Use a tunnel and fixed domain that **already exist** under your own Cloudflare account, so the address does not change across restarts; you need the tunnel name, the public domain, and the tunnel credentials file |
+| Self-hosted Relay | Fill in the server's HTTPS address and the Relay connection key and click "Save and connect"; recommended for long-term use, and also the prerequisite for phone push |
 
-通道就绪后生成配对二维码，手机打开已部署的 PWA 粘贴配对码即可。配对链接把密钥放在 URL fragment 中，网页接收后立即移除；默认只为本次浏览会话保存，勾选「记住这台受信任设备」才持久保存。
+Once the channel is ready, generate a pairing QR code, then open the deployed PWA on your phone and paste the pairing code. The pairing link puts the key in the URL fragment, and the page removes it immediately after receiving it; by default it is kept only for the current browsing session, and only checking "Remember this trusted device" saves it persistently.
 
-> 国内网络可能连不上 Cloudflare 临时隧道，或出现延迟与不稳定 —— 它作为快速体验选项保留。长期使用建议选择在 Mac 和手机实际网络中验证过的自托管 Relay；免费 Quick Tunnel 不等同于 Cloudflare China Network（那是另行订阅的企业服务）。
+> Networks in mainland China may be unable to reach the Cloudflare temporary tunnel, or may see latency and instability — it is kept as a quick-try option. For long-term use, prefer a self-hosted Relay verified on the actual networks of your Mac and phone; a free Quick Tunnel is not the same as the Cloudflare China Network (that is a separately subscribed enterprise service).
 
-## 手机上能做什么
+## What you can do on your phone
 
-- 接续同一条会话：看实时进度、发送补充指令、停止正在跑的回合
-- 处理审批与收件箱：批准 / 拒绝、回查已处理与已过期的操作
-- 切换会话模型与思考强度：输入框上方的小 chip，只列出主机 runtime 注册的模型
-- 会话运行中发送时可选**排队**（等当前回合结束）或**插话**（直接引导当前回合），消息上会标出当时用的是哪种
-- 会话已归档时仍可查看历史，需要时取消归档继续
+- Continue the same session: watch live progress, send follow-up instructions, stop a running turn
+- Handle approvals and the inbox: approve / reject, and review operations already handled or expired
+- Switch a session's model and reasoning effort: the small chip above the input box, listing only models registered by the host runtime
+- When sending while a session is running you can choose to **queue** (wait for the current turn to end) or **steer** (guide the current turn directly), and the message is marked with which one you used
+- When a session is archived you can still view its history, and unarchive it to continue when you need to
 
-## 已知限制
+## Known limitations
 
-- **Mac 要醒着、联网**：主机不在线，手机看不到进度。
-- **手机推送需要自托管 Relay**：临时地址不支持长期推送（`turnwire notifications status` 会明确告诉你）。
-- **切换地址要重新配对**：临时隧道每次重启都会换地址。
-- **原生应用是 ad-hoc 签名**：只适合自用或内部分发。
-- **没有模型凭据时只能跑 Demo**，无法执行真实编码任务。
+- **The Mac must be awake and online**: if the host is offline, the phone sees no progress.
+- **Phone push requires a self-hosted Relay**: temporary addresses do not support long-term push (`turnwire notifications status` will tell you plainly).
+- **Changing the address means pairing again**: a temporary tunnel changes its address on every restart.
+- **The native app is ad-hoc signed**: suitable only for personal use or internal distribution.
+- **Without model credentials you can only run the Demo**, and cannot perform real coding tasks.
 
-## 深入文档
+## Going deeper
 
-| 文档 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [命令行参考](docs/CLI.md) | 全部 `turnwire` 命令与选项 |
-| [从源码开发](docs/DEVELOPING.md) | 构建、接真实 DSH、验证方式、工程结构 |
-| [多端功能对等](docs/CLIENTS.md) | 每项能力在各客户端的覆盖与代码归属 |
-| [自托管 Relay + PWA](docs/DEPLOYMENT.md) | 固定域名部署、国内网络说明 |
-| [一键部署 Relay](docs/RELAY-INSTALL.md) | 从部署表单一键安装服务器 |
-| [用 Turnwire 开发 Turnwire](docs/SELF-HOSTING.md) | 开发主机自动更新与安全点 |
-| [DSH 接口说明](docs/DSH.md) / [协议与状态边界](docs/PROTOCOL.md) | 运行时契约与 RPC 边界 |
-| [验证记录](docs/VALIDATION.md) | 已验证与未验证的条件，逐条列出 |
-| [参与贡献](CONTRIBUTING.md) / [安全策略](SECURITY.md) | 开发约束、验证要求与漏洞报告渠道 |
+| [CLI reference](docs/CLI.md) | Every `turnwire` command and option |
+| [Developing from source](docs/DEVELOPING.md) | Building, connecting a real DSH, how to verify, project structure |
+| [Capability parity across clients](docs/CLIENTS.md) | Each capability's coverage in each client and where the code belongs |
+| [Self-hosted Relay + PWA](docs/DEPLOYMENT.md) | Fixed-domain deployment, notes on networks in mainland China |
+| [One-click Relay deployment](docs/RELAY-INSTALL.md) | Install a server from the deployment form in one step |
+| [Developing Turnwire with Turnwire](docs/SELF-HOSTING.md) | Development host auto-update and safety points |
+| [DSH interface notes](docs/DSH.md) / [Protocol and state boundaries](docs/PROTOCOL.md) | Runtime contract and RPC boundaries |
+| [Verification record](docs/VALIDATION.md) | Verified and unverified conditions, listed one by one |
+| [Contributing](CONTRIBUTING.md) / [Security policy](SECURITY.md) | Development constraints, verification requirements, and vulnerability reporting channels |
 
-## 现状与边界
+## Current status and boundaries
 
-当前交付包含一次性配对、经设备凭据认证的每连接 ECDH 会话加密、分阶段连接恢复、持久审批收件箱、Web Push 和可配置的 TLS 局域网入口。已有旧配对可以继续使用并从主机显式升级。Relay 的连接路由仍在内存中，推送密钥与投递队列持久化。
+The current delivery includes one-time pairing, per-connection ECDH session encryption authenticated by device credentials, staged connection recovery, a persistent approval inbox, Web Push, and a configurable TLS LAN listener. Existing older pairings keep working and can be explicitly upgraded from the host. The Relay's connection routing is still in memory, while push keys and the delivery queue are persisted.
 
-尚不包含 Codex / Claude adapter、团队账户、原生 iOS、自动更新或发行签名。"哪些只在特定条件下验证过"以 [验证记录](docs/VALIDATION.md) 为准。
+It does not yet include Codex / Claude adapters, team accounts, native iOS, auto-update, or release signing. "Which things were verified only under specific conditions" is governed by the [verification record](docs/VALIDATION.md).
 
-## 许可
+## License
 
-Apache License 2.0 —— 详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。可以自由使用、修改和分发（含商用），需要保留版权与许可声明；本项目不提供任何担保。
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details. You may freely use, modify, and distribute it (including commercially), provided you keep the copyright and license notices; this project provides no warranty.

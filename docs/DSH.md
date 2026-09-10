@@ -1,3 +1,5 @@
+English · [中文](DSH.zh.md)
+
 # DSH runtime adapter
 
 Target: `@deepseek-ai/dsh@0.1.5-alpha.1`, source revision `5dda764ed3aa172535a7967b06ff95d9cbfe536a`. On 2026-09-09, npm's default tag pointed to `0.1.2-rc.1`, so instructions pin the alpha matching the inspected source. All DSH-specific names live in `packages/runtime-dsh`.

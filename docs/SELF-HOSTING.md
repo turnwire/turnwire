@@ -1,3 +1,5 @@
+English · [中文](SELF-HOSTING.zh.md)
+
 # Developing Turnwire with Turnwire
 
 The host can run this checkout instead of an installed release, so the agent that edits Turnwire
@@ -50,7 +52,11 @@ Three properties make repeat runs harmless:
   gitignored, a rebuild does not change the fingerprint, so a watch-triggered run that follows a
   build exits immediately instead of looping.
 - **Safe point.** It waits (default 900s) until no session is `running` or `waiting_approval`
-  before restarting, so a reload never interrupts a turn.
+  before restarting, so a reload never interrupts a turn. Background subagents are **not** covered by
+  that check: a delegation tool returns as soon as it hands work to a child, so the session can read
+  as idle while the child is still working, and the restart kills it. Before fan-out work, stop the
+  timer (`systemctl --user stop turnwire-dev-reload.timer`) and start it again when the children are
+  done. Making the safe point cover children needs the host to report them, which it does not yet.
 - **Restart is survivable.** A turn runs inside DSH, which persists its session log, and
   Turnwire reconnects by following the session and replaying from its stored cursor. After a
   reload, re-attach and continue.

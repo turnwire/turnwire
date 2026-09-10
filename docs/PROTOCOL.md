@@ -1,3 +1,5 @@
+English · [中文](PROTOCOL.zh.md)
+
 # Turnwire RPC v1 and remote transport v2
 
 `packages/protocol/src/index.ts` is the TypeScript source of truth. Swift's `Models.swift` independently decodes the same wire representation; desktop tests verify representative envelopes.

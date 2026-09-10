@@ -14,7 +14,10 @@ import { DSH_SOURCE_REVISION } from '../packages/runtime-dsh/src/index.js';
 const root = process.cwd();
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const manifest = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
-const documents = ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', ...readdirSync(resolve(root, 'docs')).filter(name => name.endsWith('.md')).map(name => `docs/${name}`)];
+const documents = [
+  ...readdirSync(root).filter(name => name.endsWith('.md') && name !== 'AGENTS.md'),
+  ...readdirSync(resolve(root, 'docs')).filter(name => name.endsWith('.md')).map(name => `docs/${name}`),
+];
 /**
  * Documented paths that are deliberately absent from the repository: the operator creates these
  * with mode 0600 (see docs/DEPLOYMENT.md), so a fresh clone never has them. Everything else a
@@ -76,6 +79,16 @@ it('names the DSH credential variable the same way everywhere', () => {
   for (const file of ['docs/DEVELOPING.md', 'AGENTS.md', '.env.example', 'docs/DEPLOYMENT.md', 'docs/DSH.md', 'apps/daemon/src/host-service.ts']) {
     expect(read(file), file).toContain(name!);
   }
+});
+
+it('announces its other language', () => {
+  const missing: string[] = [];
+  for (const document of documents) {
+    const counterpart = document.endsWith('.zh.md') ? document.replace(/\.zh\.md$/, '.md') : document.replace(/\.md$/, '.zh.md');
+    const name = counterpart.split('/').pop()!;
+    if (!(read(document).split('\n')[0] ?? '').includes(`](${name})`)) missing.push(`${document} -> ${name}`);
+  }
+  expect(missing).toEqual([]);
 });
 
 it('links to files that exist', () => {
