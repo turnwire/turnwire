@@ -7,3 +7,4 @@
 - Keep administration local-only across every client. Capability parity does not grant paired remote devices additional host-management permissions.
 - For behavior changes, verify cross-client effects on the same isolated session/state. Update `docs/CLIENTS.md` when capabilities change. Report actual test coverage and unverified network conditions precisely.
 - DSH reads `NOVE_HARNESS_DEEPSEEK_API_KEY` (NOVE). Do not copy model credentials into clients, Relay, tunnel processes, logs or source files.
+- Models are runtime-owned. Never add, hardcode, alias or invent a model id in any Turnwire layer — protocol, core, daemon, provider adapters or clients. Every client shows exactly what the runtime's model catalog returns, so a model the runtime does not register must stay unselectable.
