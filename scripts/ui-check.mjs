@@ -12,6 +12,9 @@ const page = await context.newPage(); const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 try {
   await page.goto(config.url);
+  // The page's own mark, and the assistant's avatar, come from the brand asset; a missing file
+  // would leave a broken image rather than fail anything else.
+  await expect.poll(() => page.locator('.brand img').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
   await expect(page.getByRole('heading', { name: 'Connect and keep working.' })).toBeVisible();
   await page.screenshot({ path: join(output, 'desktop-connection.png'), fullPage: true, animations: 'disabled' });
   await page.getByRole('button', { name: 'Local connection', exact: true }).click();
