@@ -82,6 +82,12 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 
 加密的 `subscribe` 接受数字 `after` 或 `"latest"`。后者从当前 journal 游标开始，避免为连接健康检查或快照请求进行历史重放。显式事件监听器从快照游标开始订阅，以覆盖并发变更。客户端不得把位于或早于其快照游标的元数据事件应用到当前状态。页面获取与实时事件使用页面 watermark 进行对账，watermark 之后的 delta 只应用一次。
 
+## Agent 在等回答的问题
+
+`question.answer {questionId, answers}` 回答正在运行的 Agent 阻塞等待的那一批问题；快照通过 `questions` 携带待回答的那些，`question.requested` / `question.resolved` 记录提问与选择。runtime 通过与审批相同的 Remote waterfall（`user-questions/request`）提问，因此正在关注该会话的客户端会收到问题，没有关注的客户端会把它交给主机的其他回答者，而不是替别人回答。
+
+回答用的是 runtime 自己的形状 —— `[{id, selected: [...], custom?}]` —— 整批一起发送，因为主机是把这一批当作一个决定来问的。与审批不同，这里没有任何委托：问题没有安全的默认答案，所以"帮我批准"永远不会替它作答。
+
 ## 代别人批准
 
 `session.autoApprove {sessionId, enabled}` 把一个会话的审批委托出去：打开期间，每个 `approval.requested` 一到就直接批准，而不是等人回答；打开时也会先处理已经等着的那些。runtime 的词汇是封闭的 —— `allowed-once` 是它唯一的授权 —— 所以这是 Turnwire 在同一个 `approval.decide` 路径之上做的决定，不是 runtime 的策略。

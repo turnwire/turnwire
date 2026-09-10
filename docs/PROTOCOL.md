@@ -82,6 +82,12 @@ The local token and every paired device have full control over Turnwire's config
 
 Encrypted `subscribe` accepts a numeric `after` or `"latest"`. The latter starts at the current journal cursor, avoiding historical replay for a connection health check or snapshot request. An explicit event listener subscribes from the snapshot cursor to cover concurrent changes. Clients must not apply metadata events at or below their snapshot cursor to current state. Page fetches and live events are reconciled using the page watermark, with deltas after the watermark applied once.
 
+## Questions the agent is waiting on
+
+`question.answer {questionId, answers}` answers a batch the running agent is blocked on; the snapshot carries the pending ones as `questions`, and `question.requested` / `question.resolved` record the ask and the choice. The runtime asks through the same Remote waterfall approvals use (`user-questions/request`), so a client that is watching the session is offered the question and one that is not passes it to the Host's other answerers instead of answering on someone's behalf.
+
+The answer is the runtime's own shape — `[{id, selected: [...], custom?}]` — sent whole, because the Host asked for the batch as one decision. Unlike an approval, nothing here is delegated: a question has no safe default, so `approve for me` never answers one.
+
 ## Approvals on someone's behalf
 
 `session.autoApprove {sessionId, enabled}` delegates a session's approvals: while it is on, each `approval.requested` is granted as it arrives instead of waiting for a person, and enabling it also settles whatever is already pending. The runtime's vocabulary is closed — `allowed-once` is its only grant — so this is a Turnwire decision layered over the same `approval.decide` path, not a runtime policy.

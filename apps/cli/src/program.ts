@@ -112,6 +112,21 @@ program.command('result <id>').description(t('command.result')).action((requestI
 program.command('inbox').description(t('command.inbox')).option('--all', t('option.inboxAll')).option('--before <cursor>', t('option.inboxBefore'), Number).action((options: { all?: boolean; before?: number }) => withClient(async c => print(await c.request('inbox.page', { status: options.all ? 'all' : 'pending', before: options.before }))));
 program.command('approvals').description(t('command.approvals')).action(() => withClient(async c => print((await c.request<Snapshot>('system.snapshot')).approvals)));
 for (const decision of ['approve', 'reject'] as const) program.command(`${decision} <approval>`).description(decision === 'approve' ? t('command.approve') : t('command.reject')).action((approvalId: string) => withClient(async c => print(await c.request('approval.decide', { approvalId, decision: decision === 'approve' ? 'approved' : 'rejected' }))));
+program.command('questions').description(t('command.questions')).action(() => withClient(async c => {
+  const snapshot = await c.request<Snapshot>('system.snapshot');
+  if (program.opts().json) print(snapshot.questions);
+  else if (!snapshot.questions.length) console.log(t('questions.none'));
+  else for (const question of snapshot.questions) for (const item of question.questions) console.log(`${question.id}  ${safe(item.question)}${item.options ? '  [' + item.options.map(option => option.label).join(' | ') + ']' : ''}`);
+}));
+program.command('answer <question> <option...>').description(t('command.answer')).option('--text <answer>', t('option.answerText')).action((questionId: string, options: string[], flags: { text?: string }) => withClient(async c => {
+  const snapshot = await c.request<Snapshot>('system.snapshot');
+  const question = snapshot.questions.find(candidate => candidate.id === questionId);
+  if (!question) throw localizedError('QUESTION_EXPIRED');
+  // The runtime answers a batch at once, so each question in it takes the options it was given,
+  // falling back to the same labels for every question when only one was named.
+  const answers = question.questions.map((item, index) => ({ id: item.id, selected: question.questions.length === 1 ? options : (options[index] === undefined ? [] : [options[index]!]), ...(flags.text === undefined ? {} : { custom: flags.text }) }));
+  print(await c.request('question.answer', { questionId, answers }));
+}));
 program.command('approve-for-me <session>').description(t('command.autoApprove')).option('--off', t('option.off')).action((sessionId: string, options: { off?: boolean }) => withClient(async c => {
   const result = await c.request<{ enabled: boolean }>('session.autoApprove', { sessionId, enabled: options.off !== true });
   if (program.opts().json) print(result); else console.log(result.enabled ? t('autoApprove.on') : t('autoApprove.off'));

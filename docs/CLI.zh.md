@@ -13,6 +13,8 @@
 | `turnwire history SESSION_ID` | 查看消息和完整工具输入、输出 |
 | `turnwire agents SESSION_ID` | 查看会话正在跑的后台子代理：名称、状态、已运行时间，以及它们自己的待办进度 |
 | `turnwire approve-for-me SESSION_ID [--off]` | 该会话的审批一到就自动批准，直到你关掉；打开时会先处理已经等着的那些 |
+| `turnwire questions` | 列出正在运行的 Agent 在等回答的问题，以及每个问题给出的选项 |
+| `turnwire answer QUESTION_ID '标签' [--text '文字回答']` | 回答一个待处理的问题 |
 | `turnwire export SESSION_ID --output 会话.md` | 导出 Markdown 记录 |
 | `turnwire new [prompt] --cwd /absolute/path --title 标题` | 创建会话，默认 DSH |
 | `turnwire models` | 列出当前 runtime 注册的模型、默认模型与可选思考强度 |

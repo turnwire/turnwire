@@ -147,6 +147,24 @@ describe('durable daemon ownership', () => {
     await call(core, 'approve', 'approval.decide', { approvalId: approval.id, decision: 'approved' });
     expect((await items()).items).toEqual([]);
   });
+  it('hands a runtime question to the clients and journals the answer', async () => {
+    const { core, runtime, store } = setup(); const created = await session(core);
+    await call(core, 'ask', 'session.message', { sessionId: created.id, text: 'askme: pick one' });
+    // The question is pending in the snapshot, so a client that has just loaded can render it.
+    const pending = value<{ questions: Array<{ id: string; questions: Array<{ question: string }> }> }>(await call(core, 'snap', 'system.snapshot')).questions;
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.questions[0]?.question).toContain('Which database');
+    expect(store.events(0, 100).some(event => event.data.type === 'question.requested')).toBe(true);
+
+    await call(core, 'answer', 'question.answer', { questionId: pending[0]!.id, answers: [{ id: 'demo-1', selected: ['SQLite'] }] });
+    expect(runtime.lastAnswers).toEqual([{ id: 'demo-1', selected: ['SQLite'] }]);
+    // What was chosen is in the journal, not only that somebody chose.
+    const resolved = store.events(0, 100).map(event => event.data).filter(data => data.type === 'question.resolved');
+    expect(resolved.at(-1)).toMatchObject({ question: { status: 'answered', answers: [{ id: 'demo-1', selected: ['SQLite'] }] } });
+    expect(value<{ questions: unknown[] }>(await call(core, 'snap2', 'system.snapshot')).questions).toEqual([]);
+    // Answering twice is refused rather than silently re-sent.
+    await expect(call(core, 'again', 'question.answer', { questionId: pending[0]!.id, answers: [] })).resolves.toMatchObject({ ok: false, error: { code: 'QUESTION_EXPIRED' } });
+  });
   it('does not replay a command whose result was interrupted by a crash', async () => {
     const { core, store } = setup(); const params = { cwd: process.cwd(), runtimeId: 'demo' };
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: 'session.create', params })).digest('hex');

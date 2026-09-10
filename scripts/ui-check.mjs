@@ -118,6 +118,18 @@ try {
   await expect(page.locator('.approval-panel')).toHaveCount(1);
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect(page.locator('.approval-panel')).toHaveCount(0);
+  // A question the agent is blocked on: the panel carries the choices, the answer goes back as one
+  // batch, and the panel goes away once the runtime has it.
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('askme: which database?');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const question = page.locator('.question-panel');
+  await expect(question).toHaveCount(1);
+  await expect(question.locator('.question-text')).toHaveText('Which database should the demo use?');
+  await expect(question.getByRole('button')).toHaveText(['SQLiteA single file', 'PostgresA server', 'Send answer']);
+  await question.getByRole('button', { name: /SQLite/ }).click();
+  await expect(question.getByRole('button', { name: /SQLite/ })).toHaveClass(/chosen/);
+  await question.getByRole('button', { name: 'Send answer', exact: true }).click();
+  await expect(page.locator('.question-panel')).toHaveCount(0);
   await page.getByRole('button', { name: 'Open session list' }).click();
   await expect(page.getByRole('navigation', { name: 'Session list' })).toBeVisible();
   await page.getByRole('button', { name: 'Close list', exact: true }).click();

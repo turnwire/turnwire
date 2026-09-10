@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
@@ -32,6 +32,8 @@ interface SubagentDetail { label?: string; title?: string; elapsedMs?: number; t
 /** One prompt still waiting in a session's inbox, with the client id it arrived under. */
 const inboxMessageSchema = z.object({ id: z.string(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()), source: z.object({ rpcId: z.string().optional() }).passthrough().optional() }).passthrough();
 const sessionInboxSchema = z.object({ sessionId: z.string(), projections: z.object({ inbox: z.object({ 'next-turn': z.array(z.unknown()), 'next-step': z.array(z.unknown()) }).optional() }).optional() }).passthrough();
+/** The Host's question item, as its own client UI receives it. */
+const questionItemSchema = z.object({ id: z.string(), question: z.string(), detail: z.string().optional(), header: z.string().optional(), options: z.array(z.object({ label: z.string(), description: z.string().optional() })).optional(), multiSelect: z.boolean().optional() }).passthrough();
 export interface DshOptions {
   url: string; token?: string;
   readCursor?: (sessionId: string) => number | undefined;
@@ -51,6 +53,8 @@ export class DshRuntime implements AgentRuntime {
   private cursors = new Map<string, number>();
   private live = new Map<string, { id: string; nextIndex: number; text: string }>();
   private pending = new Map<string, { sessionId: string; clientId: string; resolving?: boolean; cancelled?: boolean }>();
+  /** Question batches the Host is waiting on, keyed by their Remote event id. */
+  private questions = new Map<string, { sessionId: string; clientId: string }>();
   private clientId?: string;
   private lastError = 'DSH is not connected yet';
   constructor(private options: DshOptions) {
@@ -246,6 +250,16 @@ export class DshRuntime implements AgentRuntime {
       throw error;
     }
   }
+  /**
+   * Answer a question batch. The Host's waterfall expects the whole batch at once, and the answer
+   * is the structured shape its own client UI sends, so nothing here interprets the choices.
+   */
+  async answerQuestion(sessionId: string, requestId: string, answers: QuestionAnswerItem[]) {
+    const pending = this.questions.get(requestId);
+    if (!pending || pending.sessionId !== sessionId || pending.clientId !== this.clientId) throw new TurnwireError('QUESTION_EXPIRED', 'That question has already been answered or has expired');
+    await this.rpc('$events/result', { clientId: pending.clientId, eventId: requestId, outcome: { kind: 'result', value: { answers } } });
+    if (this.questions.delete(requestId)) this.emit(sessionId, { type: 'question.resolved', requestId, decision: 'answered' });
+  }
   subscribe(sessionId: string, listener: (event: RuntimeEvent) => void) {
     const set = this.listeners.get(sessionId) ?? new Set(); set.add(listener); this.listeners.set(sessionId, set);
     if (this.clientId) this.follow(sessionId);
@@ -358,14 +372,27 @@ export class DshRuntime implements AgentRuntime {
     }
     if (frame.type !== 'waterfall' || !this.clientId) return;
     const sessionId = z.string().parse(frame.agentId); const eventId = z.string().parse(frame.eventId);
-    if (frame.event !== 'approval/request' || !this.listeners.has(sessionId)) { await this.rpc('$events/result', { clientId: this.clientId, eventId, outcome: { kind: 'next' } }); return; }
     const request = record(frame.request);
+    // A question is the agent asking, so it is offered to whoever is watching this session. With
+    // nobody watching — or with a waterfall event this adapter does not carry — the Host's other
+    // answerers get their turn instead of being answered on someone else's behalf.
+    if (frame.event === 'user-questions/request' && this.listeners.has(sessionId)) {
+      this.questions.set(eventId, { sessionId, clientId: this.clientId });
+      this.emit(sessionId, { type: 'question.requested', requestId: eventId, questions: z.array(questionItemSchema).parse(request.questions) });
+      return;
+    }
+    if (frame.event !== 'approval/request' || !this.listeners.has(sessionId)) { await this.rpc('$events/result', { clientId: this.clientId, eventId, outcome: { kind: 'next' } }); return; }
     this.pending.set(eventId, { sessionId, clientId: this.clientId });
     this.emit(sessionId, { type: 'approval.requested', requestId: eventId, tool: String(request.toolName ?? 'tool call'), reason: String(request.reason ?? 'DSH asks for authorization to run this tool') });
   }
   private emit(id: string, event: RuntimeEvent) { if (event.type === 'model.selected') { const session = this.sessions.get(id); if (session) session.model = event.selection; } for (const listener of this.listeners.get(id) ?? []) listener(event); }
   private send(value: unknown) { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(value)); }
-  private cancelPending() { for (const [id, pending] of this.pending) this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); this.pending.clear(); }
+  private cancelPending() {
+    for (const [id, pending] of this.pending) this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' });
+    this.pending.clear();
+    for (const [id, question] of this.questions) this.emit(question.sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' });
+    this.questions.clear();
+  }
   private fail(error: unknown) { this.lastError = error instanceof Error ? error.message : 'DSH protocol error'; for (const id of this.listeners.keys()) this.emit(id, { type: 'error', message: this.lastError }); this.socket?.terminate(); }
   async dispose() { this.closed = true; if (this.retry) clearTimeout(this.retry); this.cancelPending(); this.listeners.clear(); this.socket?.terminate(); await Promise.allSettled(this.queues.values()); }
 }

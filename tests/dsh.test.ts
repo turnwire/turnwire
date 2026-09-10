@@ -27,6 +27,8 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   const emit = (type: string, data: Record<string, unknown>) => { const entry = { type: 'event', event: { seq: seq++, time: Date.now(), type, data } }; records.push(entry); for (const [socket, stream] of streams) item(socket, stream, entry); };
   /** Host-plane push, the channel api-session/status and approval requests already use. */
   const publish = (name: string, args: unknown[]) => { for (const socket of events) item(socket, 'events', { type: 'emit', event: name, args }); };
+  /** The Host asks through the waterfall channel, exactly as an approval request arrives. */
+  const ask = (questions: unknown[]) => { for (const socket of events) item(socket, 'events', { type: 'waterfall', event: 'user-questions/request', agentId: 's', eventId: 'question-1', request: { questions } }); };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, 'http://localhost');
     if (url.pathname === '/' && url.searchParams.get('token') === 'launch-secret') { res.writeHead(303, { 'set-cookie': 'dsh_auth=valid; HttpOnly', location: '/' }); res.end(); return; }
@@ -70,9 +72,14 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
       for (const socket of events) { item(socket, 'events', { type: 'emit', event: 'api-session/status', args: ['s', true] }); item(socket, 'events', { type: 'waterfall', event: 'approval/request', agentId: 's', eventId: 'approval-1', request: { toolName: 'shell', reason: 'npm test' } }); }
       value = { accepted: true };
     } else if (url.pathname === '/api/$events/result') {
-      z.object({ clientId: z.literal('generation'), eventId: z.string(), outcome: z.object({ kind: z.literal('result'), value: z.enum(['allowed-once', 'rejected']) }) }).strict().parse(args);
-      for (const socket of events) item(socket, 'events', { type: 'cancel', eventId: 'approval-1' });
-      value = undefined; setTimeout(() => { running = false; emit('turn/end', { turn: 1, reason: 'completed' }); }, 30);
+      const input = z.object({ clientId: z.literal('generation'), eventId: z.string(), outcome: z.object({ kind: z.enum(['result', 'next']), value: z.unknown().optional() }) }).strict().parse(args);
+      // Only the approval carries the turn with it; a question answer is just a result, and `next`
+      // is this client handing the request to another answerer.
+      if (input.eventId !== 'approval-1' || input.outcome.kind === 'next') { value = { accepted: true }; }
+      else {
+        for (const socket of events) item(socket, 'events', { type: 'cancel', eventId: 'approval-1' });
+        value = undefined; setTimeout(() => { running = false; emit('turn/end', { turn: 1, reason: 'completed' }); }, 30);
+      }
     } else if (url.pathname === '/api/session/cancel') { value = { accepted: true }; running = false; emit('turn/end', { turn: 1, reason: 'cancelled' }); }
     else if (url.pathname === '/api/subagents/list') {
       // The generated `subagents/list` descriptor names its one positional parameter `parentSessionId`.
@@ -111,8 +118,8 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
-  cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); server.closeAllConnections?.(); await new Promise<void>(r => server.close(() => r())); });
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, ask, sockets: () => events.size, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -189,6 +196,28 @@ it('reads each session row on its own, so one unknown shape cannot blank the res
   const agents = await runtime.listSubagents('s');
   // The unparseable row is skipped; both real children keep the detail that described them.
   expect(agents.map(agent => [agent.id, agent.todos.length, agent.elapsedMs === undefined ? undefined : Math.round(agent.elapsedMs / 1000)])).toEqual([['child-1', 1, 5], ['child-2', 0, 9]]);
+});
+it('carries a question to the client watching the session and returns that answer', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); const received: RuntimeEvent[] = []; runtime.subscribe('s', event => received.push(event)); await until(() => host.streams.size === 1);
+  host.ask([{ id: 'q1', question: 'Which database?', options: [{ label: 'SQLite' }, { label: 'Postgres' }] }]);
+  await until(() => received.some(event => event.type === 'question.requested'));
+  expect(received.find(event => event.type === 'question.requested')).toMatchObject({ type: 'question.requested', requestId: 'question-1', questions: [{ id: 'q1', question: 'Which database?' }] });
+  await runtime.answerQuestion('s', 'question-1', [{ id: 'q1', selected: ['SQLite'] }]);
+  // The whole batch goes back as the Host's own answer shape, under the client that was asked.
+  expect(host.calls.at(-1)).toMatchObject({ path: '/api/$events/result', args: { clientId: 'generation', eventId: 'question-1', outcome: { kind: 'result', value: { answers: [{ id: 'q1', selected: ['SQLite'] }] } } } });
+  await until(() => received.some(event => event.type === 'question.resolved'));
+  await expect(runtime.answerQuestion('s', 'question-1', [{ id: 'q1', selected: ['SQLite'] }])).rejects.toMatchObject({ code: 'QUESTION_EXPIRED' });
+});
+it('leaves a question to the Host when nobody is watching the session', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  // Connected, but following nothing: no Turnwire client is watching this session.
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); await until(() => host.sockets() === 1);
+  // A question for a session this process is not following must reach an answerer that is asked
+  // for it rather than being answered, or silently dropped, on someone else's behalf.
+  host.ask([{ id: 'q1', question: 'Which database?' }]);
+  await until(() => host.calls.some(call => call.path === '/api/$events/result' && call.args.eventId === 'question-1'));
+  expect(host.calls.find(call => call.args.eventId === 'question-1')?.args).toMatchObject({ outcome: { kind: 'next' } });
 });
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());

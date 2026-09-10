@@ -52,6 +52,25 @@ export const approvalSchema = z.object({
 });
 export type Approval = z.infer<typeof approvalSchema>;
 export type ApprovalDecision = 'approved' | 'rejected';
+/** One choice a question offers; `description` is extra context for a capable UI. */
+export const questionOptionSchema = z.object({ label: z.string(), description: z.string().optional() });
+/** One question the running agent is blocked on. Mirrors the runtime's own item shape. */
+export const questionItemSchema = z.object({
+  id: idSchema, question: z.string(),
+  detail: z.string().optional(), header: z.string().optional(),
+  options: z.array(questionOptionSchema).optional(), multiSelect: z.boolean().optional(),
+});
+/** One answer: the labels chosen for a question, plus an optional free-text answer. */
+export const questionAnswerItemSchema = z.object({ id: idSchema, selected: z.array(z.string()), custom: z.string().optional() });
+export const questionSchema = z.object({
+  id: idSchema, sessionId: idSchema, questions: z.array(questionItemSchema),
+  status: z.enum(['pending', 'answered', 'cancelled']), createdAt: z.string(),
+  /** Present once answered, so the record says what was chosen and not only that someone chose. */
+  answers: z.array(questionAnswerItemSchema).optional(),
+});
+export type QuestionItem = z.infer<typeof questionItemSchema>;
+export type QuestionAnswerItem = z.infer<typeof questionAnswerItemSchema>;
+export type Question = z.infer<typeof questionSchema>;
 export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.created'), session: sessionSchema }),
   z.object({ type: z.literal('session.updated'), session: sessionSchema }),
@@ -77,6 +96,9 @@ export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.autoApprove'), sessionId: idSchema, auto: z.boolean() }),
   z.object({ type: z.literal('runtime.status'), runtimeId: idSchema, online: z.boolean(), message: z.string() }),
   z.object({ type: z.literal('session.error'), sessionId: idSchema, message: z.string() }),
+  /** The agent asked something and is waiting for an answer; every client may render it. */
+  z.object({ type: z.literal('question.requested'), question: questionSchema }),
+  z.object({ type: z.literal('question.resolved'), question: questionSchema }),
 ]);
 export type EventData = z.infer<typeof eventDataSchema>;
 export const eventSchema = z.object({ seq: z.number().int().nonnegative(), time: z.string(), originSeq: z.number().int().nonnegative().optional(), data: eventDataSchema });
@@ -128,7 +150,7 @@ export const queueActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('edit'), text: z.string().trim().min(1).max(100_000) }).strict(),
 ]);
 export type QueueAction = z.infer<typeof queueActionSchema>;
-export interface Snapshot { device: { id: string; name: string }; sessions: Session[]; approvals: Approval[]; runtimes: RuntimeInfo[]; cursor: number }
+export interface Snapshot { device: { id: string; name: string }; sessions: Session[]; approvals: Approval[]; questions: Question[]; runtimes: RuntimeInfo[]; cursor: number }
 
 export const methodSchemas = {
   'system.snapshot': z.object({}).strict(),
@@ -152,6 +174,8 @@ export const methodSchemas = {
   'session.setModel': z.object({ sessionId: idSchema, provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict(),
   'model.catalog': z.object({ runtimeId: idSchema.optional() }).strict(),
   'approval.decide': z.object({ approvalId: idSchema, decision: z.enum(['approved', 'rejected']) }).strict(),
+  /** Answer one pending question. The whole batch goes at once, as the runtime's request shape requires. */
+  'question.answer': z.object({ questionId: idSchema, answers: z.array(questionAnswerItemSchema) }).strict(),
   /** Delegate or reclaim this session's approvals. Enabling it also settles what is already waiting. */
   'session.autoApprove': z.object({ sessionId: idSchema, enabled: z.boolean() }).strict(),
   'history.page': z.object({ sessionId: idSchema, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(40) }).strict(),
@@ -192,6 +216,7 @@ export const turnwireErrorCodes = [
   'OUTCOME_UNKNOWN',
   'PROBE_TIMEOUT',
   'QUEUE_ITEM_GONE',
+  'QUESTION_EXPIRED',
   'RATE_LIMITED',
   'REKEY_REQUIRED',
   'REMOTE_ERROR',

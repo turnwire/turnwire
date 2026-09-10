@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { TurnwireError, errorResponse, methodSchemas, requestSchema } from '@turnwire/protocol';
-import type { EventData, TurnwireEvent, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData } from '@turnwire/protocol';
+import type { EventData, TurnwireEvent, Question, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent } from '@turnwire/runtime';
 import { Store } from './store.js';
 export { Store } from './store.js';
@@ -24,6 +24,8 @@ export class TurnwireCore {
   private delegated = new Set<string>();
   /** Approvals the delegation is granting right now, so the journal can say nobody was asked. */
   private delegating = new Set<string>();
+  /** Questions the agent is blocked on, keyed by approval-style id `${sessionId}:${requestId}`. */
+  private questions = new Map<string, Question>();
   private runtimes: Map<string, AgentRuntime>;
   constructor(readonly store: Store, runtimes: AgentRuntime[], readonly device: { id: string; name: string }) { this.runtimes = new Map(runtimes.map(runtime => [runtime.id, runtime])); }
   async start() {
@@ -40,7 +42,7 @@ export class TurnwireCore {
     const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? { busy: await runtime.busy().catch(() => 0) } : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
     // The delegated flag is host state, not a stored field, so the snapshot is where a client sees it.
-    return { device: this.device, sessions: this.store.sessions().map(session => this.delegated.has(session.id) ? { ...session, autoApprove: true } : session), approvals: this.store.approvals().filter(a => a.status === 'pending'), runtimes, cursor: this.store.cursor() };
+    return { device: this.device, sessions: this.store.sessions().map(session => this.delegated.has(session.id) ? { ...session, autoApprove: true } : session), approvals: this.store.approvals().filter(a => a.status === 'pending'), questions: [...this.questions.values()].filter(question => question.status === 'pending'), runtimes, cursor: this.store.cursor() };
   }
   subscribe(listener: (event: TurnwireEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async handle(value: unknown, context?: { clientId: string }): Promise<RpcResponse> {
@@ -200,6 +202,24 @@ export class TurnwireCore {
         this.publish({ type: 'session.autoApprove', sessionId: session.id, auto: enabled });
         return { enabled };
       }
+      case 'question.answer': {
+        const p = methodSchemas['question.answer'].parse(request.params);
+        const question = this.questions.get(p.questionId);
+        if (!question || question.status !== 'pending') throw new TurnwireError('QUESTION_EXPIRED', 'That question was already answered or has expired');
+        const session = this.session(question.sessionId); const runtime = this.runtime(session.runtimeId);
+        const answerQuestion = runtime.answerQuestion?.bind(runtime);
+        if (!answerQuestion) throw new TurnwireError('NOT_AVAILABLE', 'This runtime does not ask questions');
+        return this.lock(`question:${p.questionId}`, async () => {
+          await answerQuestion(session.runtimeSessionId, p.questionId.slice(question.sessionId.length + 1), p.answers);
+          // The journal keeps what was asked and what was chosen, so a transcript can show the
+          // decision rather than a tool call that simply ended.
+          const answered = { ...question, status: 'answered' as const, answers: p.answers };
+          this.questions.set(question.id, answered);
+          this.publish({ type: 'question.resolved', question: answered });
+          this.questions.delete(question.id);
+          return { accepted: true };
+        });
+      }
       case 'approval.decide': {
         const p = methodSchemas['approval.decide'].parse(request.params);
         return this.lock(`approval:${p.approvalId}`, async () => {
@@ -261,6 +281,18 @@ export class TurnwireCore {
       if (this.delegated.has(sessionId)) void this.grantPending(sessionId).catch(() => {});
       return;
     }
+    if (event.type === 'question.requested') {
+      const question: Question = { id: `${sessionId}:${event.requestId}`, sessionId, questions: event.questions, status: 'pending', createdAt: new Date().toISOString() };
+      this.questions.set(question.id, question);
+      this.publish({ type: 'question.requested', question });
+      return;
+    }
+    if (event.type === 'question.resolved') {
+      const question = this.questions.get(`${sessionId}:${event.requestId}`);
+      if (question?.status === 'pending') this.publish({ type: 'question.resolved', question: { ...question, status: event.decision === 'answered' ? 'answered' : 'cancelled' } });
+      this.questions.delete(`${sessionId}:${event.requestId}`);
+      return;
+    }
     if (event.type === 'approval.resolved') {
       const approval = this.store.approval(`${sessionId}:${event.requestId}`);
       // The runtime echoes its own resolution, and that echo is what the store keeps — so a grant
@@ -285,5 +317,5 @@ export class TurnwireCore {
     const result = previous.catch(() => {}).then(operation); this.locks.set(key, result);
     try { return await result; } finally { if (this.locks.get(key) === result) this.locks.delete(key); }
   }
-  async dispose() { this.delegated.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
+  async dispose() { this.delegated.clear(); this.questions.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
 }

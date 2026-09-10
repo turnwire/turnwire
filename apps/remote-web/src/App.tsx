@@ -1,10 +1,10 @@
 import { Inbox } from './Inbox';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
+import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView } from '@turnwire/protocol';
+import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
@@ -32,6 +32,32 @@ function modelChipLabel(session: Session, catalog?: { runtimeId: string; value: 
   if (!session.model) return t('model.defaultModel');
   const entry = catalog?.value.groups.find(group => group.id === session.model!.provider)?.models.find(model => model.id === session.model!.model);
   return entry?.name ?? session.model.model;
+}
+/**
+ * One pending question batch. Every question in it is answered together, because the runtime asked
+ * for them as one decision; an option click records a choice and the submit sends the batch, which
+ * also keeps a free-text answer to the same action.
+ */
+function QuestionPanel({ question, disabled, onAnswer }: { question: Question; disabled: boolean; onAnswer: (answers: QuestionAnswerItem[]) => void }) {
+  const t = useLocale();
+  const [picks, setPicks] = useState<Record<string, string[]>>({});
+  const [texts, setTexts] = useState<Record<string, string>>({});
+  const toggle = (id: string, label: string, multi: boolean) => setPicks(current => {
+    const chosen = current[id] ?? [];
+    return { ...current, [id]: multi ? (chosen.includes(label) ? chosen.filter(entry => entry !== label) : [...chosen, label]) : [label] };
+  });
+  const answerable = question.questions.every(item => (picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '');
+  return <section className="question-panel" aria-label={t('question.aria')}>
+    <div className="question-title"><QuestionIcon size={19} /><strong>{t('question.title')}</strong></div>
+    {question.questions.map(item => <div className="question-item" key={item.id}>
+      {item.header && <span className="question-header">{item.header}</span>}
+      <p className="question-text">{item.question}</p>
+      {item.detail && <p className="question-detail">{item.detail}</p>}
+      {item.options && item.options.length > 0 && <div className="question-options">{item.options.map(option => <button key={option.label} type="button" className={(picks[item.id] ?? []).includes(option.label) ? 'chosen' : ''} disabled={disabled} onClick={() => toggle(item.id, option.label, item.multiSelect === true)}>{option.label}{option.description ? <small>{option.description}</small> : null}</button>)}</div>}
+      <input className="question-other" aria-label={t('question.other')} placeholder={t('question.other')} value={texts[item.id] ?? ''} disabled={disabled} onChange={event => setTexts(current => ({ ...current, [item.id]: event.target.value }))} />
+    </div>)}
+    <div className="question-actions"><button className="primary" type="button" disabled={disabled || !answerable} onClick={() => onAnswer(question.questions.map(item => ({ id: item.id, selected: picks[item.id] ?? [], ...((texts[item.id] ?? '').trim() === '' ? {} : { custom: texts[item.id]!.trim() }) })))}>{t('question.send')}</button></div>
+  </section>;
 }
 function Status({ status }: { status: SessionStatus }) { const t = useLocale(); return <span className={`status ${status}`}><span />{t(statusKeys[status])}</span>; }
 /** How long an agent has been working, rounded the way a person reads a stopwatch. */
@@ -67,6 +93,7 @@ export function App() {
   const session = snapshot?.sessions.find(s => s.id === selected);
   const messages = useMemo(() => selected ? conversation(events, selected) : [], [events, selected]);
   const approvals = snapshot?.approvals.filter(a => a.sessionId === selected) ?? [];
+  const questions = snapshot?.questions.filter(question => question.sessionId === selected) ?? [];
   const runtime = snapshot?.runtimes.find(r => r.id === session?.runtimeId);
   // Model choice belongs to the runtime that owns the session, so the catalog is fetched per
   // runtime and only from a runtime that advertises the capability.
@@ -271,6 +298,7 @@ export function App() {
             {rows.map(row => row.tools ? <ToolRun key={row.key} items={row.tools} running={turnRunning} /> : <article className={`message ${row.message!.role}`} key={row.key}><div className="message-author">{row.message!.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon.svg" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(row.message!.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>{row.message!.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{row.message!.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div><div className="message-text">{row.message!.role === 'assistant' ? <MarkdownMessage text={row.message!.text} id={row.message!.id} /> : row.message!.text}{!row.message!.complete && <span className="cursor" />}</div></article>)}
             <div ref={bottom} /></div></section>
           <footer className="composer-area"><div className="composer-width">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
+            {questions.map(question => <QuestionPanel key={question.id} question={question} disabled={busy || !connected} onAnswer={answers => void perform(async c => { await c.request('question.answer', { questionId: question.id, answers }); })} />)}
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             

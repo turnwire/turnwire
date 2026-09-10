@@ -68,7 +68,7 @@ it('leaves no assistant message for a turn that only calls tools', () => {
   expect(messages[1]?.text).toBe('real answer');
 });
 it('never lets an old running event or approval regress a newer idle snapshot', () => {
-  const snapshot: Snapshot = { device: { id: 'mac', name: 'Mac' }, sessions: [session], approvals: [], runtimes: [], cursor: 90 };
+  const snapshot: Snapshot = { device: { id: 'mac', name: 'Mac' }, sessions: [session], approvals: [], questions: [], runtimes: [], cursor: 90 };
   expect(applyEvent(snapshot, { seq: 20, time: 'now', data: { type: 'session.updated', session: { ...session, status: 'running' } } })).toBe(snapshot);
   expect(applyEvent(snapshot, { seq: 21, time: 'now', data: { type: 'approval.requested', approval: { id: 'approval', sessionId: session.id, status: 'pending', tool: 'shell', reason: '', createdAt: 'now' } } })).toBe(snapshot);
 });

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, QueueAction, QueueItemView, RuntimeCapabilities } from '@turnwire/protocol';
+import type { ApprovalDecision, QueueAction, QueueItemView, QuestionAnswerItem, RuntimeCapabilities } from '@turnwire/protocol';
 import { TurnwireError } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from './index.js';
 
@@ -16,6 +16,10 @@ export class DemoRuntime implements AgentRuntime {
    * to exercise offline: this is what `listQueue` reports and what drains when the turn ends.
    */
   private queues = new Map<string, Array<{ messageId: string; text: string }>>();
+  /** Question batches this demo is waiting on, so the question surface works without a model. */
+  private asked = new Map<string, string>();
+  /** The last answers a client sent, for tests that assert what came back. */
+  lastAnswers: QuestionAnswerItem[] = [];
   capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: true, backgroundTasks: false, modelSelection: false }; }
   async health() { return { online: true, message: 'Offline demo: runs no code and calls no model' }; }
   async createSession(options: { id: string; cwd: string }) { const session: RuntimeSession = { ...options, status: 'idle' }; this.sessions.set(session.id, session); return session; }
@@ -43,6 +47,7 @@ export class DemoRuntime implements AgentRuntime {
   async cancel(sessionId: string) {
     for (const [id, pending] of this.pending) if (pending.sessionId === sessionId) { this.pending.delete(id); this.emit(sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); }
     this.queues.delete(sessionId);
+    for (const [id, owner] of this.asked) if (owner === sessionId) { this.asked.delete(id); this.emit(sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' }); }
     this.emit(sessionId, { type: 'status', status: 'idle' });
   }
   async approve(sessionId: string, requestId: string, decision: ApprovalDecision) {
@@ -53,6 +58,14 @@ export class DemoRuntime implements AgentRuntime {
     for (const item of this.queues.get(sessionId) ?? []) this.answer(sessionId, item.text);
     this.queues.delete(sessionId);
   }
+  async answerQuestion(sessionId: string, requestId: string, answers: QuestionAnswerItem[]) {
+    if (!this.asked.has(requestId)) throw new TurnwireError('QUESTION_EXPIRED', 'That question has already been answered or has expired');
+    this.asked.delete(requestId);
+    this.lastAnswers = answers;
+    this.emit(sessionId, { type: 'question.resolved', requestId, decision: 'answered' });
+    // The turn the question belongs to can finish now; a real runtime resumes its own turn.
+    this.emit(sessionId, { type: 'status', status: 'idle' });
+  }
   subscribe(id: string, listener: (event: RuntimeEvent) => void) { const listeners = this.listeners.get(id) ?? new Set(); listeners.add(listener); this.listeners.set(id, listeners); return () => { listeners.delete(listener); }; }
   private running(sessionId: string) { return [...this.pending.values()].some(pending => pending.sessionId === sessionId); }
   /** Produce the demo's canned answer, and an approval when the prompt asks for one. */
@@ -62,6 +75,13 @@ export class DemoRuntime implements AgentRuntime {
     const text = `This is Turnwire's offline demo session. Received: ${prompt}\n\nSessions, output and approvals sync to every connected client. Connect DSH to run real development tasks.`;
     this.emit(sessionId, { type: 'message.delta', messageId, text: text.slice(0, 24) });
     this.emit(sessionId, { type: 'message.completed', messageId, text });
+    // A prompt that asks the demo to ask something produces a real question request, so the
+    // question surface can be driven end to end without a model behind it.
+    if (/askme|问一下/i.test(prompt)) {
+      const requestId = randomUUID(); this.asked.set(requestId, sessionId);
+      this.emit(sessionId, { type: 'question.requested', requestId, questions: [{ id: 'demo-1', header: 'Demo question', question: 'Which database should the demo use?', detail: 'The demo asks so a client can show the answer flow.', options: [{ label: 'SQLite', description: 'A single file' }, { label: 'Postgres', description: 'A server' }] }] });
+      return;
+    }
     if (/approval|approve|审批|批准/i.test(prompt)) {
       const requestId = randomUUID(); this.pending.set(requestId, { sessionId, messageId });
       this.emit(sessionId, { type: 'approval.requested', requestId, tool: 'demo approval', reason: 'Verifies cross-client approval sync. This action runs no command.' });

@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
 export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
@@ -8,6 +8,9 @@ export type RuntimeEvent =
   | { type: 'tool.started' | 'tool.finished'; callId: string; tool: string; detail: string; isError?: boolean }
   | { type: 'approval.requested'; requestId: string; tool: string; reason: string }
   | { type: 'approval.resolved'; requestId: string; decision: ApprovalDecision | 'cancelled' }
+  /** The runtime is blocked on a question; an answer goes back through `answerQuestion`. */
+  | { type: 'question.requested'; requestId: string; questions: QuestionItem[] }
+  | { type: 'question.resolved'; requestId: string; decision: 'answered' | 'cancelled' }
   | { type: 'model.selected'; selection: ModelSelection }
   | { type: 'error'; message: string };
 export interface AgentRuntime {
@@ -52,6 +55,8 @@ export interface AgentRuntime {
   sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }): Promise<void>;
   cancel(sessionId: string): Promise<void>;
   approve(sessionId: string, requestId: string, decision: ApprovalDecision): Promise<void>;
+  /** Answer a runtime's pending question batch. Present only when the runtime asks questions. */
+  answerQuestion?(sessionId: string, requestId: string, answers: QuestionAnswerItem[]): Promise<void>;
   subscribe(sessionId: string, listener: (event: RuntimeEvent) => void): Unsubscribe;
   dispose(): Promise<void>;
 }

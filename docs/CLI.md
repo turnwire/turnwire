@@ -13,6 +13,8 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | `turnwire history SESSION_ID` | View messages and full tool inputs and outputs |
 | `turnwire agents SESSION_ID` | Watch the background agents a session has running: label, state, elapsed time, and their own todo progress |
 | `turnwire approve-for-me SESSION_ID [--off]` | Grant that session's approvals as they arrive until you turn it off, then settle what is already waiting |
+| `turnwire questions` | List the questions a running agent is waiting on, with the choices each one offers |
+| `turnwire answer QUESTION_ID 'label' [--text 'written answer']` | Answer a pending question |
 | `turnwire export SESSION_ID --output session.md` | Export a Markdown record |
 | `turnwire new [prompt] --cwd /absolute/path --title TITLE` | Create a session; DSH by default |
 | `turnwire models` | List the models registered by the current runtime, the default model and available thinking efforts |
