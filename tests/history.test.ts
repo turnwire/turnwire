@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, TurnwireCore } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import { HistoryBuffer, LocalClient, RemoteClient, applyEvent, conversation, loadHistory, loadHistoryPage, randomSecret } from '@turnwire/sdk';
+import { HistoryBuffer, LocalClient, RemoteClient, applyEvent, conversation, loadHistory, loadHistoryPage, randomSecret, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireEvent, Session, Snapshot } from '@turnwire/protocol';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
 import { startRelay } from '../apps/relay/src/server.js';
@@ -75,7 +75,9 @@ it('never lets an old running event or approval regress a newer idle snapshot', 
 it('backfills an existing journal once and persists its projection across reopen', () => {
   const directory = mkdtempSync(join(tmpdir(), 'turnwire-history-')); cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, 'state.db'); let store = fixture(new Store(path)); const expected = store.history(session.id, 40);
-  store.db.exec("DROP TABLE history; DELETE FROM settings WHERE key='history-projection-v1'"); store.close();
+  // An existing journal with no projection yet: the marker is dropped by pattern so a future bump of
+  // the projection version keeps testing the backfill instead of the flag's spelling.
+  store.db.exec("DROP TABLE history; DELETE FROM settings WHERE key LIKE 'history-projection-%'"); store.close();
   store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected); store.close();
   store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected); store.close();
   // Reopening the file-backed journal re-projects the whole 4088-event fixture twice, so a loaded
@@ -137,4 +139,23 @@ it('moves a queued prompt to where it started, out of the middle of the answer i
   expect(messages.map(message => message.id)).toEqual(['asked', 'answer', 'queued', 'second']);
   // The row is no longer waiting, so no client labels it as queued once it has run.
   expect(messages.find(message => message.id === 'queued')?.queued).toBe(false);
+});
+it('keeps a question and its answer in the conversation where the agent asked it', () => {
+  const store = new Store(':memory:'); cleanup.push(() => store.close());
+  const question = { id: 'batch-1', sessionId: session.id, status: 'pending' as const, createdAt: 'now', questions: [{ id: 'q1', question: 'Which database?', options: [{ label: 'SQLite' }, { label: 'Postgres' }] }] };
+  store.append({ type: 'session.created', session });
+  store.append({ type: 'message.user', sessionId: session.id, messageId: 'asked', text: 'Set the project up' });
+  store.append({ type: 'message.completed', sessionId: session.id, messageId: 'part', text: 'One thing first.' });
+  store.append({ type: 'question.requested', question });
+  store.append({ type: 'message.completed', sessionId: session.id, messageId: 'tail', text: 'Waiting on you.' });
+  // A question is journaled where it was asked, so it reads between the two answers.
+  const pending = conversation(store.events(0, 50), session.id);
+  expect(pending.map(message => message.role)).toEqual(['user', 'assistant', 'question', 'assistant']);
+  const asked = pending[2]!; expect(asked.complete).toBe(false); expect(asked.question?.status).toBe('pending');
+  store.append({ type: 'question.resolved', question: { ...question, status: 'answered', answers: [{ id: 'q1', selected: ['SQLite'] }] } });
+  const answered = conversation(store.events(0, 50), session.id).find(message => message.role === 'question')!;
+  expect(answered.complete).toBe(true);
+  expect(answered.question?.answers).toEqual([{ id: 'q1', selected: ['SQLite'] }]);
+  // and the exported transcript says what was chosen, not only what was asked.
+  expect(transcriptMarkdown(session, conversation(store.events(0, 50), session.id))).toContain('SQLite');
 });

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { historyKey, reduceHistory } from '@turnwire/protocol';
+import { eventSessionId, historyKey, reduceHistory } from '@turnwire/protocol';
 import type { HistoryPage } from '@turnwire/protocol';
 import type { Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session } from '@turnwire/protocol';
 
@@ -25,12 +25,12 @@ export class Store {
       INSERT OR IGNORE INTO inbox(id,body) SELECT id,body FROM approvals ORDER BY json_extract(body,'$.createdAt');
     `);
     // One-time, transactional projection migration. Existing event journals stay intact.
-    if (!this.setting<boolean>('history-projection-v1')) {
+    if (!this.setting<boolean>('history-projection-v2')) {
       this.db.exec('BEGIN IMMEDIATE');
       try {
         let after = 0;
         while (true) { const page = this.events(after, 1000); for (const event of page) this.project(event); if (page.length < 1000) break; after = page.at(-1)!.seq; }
-        this.setSetting('history-projection-v1', true); this.db.exec('COMMIT');
+        this.setSetting('history-projection-v2', true); this.db.exec('COMMIT');
       } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     }
   }
@@ -52,7 +52,7 @@ export class Store {
   }
   private project(event: TurnwireEvent) {
     const key = historyKey(event); if (!key) return;
-    const d = event.data; const sessionId = 'sessionId' in d ? d.sessionId : 'approval' in d ? d.approval.sessionId : undefined;
+    const sessionId = eventSessionId(event.data);
     const row = this.db.prepare('SELECT first_seq,body FROM history WHERE key=?').get(key);
     const events = reduceHistory(row ? JSON.parse(String(row.body)) as TurnwireEvent[] : [], event);
     this.db.prepare('INSERT OR REPLACE INTO history VALUES(?,?,?,?)').run(sessionId!, key, row ? Number(row.first_seq) : event.seq, JSON.stringify(events));
@@ -70,7 +70,7 @@ export class Store {
     return { events: selected.reverse().flatMap(row => JSON.parse(String(row.body)) as TurnwireEvent[]), cursor: this.cursor(), hasMore, nextBefore: hasMore ? Number(selected[0]!.first_seq) : null };
   }
   append(data: EventData, source?: string): TurnwireEvent | undefined {
-    const sessionId = 'sessionId' in data ? data.sessionId : 'session' in data ? data.session.id : 'approval' in data ? data.approval.sessionId : null;
+    const sessionId = eventSessionId(data) ?? null;
     const time = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {

@@ -4,7 +4,7 @@ import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import { TurnwireError } from '@turnwire/protocol';
+import { TurnwireError, eventSessionId } from '@turnwire/protocol';
 import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { shouldLoadEarlier } from './historyScroll';
@@ -35,31 +35,47 @@ function modelChipLabel(session: Session, catalog?: { runtimeId: string; value: 
   return entry?.name ?? session.model.model;
 }
 /**
- * One pending question batch. Every question in it is answered together, because the runtime asked
- * for them as one decision; an option click records a choice and the submit sends the batch, which
- * also keeps a free-text answer to the same action.
+ * A question the agent is blocked on, rendered where it was asked. One tap answers a single-choice
+ * question; a multi-choice one collects its picks first. Once it is settled the card becomes the
+ * record of what was asked and what was chosen, which is why the answer lives in the transcript at all.
  */
-function QuestionPanel({ question, disabled, onAnswer }: { question: Question; disabled: boolean; onAnswer: (answers: QuestionAnswerItem[]) => void }) {
+function QuestionCard({ question, pending, disabled, onAnswer }: { question: Question; pending: boolean; disabled: boolean; onAnswer: (answers: QuestionAnswerItem[]) => void }) {
   const t = useLocale();
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [texts, setTexts] = useState<Record<string, string>>({});
-  const toggle = (id: string, label: string, multi: boolean) => setPicks(current => {
-    const chosen = current[id] ?? [];
-    return { ...current, [id]: multi ? (chosen.includes(label) ? chosen.filter(entry => entry !== label) : [...chosen, label]) : [label] };
-  });
-  const answerable = question.questions.every(item => (picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '');
-  return <section className="question-panel" aria-label={t('question.aria')}>
-    <div className="question-title"><QuestionIcon size={19} /><strong>{t('question.title')}</strong></div>
+  const answer = (override?: Record<string, string[]>) => onAnswer(question.questions.map(item => {
+    const selected = (override ?? picks)[item.id] ?? [];
+    const custom = (texts[item.id] ?? '').trim();
+    return { id: item.id, selected, ...(custom === '' ? {} : { custom }) };
+  }));
+  const ready = question.questions.every(item => (picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '');
+  const asked = question.questions.length === 1 ? question.questions[0]! : undefined;
+  const answerable = pending && !disabled;
+  return <section className="question-card" aria-label={t('question.aria')} data-status={pending ? 'pending' : question.status}>
+    <div className="question-title"><QuestionIcon size={17} /><strong>{pending ? t('question.title') : t('question.answeredTitle')}</strong></div>
     {question.questions.map(item => <div className="question-item" key={item.id}>
       {item.header && <span className="question-header">{item.header}</span>}
       <p className="question-text">{item.question}</p>
       {item.detail && <p className="question-detail">{item.detail}</p>}
-      {item.options && item.options.length > 0 && <div className="question-options">{item.options.map(option => <button key={option.label} type="button" className={(picks[item.id] ?? []).includes(option.label) ? 'chosen' : ''} disabled={disabled} onClick={() => toggle(item.id, option.label, item.multiSelect === true)}>{option.label}{option.description ? <small>{option.description}</small> : null}</button>)}</div>}
-      <input className="question-other" aria-label={t('question.other')} placeholder={t('question.other')} value={texts[item.id] ?? ''} disabled={disabled} onChange={event => setTexts(current => ({ ...current, [item.id]: event.target.value }))} />
+      {answerable && item.options && item.options.length > 0 && <div className="question-options">{item.options.map(option => <button key={option.label} type="button" className={(picks[item.id] ?? []).includes(option.label) ? 'chosen' : ''} disabled={disabled} onClick={() => {
+        // One choice means the tap is the answer; several means the reader says when they are done.
+        if (item.multiSelect === true) { const chosen = picks[item.id] ?? []; setPicks(current => ({ ...current, [item.id]: chosen.includes(option.label) ? chosen.filter(entry => entry !== option.label) : [...chosen, option.label] })); }
+        else { const next = { ...picks, [item.id]: [option.label] }; setPicks(next); if (asked) answer(next); }
+      }}>{option.label}{option.description ? <small>{option.description}</small> : null}</button>)}</div>}
+      {answerable && <span className="question-other-row"><input className="question-other" aria-label={t('question.other')} placeholder={t('question.other')} value={texts[item.id] ?? ''} disabled={disabled} onChange={event => setTexts(current => ({ ...current, [item.id]: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter' && ready) { event.preventDefault(); answer(); } }} />{item.multiSelect === true || !item.options?.length ? <button className="primary" type="button" disabled={disabled || !((picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '')} onClick={() => answer()}>{t('question.send')}</button> : null}</span>}
+      {!pending && <p className="question-given">{item.options?.find(option => (question.answers?.find(entry => entry.id === item.id)?.selected ?? []).includes(option.label)) ? null : null}{answerText(question, item.id) || t('question.noAnswer')}</p>}
     </div>)}
-    <div className="question-actions"><button className="primary" type="button" disabled={disabled || !answerable} onClick={() => onAnswer(question.questions.map(item => ({ id: item.id, selected: picks[item.id] ?? [], ...((texts[item.id] ?? '').trim() === '' ? {} : { custom: texts[item.id]!.trim() }) })))}>{t('question.send')}</button></div>
+    {answerable && asked?.multiSelect === true && <div className="question-actions"><button className="primary" type="button" disabled={disabled || !ready} onClick={() => answer()}>{t('question.send')}</button></div>}
   </section>;
 }
+
+/** What was chosen for one question, as the record shows it. */
+function answerText(question: Question, id: string) {
+  const answer = question.answers?.find(entry => entry.id === id);
+  if (!answer) return '';
+  return [...answer.selected, ...(answer.custom ? [answer.custom] : [])].join(t('common.listSeparator'));
+}
+
 function Status({ status }: { status: SessionStatus }) { const t = useLocale(); return <span className={`status ${status}`}><span />{t(statusKeys[status])}</span>; }
 /** How long an agent has been working, rounded the way a person reads a stopwatch. */
 function agentDuration(ms: number) { const seconds = Math.round(ms / 1000); return seconds < 60 ? t('agents.seconds', { value: seconds }) : t('agents.minutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 }); }
@@ -212,6 +228,8 @@ export function App() {
   }, [runtime, catalog]);
   /** The daemon records the resolved selection, so the request omits what the runtime may fill in. */
   /** Sending is always queueing; steering is the separate action that jumps the queue. */
+  const pendingQuestions = useMemo(() => new Set(questions.map(question => question.id)), [questions]);
+  const answerQuestion = (question: Question, answers: QuestionAnswerItem[]) => void perform(async c => { await c.request('question.answer', { questionId: question.id, answers }); });
   function submit(text: string, asSteer: boolean) {
     if (!session) return;
     const sessionId = session.id;
@@ -251,7 +269,7 @@ export function App() {
         pending.push(event);
         // Narrow before the closure: the checker does not keep it inside the updater.
         const history = historyRef.current; const d = event.data;
-        if (history && ('sessionId' in d ? d.sessionId : 'approval' in d ? d.approval.sessionId : undefined) === history.sessionId) history.buffer.apply(event);
+        if (history && eventSessionId(d) === history.sessionId) history.buffer.apply(event);
         if (!flush) flush = setTimeout(() => {
           flush = undefined; const batch = pending; pending = [];
           setSnapshot(previous => previous ? batch.reduce(applyEvent, previous) : previous);
@@ -339,19 +357,18 @@ export function App() {
               // alone, so a conversation of many turns reads as its answers.
               const live = index === turns.length - 1 && turnRunning;
               const steps = turn.body.slice(0, turn.resultIndex);
-              const collapsed = !live && steps.length > 0 && !steps.some(row => row.message?.role === 'error');
+              const collapsed = !live && steps.length > 0 && !steps.some(row => row.message?.role === 'error' || row.message?.role === 'question');
               const result = turn.body.slice(turn.resultIndex);
               return <Fragment key={turn.key}>
-                {turn.user && <ConversationRow row={turn.user} running={turnRunning} />}
+                {turn.user && <ConversationRow row={turn.user} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />}
                 {collapsed
                   ? <details className="turn-process"><summary><TerminalWindow size={13} /><span>{t('turn.process')}</span><span className="tool-status">{t(steps.length === 1 ? 'turn.step' : 'turn.steps', { count: steps.length })}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{steps.map(row => <ConversationRow key={row.key} row={row} running={false} />)}</div></details>
-                  : steps.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} />)}
-                {result.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} />)}
+                  : steps.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
+                {result.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
               </Fragment>;
             })}
             <div ref={bottom} /></div></section>
           <footer className="composer-area"><div className="composer-width">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
-            {questions.map(question => <QuestionPanel key={question.id} question={question} disabled={busy || !connected} onAnswer={answers => void perform(async c => { await c.request('question.answer', { questionId: question.id, answers }); })} />)}
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
@@ -415,10 +432,11 @@ function ToolCall({ message }: { message: ConversationMessage }) {
 }
 
 /** One row of the conversation: a message, or a run of tool calls. */
-function ConversationRow({ row, running }: { row: { key: string; tools?: ConversationMessage[]; message?: ConversationMessage; lead: boolean }; running: boolean }) {
+function ConversationRow({ row, running, pendingQuestions, disabled, onAnswer }: { row: { key: string; tools?: ConversationMessage[]; message?: ConversationMessage; lead: boolean }; running: boolean; pendingQuestions?: Set<string>; disabled?: boolean; onAnswer?: (question: Question, answers: QuestionAnswerItem[]) => void }) {
   const t = useLocale();
   if (row.tools) return <ToolRun items={row.tools} running={running} />;
   const message = row.message!;
+  if (message.role === 'question' && message.question) return <QuestionCard question={message.question} pending={pendingQuestions?.has(message.question.id) === true} disabled={disabled === true} onAnswer={answers => onAnswer?.(message.question!, answers)} />;
   return <article className={`message ${message.role}${row.lead ? '' : ' follow'}`}>{row.lead && <div className="message-author">{message.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon-192.png" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>}{(message.queued || message.steer) && <div className="message-tags">{message.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{message.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div>}<div className="message-text">{message.role === 'assistant' ? <MarkdownMessage text={message.text} id={message.id} /> : message.text}{!message.complete && <span className="cursor" />}</div></article>;
 }
 

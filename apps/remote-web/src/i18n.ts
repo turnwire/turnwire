@@ -29,6 +29,8 @@ const en = {
   'common.unarchive': 'Unarchive',
   // A question the agent is blocked on. Every question in a batch is answered together.
   'question.aria': 'Question from the agent',
+  'question.answeredTitle': 'Answered',
+  'question.noAnswer': 'No answer',
   'question.title': 'The agent is asking',
   'question.other': 'Or type an answer…',
   'question.send': 'Send answer',
@@ -307,6 +309,8 @@ const zh: Catalog = {
   'common.approveOnce': '批准本次',
   'common.unarchive': '取消归档',
   'question.aria': '来自 Agent 的问题',
+  'question.answeredTitle': '已回答',
+  'question.noAnswer': '未回答',
   'question.title': 'Agent 在问你',
   'question.other': '或直接输入回答…',
   'question.send': '提交回答',

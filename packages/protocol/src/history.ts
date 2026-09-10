@@ -1,4 +1,4 @@
-import type { TurnwireEvent } from './index.js';
+import type { EventData, TurnwireEvent } from './index.js';
 
 /** A page contains whole messages / tool calls, never a slice of token deltas. */
 export interface HistoryPage { events: TurnwireEvent[]; cursor: number; hasMore: boolean; nextBefore: number | null }
@@ -7,7 +7,17 @@ export function historyKey(event: TurnwireEvent): string | undefined {
   if ('messageId' in d) return `${d.sessionId}:message:${d.messageId}`;
   if ('callId' in d) return `${d.sessionId}:tool:${d.callId}`;
   if ('approval' in d) return `${d.approval.sessionId}:approval:${d.approval.id}`;
+  // A question is its own entity, so a page carries the asked-and-answered pair as one record.
+  if ('question' in d) return `${d.question.sessionId}:question:${d.question.id}`;
   if (d.type === 'session.error') return `${d.sessionId}:error:${event.seq}`;
+  return undefined;
+}
+/** The session an event belongs to. Approvals and questions carry theirs inside the payload. */
+export function eventSessionId(data: EventData): string | undefined {
+  if ('sessionId' in data) return data.sessionId;
+  if ('session' in data) return data.session.id;
+  if ('approval' in data) return data.approval.sessionId;
+  if ('question' in data) return data.question.sessionId;
   return undefined;
 }
 export function historyOrder(a: TurnwireEvent, b: TurnwireEvent): number { return (a.originSeq ?? a.seq) - (b.originSeq ?? b.seq) || a.seq - b.seq; }
@@ -29,7 +39,7 @@ export function reduceHistory(existing: TurnwireEvent[], event: TurnwireEvent): 
     return [{ ...event, originSeq, time: first?.time ?? event.time, data: { ...d, text } }];
   }
   const value = { ...event, originSeq };
-  if (d.type === 'tool.finished' || d.type === 'approval.resolved') return [...existing.filter(e => e.data.type === 'tool.started' || e.data.type === 'approval.requested'), value];
+  if (d.type === 'tool.finished' || d.type === 'approval.resolved' || d.type === 'question.resolved') return [...existing.filter(e => e.data.type === 'tool.started' || e.data.type === 'approval.requested' || e.data.type === 'question.requested'), value];
   return [value];
 }
 /** Client projection: bounded by visible records, not the number of streaming tokens. */

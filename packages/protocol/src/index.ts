@@ -301,7 +301,7 @@ export type RelayAuth = z.infer<typeof relayAuthSchema>;
 export { deploymentConfigSchema, deploymentStatusSchema } from './deployment.js';
 export type { DeploymentConfig, DeploymentStatus } from './deployment.js';
 
-export { historyKey, historyOrder, reduceHistory, HistoryBuffer } from './history.js';
+export { eventSessionId, historyKey, historyOrder, reduceHistory, HistoryBuffer } from './history.js';
 export type { HistoryPage } from './history.js';
 
 export interface InboxPage { items: Array<{ position: number; approval: Approval; sessionTitle: string }>; nextBefore: number | null; cursor: number }

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
-import { tunnelProviderSchema } from '@turnwire/protocol';
+import { eventSessionId, tunnelProviderSchema } from '@turnwire/protocol';
 import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { safe, printRemote, printPairing, remoteMenu, runTui, deploymentMenu, watchDeployment, directMenu, notificationsMenu } from './terminal.js';
 import { detectLocale, isLocale, localeFromArgv, localizedError, padEnd, setLocale, t, textIn } from './i18n.js';
@@ -143,13 +143,13 @@ program.command('attach <session>').description(t('command.attach')).action(asyn
   const page = await loadHistoryPage(c, sessionId); const history = page.events;
   if (page.hasMore && !program.opts().json) console.log(t('history.earlier', { session: sessionId, cursor: page.nextBefore ?? '' }));
   if (program.opts().json) for (const event of history) print(event);
-  else for (const message of conversation(history, sessionId)) console.log(`\n${message.role === 'user' ? t('role.you') : message.role === 'tool' ? message.tool : message.role === 'error' ? t('role.error') : t('role.assistant')}${message.isError ? t('history.failed') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text)}`);
+  else for (const message of conversation(history, sessionId)) console.log(`\n${message.role === 'user' ? t('role.you') : message.role === 'tool' ? message.tool : message.role === 'error' ? t('role.error') : message.role === 'question' ? t('role.question') : t('role.assistant')}${message.isError ? t('history.failed') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text)}${message.role === 'question' && message.question?.answers?.length ? `\n${t('history.answered')}: ${safe(message.question.answers.map(entry => [...entry.selected, ...(entry.custom ? [entry.custom] : [])].join(', ')).join(' · '))}` : ''}`);
   const rendered = new Map(conversation(history, sessionId).map(m => [m.id, m.text]));
   const cursor = page.cursor;
   const unsubscribe = c.subscribe((event: TurnwireEvent) => {
     const d = event.data;
     if ('sessionId' in d && d.sessionId !== sessionId) return;
-    if ('approval' in d && d.approval.sessionId !== sessionId) return;
+    if (eventSessionId(d) !== sessionId) return;
     if ('session' in d && d.session.id !== sessionId) return;
     if (program.opts().json) { print(event); return; }
     if (d.type === 'message.delta') { const prior = rendered.get(d.messageId) ?? ''; if (!rendered.has(d.messageId)) process.stdout.write(`\n${t('role.assistant')}\n`); process.stdout.write(safe(d.text)); rendered.set(d.messageId, prior + d.text); }

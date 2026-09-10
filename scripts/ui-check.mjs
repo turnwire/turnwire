@@ -190,17 +190,21 @@ try {
   await expect(page.locator('.approval-panel')).toHaveCount(1);
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect(page.locator('.approval-panel')).toHaveCount(0);
-  // A question the agent is blocked on: the panel carries the choices, the answer goes back as one
-  // batch, and the panel goes away once the runtime has it.
+  // A question lives in the conversation, at the point the agent asked it, and there is nothing to
+  // answer somewhere else on the page. One choice means the tap is the answer, and the card then stays
+  // as the record of what was chosen instead of disappearing.
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('askme: which database?');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
-  const question = page.locator('.question-panel');
+  const question = page.locator('.question-card');
   await expect(question).toHaveCount(1);
+  expect(await question.evaluate(element => element.closest('[aria-label="Conversation"]') !== null), 'the question is not in the conversation').toBe(true);
+  await expect(question).toHaveAttribute('data-status', 'pending');
   await expect(question.locator('.question-text')).toHaveText('Which database should the demo use?');
-  await expect(question.getByRole('button')).toHaveText(['SQLiteA single file', 'PostgresA server', 'Send answer']);
+  await expect(question.getByRole('button', { name: /SQLite/ })).toBeVisible();
   await question.getByRole('button', { name: /SQLite/ }).click();
-  await expect(question.getByRole('button', { name: /SQLite/ })).toHaveClass(/chosen/);
-  await question.getByRole('button', { name: 'Send answer', exact: true }).click();
+  await expect(question).toHaveAttribute('data-status', 'answered');
+  await expect(question.locator('.question-given')).toHaveText('SQLite');
+  await expect(question.getByRole('button', { name: /SQLite/ })).toHaveCount(0);
   await expect(page.locator('.question-panel')).toHaveCount(0);
   // A turn of several steps reads as one speaker: the tool call is the assistant acting, so the
   // reply after it continues that run and carries no name, avatar or time of its own.

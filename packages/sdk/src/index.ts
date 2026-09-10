@@ -1,5 +1,5 @@
 import { directStatusSchema, directConfigurationSchema, notificationStatusSchema } from '@turnwire/protocol';
-import type { DirectStatus, DirectConfiguration, NotificationStatus } from '@turnwire/protocol';
+import type { DirectStatus, DirectConfiguration, NotificationStatus, Question } from '@turnwire/protocol';
 export { acceptClientHandshake, createClientHandshake, SessionChannel } from './session-crypto.js';
 export { retryDelay } from './retry.js';
 import { historyOrder, connectionPongSchema, eventSchema, TurnwireError, pairingSchema, responseSchema, remoteConfigurationSchema, remoteStatusSchema, pairedDeviceSchema, pairingResultSchema, pairDeviceSchema, revokeDeviceSchema, deploymentConfigSchema, deploymentStatusSchema } from '@turnwire/protocol';
@@ -88,11 +88,24 @@ export function decodePairing(value: string): Pairing {
   const input = value.trim().includes('#pair=') ? value.trim().split('#pair=')[1]! : value.trim();
   return pairingSchema.parse(JSON.parse(decodeURIComponent(escape(atob(input.replaceAll('-', '+').replaceAll('_', '/'))))));
 }
-export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'error'; text: string; time: string; tool?: string; complete: boolean; input?: string; output?: string; endedAt?: string; isError?: boolean; queued?: boolean; steer?: boolean;}
+export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'error' | 'question'; text: string; time: string; tool?: string; complete: boolean; input?: string; output?: string; endedAt?: string; isError?: boolean; queued?: boolean; steer?: boolean;
+  /** Set on a `question` row: what the agent asked, and what was answered. */
+  question?: Question; }
 export function conversation(events: TurnwireEvent[], sessionId: string): ConversationMessage[] {
   const messages = new Map<string, ConversationMessage>();
   for (const event of [...events].sort(historyOrder)) {
-    const d = event.data; if (!('sessionId' in d) || d.sessionId !== sessionId) continue;
+    const d = event.data;
+    // A question the agent is blocked on is part of the conversation, not only a control somewhere else
+    // on the page: it is journaled where it was asked, and the answer is written back onto the same
+    // row, so a reader — and the exported transcript — can see what was asked and what was chosen. Its
+    // session rides on the question rather than on the event, so it is handled before the guard below.
+    if (d.type === 'question.requested' || d.type === 'question.resolved') {
+      if (d.question.sessionId !== sessionId) continue;
+      const id = 'question:' + d.question.id;
+      messages.set(id, { id, role: 'question', text: d.question.questions.map(item => item.question).join('\n'), time: messages.get(id)?.time ?? event.time, complete: d.type === 'question.resolved', question: d.question });
+      continue;
+    }
+    if (!('sessionId' in d) || d.sessionId !== sessionId) continue;
     if (d.type === 'message.user' || d.type === 'message.delta' || d.type === 'message.completed') {
       const existing = messages.get(d.messageId);
       messages.set(d.messageId, { id: d.messageId, role: d.type === 'message.user' ? 'user' : 'assistant', text: d.type === 'message.delta' ? (existing?.text ?? '') + d.text : d.text, time: existing?.time ?? event.time, complete: d.type !== 'message.delta' });
@@ -153,19 +166,20 @@ export function applyEvent(snapshot: Snapshot, event: TurnwireEvent): Snapshot {
  * the exported English here is the fallback, not the final UI. */
 export interface TranscriptLabels {
   workingDirectory: string; session: string; tool: string; input: string; output: string;
-  pendingOutput: string; you: string; steer: string; queued: string; executionError: string; assistant: string;
+  pendingOutput: string; you: string; steer: string; queued: string; executionError: string; assistant: string; question: string;
 }
 export const transcriptLabels: TranscriptLabels = {
   workingDirectory: 'Working directory: ', session: 'Session: ', tool: 'Tool', input: 'Input', output: 'Output',
   pendingOutput: 'Not returned yet', you: 'You', steer: 'You (steer)', queued: 'You (queued)',
-  executionError: 'Execution error', assistant: 'Turnwire',
+  executionError: 'Execution error', assistant: 'Turnwire', question: 'Question',
 };
 export function transcriptMarkdown(session: Session, messages: ConversationMessage[], labels: Partial<TranscriptLabels> = {}): string {
   const text = { ...transcriptLabels, ...labels };
   const code = (value: string) => { const longest = Math.max(0, ...value.split('\n').map(line => line.match(/^`*/)?.[0].length ?? 0)); const fence = '`'.repeat(Math.max(3, longest + 1)); return fence + '\n' + value + '\n' + fence; };
   const sections = ['# ' + session.title, text.workingDirectory + session.cwd + '\n\n' + text.session + session.id];
   for (const message of messages) {
-    if (message.role === 'tool') sections.push('## ' + text.tool + ' · ' + message.tool + '\n\n### ' + text.input + '\n\n' + code(message.input ?? '') + '\n\n### ' + text.output + '\n\n' + code(message.output ?? text.pendingOutput));
+    if (message.role === 'question') sections.push('## ' + text.question + '\n\n' + (message.question?.questions ?? []).map(item => item.question).join('\n') + '\n\n' + (message.question?.answers ?? []).map(answer => answer.selected.join(', ') + (answer.custom ? (answer.selected.length ? ' · ' : '') + answer.custom : '')).join('\n'));
+    else     if (message.role === 'tool') sections.push('## ' + text.tool + ' · ' + message.tool + '\n\n### ' + text.input + '\n\n' + code(message.input ?? '') + '\n\n### ' + text.output + '\n\n' + code(message.output ?? text.pendingOutput));
     else sections.push('## ' + (message.role === 'user' ? (message.steer ? text.steer : message.queued ? text.queued : text.you) : message.role === 'error' ? text.executionError : text.assistant) + '\n\n' + message.text);
   }
   return sections.join('\n\n') + '\n';
