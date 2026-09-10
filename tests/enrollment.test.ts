@@ -15,7 +15,9 @@ it('consumes an invitation once, persists the replacement credential and reconne
   const admin = await startDaemonServer({ core, token, port: 0, relayUrl, onPairingChanged: () => bridge.refreshDevices() }); cleanup.push(() => admin.close());
   const local = new LocalClient(`http://127.0.0.1:${admin.port}`, token); cleanup.push(() => local.close());
   const invitation = (await local.pairDevice('Phone')).pairing; expect(invitation.v).toBe(2);
-  await vi.waitFor(() => expect(bridge.connected).toBe(true));
+  // Relay registration is a real WebSocket handshake; the 1s default budget is too tight on a
+  // shared runner, where this liveness wait expired while the same suite passed on a faster host.
+  await vi.waitFor(() => expect(bridge.connected).toBe(true), { timeout: 15_000 });
   const writes: Pairing[] = [];
   const phone = new RemoteClient(invitation, { persistPairing: value => { writes.push(structuredClone(value)); } }); cleanup.push(() => phone.close());
   expect((await phone.request<Snapshot>('system.snapshot')).device.id).toBe('host');
