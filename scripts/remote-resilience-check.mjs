@@ -27,14 +27,25 @@ try {
   await expect.poll(() => remote.status().state).toBe('online');
   const invitation = await local.pairDevice('测试手机'); await expect.poll(() => remote.status().state).toBe('online');
   await page.goto(invitation.url);
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  // Connected is the normal state, so it costs one thin line rather than a bar that explains a problem
+  // nobody has. The bar is still what shows a connection that is not verified.
+  await expect(page.locator('.connection-ok')).toBeVisible();
+  await expect(page.locator('.connection-health')).toHaveCount(0);
+  expect((await page.locator('.connection-ok').boundingBox()).height).toBeLessThanOrEqual(30);
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   await expect.poll(() => local.devices().then(devices => devices[0]?.enrollment)).toBe('enrolled');
   expect(new URL(page.url()).hash).toBe('');
-  await page.reload(); await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await page.reload(); await expect(page.locator('.connection-ok')).toBeVisible();
   await context.setOffline(true); await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'offline');
+  // A failed attempt leaves a banner. Reconnecting answers what it was complaining about, so it must
+  // clear itself instead of waiting for someone to dismiss a problem that is already over.
+  await page.getByRole('button', { name: 'Reconnect now', exact: true }).click();
+  await expect(page.locator('.error-banner')).toBeVisible({ timeout: 15_000 });
+  await context.setOffline(false);
+  // Coming back answers what the banner was complaining about: no click, no dismissal.
+  await expect(page.locator('.connection-ok')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.error-banner')).toHaveCount(0);
   await local.request('session.message', { sessionId: session.id, text: 'approval' });
-  await context.setOffline(false); await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
   await page.getByRole('button', { name: 'Open session list' }).click(); await page.getByRole('button', { name: /Inbox/ }).click();
   await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
@@ -50,26 +61,28 @@ try {
   const socketsBeforeTabSwitch = sockets.length;
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(300);
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await expect(page.locator('.connection-ok')).toBeVisible();
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(500);
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await expect(page.locator('.connection-ok')).toBeVisible();
   expect(sockets.length).toBe(socketsBeforeTabSwitch);
-  await page.getByRole('button', { name: 'Reconnect now', exact: true }).click(); await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  // The compact line is the manual check once connected: clicking it rebuilds and re-verifies rather
+  // than trusting a socket that may be a zombie.
+  await page.locator('.connection-ok').click(); await expect(page.locator('.connection-ok')).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Connection settings', exact: true }).click();
   await page.getByLabel('Remember this trusted device').check(); await page.getByRole('button', { name: 'Connect to host', exact: true }).click();
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await expect(page.locator('.connection-ok')).toBeVisible();
   // The Relay gives one device identity to its newest socket, so two tabs of the same pairing take
   // turns kicking each other off unless the one in the background stays put. A real browser reports
   // a background tab as hidden; Playwright reports every page as visible, so the first page is
   // hidden explicitly here rather than letting the check depend on which tab wins the race.
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(200);
-  const second = await context.newPage(); await second.goto(origin); await expect(second.locator('.connection-health')).toHaveAttribute('data-phase', 'connected'); await second.close();
+  const second = await context.newPage(); await second.goto(origin); await expect(second.locator('.connection-ok')).toBeVisible(); await second.close();
   // The backgrounded tab lost the identity to the new one and stayed quiet, so coming back is what
   // has to rebuild it: the tab that was hidden reconnects when it is shown again.
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await expect(page.locator('.connection-ok')).toBeVisible();
   // A phone is where typing an absolute path hurts most, so the picker is walked at 390px: it must
   // offer the host's own folders, stay inside the screen, scroll in its own box rather than growing
   // the dialog, and hand the folder it landed on back to the field.

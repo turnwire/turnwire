@@ -67,6 +67,10 @@
 .session-actions form { width: 190px; display: grid; gap: 6px; padding: 6px; }
 .session-actions input { width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 4px; }
 
+/* Connected is the normal state: one thin line instead of a bar that explains a problem nobody has. */
+.connection-ok { display:flex; align-items:center; gap:6px; width:100%; border:0; border-bottom:1px solid #e8ebf1; border-radius:0; background:transparent; color:#66756a; font-size:10.5px; padding:5px 22px; justify-content:flex-start; }
+.connection-ok:hover { background:#f4f7f4; }
+.connection-dot { width:6px; height:6px; border-radius:50%; background:#447452; flex-shrink:0; }
 .connection-health { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 22px; border-bottom:1px solid var(--line, #dedfd9); background:#f7f6ef; font-size:12px; }
 .connection-health strong { display:block; font-size:12px; font-weight:600; }
 .connection-health strong::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:#b27b3d; margin-right:7px; }
@@ -74,7 +78,8 @@
 .connection-health[data-phase="connected"] strong::before { background:#447452; }
 .connection-health small { display:block; color:#6b7269; margin-top:5px; line-height:1.5; }
 .connection-health button { flex-shrink:0; border:1px solid #cdd4c9; border-radius:6px; background:transparent; padding:7px 10px; }
-@media(max-width:600px) { .connection-health { padding:10px 14px; align-items:flex-start; } .connection-health small { font-size:10px; } }
+@media(max-width:600px) { .connection-health { padding:10px 14px; align-items:flex-start; }
+  .connection-ok { padding:4px 14px; } .connection-health small { font-size:10px; } }
 
 .history-more { display: block; margin: 12px auto 28px; padding: 9px 16px; border: 1px solid var(--border, #ddd); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
 .history-more:disabled { opacity: .6; cursor: wait; }

@@ -13,6 +13,8 @@ import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from '
 type Connection = { kind: 'local'; url: string; token: string } | { kind: 'remote'; code: string };
 /** The agent strip stays a glanceable few lines even when a fan-out runs a dozen children. */
 const MAX_AGENT_ROWS = 4;
+/** Failures a verified connection has answered: they stop being true, so they stop being shown. */
+const STALE_CONNECTION_FAILURES = new Set(['DISCONNECTED', 'OUTCOME_UNKNOWN', 'HOST_OFFLINE', 'STAGE_TIMEOUT', 'PROBE_TIMEOUT', 'CONNECTION_FAILED', 'REMOTE_ERROR']);
 const statusKeys: Record<SessionStatus, MessageKey> = { idle: 'status.idle', running: 'status.running', waiting_approval: 'status.waiting_approval', interrupted: 'status.interrupted', error: 'status.error' };
 function loadConnection(): Connection | undefined {
   try {
@@ -103,6 +105,10 @@ export function App() {
   const scroller = useRef<HTMLElement>(null); const follow = useRef(true); const prepend = useRef<{ height: number; top: number } | undefined>(undefined);
   const [events, setEvents] = useState<TurnwireEvent[]>([]); const [state, setState] = useState<ConnectionState>('offline');
   const [health, setHealth] = useState<ConnectionHealth>();
+  /** The code of the error on screen. A connection failure stops being true once the link verifies. */
+  const failure = useRef('');
+  const reportFailure = (error: unknown) => { failure.current = (error as { code?: string } | undefined)?.code ?? ''; setError(errorText(error)); };
+  const clearFailure = () => { failure.current = ''; setError(''); };
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(false);
   const [showConnection, setShowConnection] = useState(!connection); const [drawer, setDrawer] = useState(false); const [create, setCreate] = useState(false);
@@ -255,7 +261,7 @@ export function App() {
     let active = true; let unsubscribe: (() => void) | undefined; let c: TurnwireClient;
     setError(''); setLoading(true);
     try { c = connection.kind === 'local' ? new LocalClient(connection.url, connection.token) : new RemoteClient(decodePairing(connection.code), { persistPairing: pairing => { const value = JSON.stringify({ kind: 'remote', code: encodePairing(pairing) }); const storage = localStorage.getItem('turnwire.connection') ? localStorage : sessionStorage; storage.setItem('turnwire.connection', value); } }); }
-    catch (error) { setError(errorText(error)); setLoading(false); setShowConnection(true); return; }
+    catch (error) { reportFailure(error); setLoading(false); setShowConnection(true); return; }
     clientRef.current = c; setHealth(undefined);
     let flush: ReturnType<typeof setTimeout> | undefined; let pending: TurnwireEvent[] = [];
     let bootstrapping = false;
@@ -278,10 +284,12 @@ export function App() {
         }, 50);
       }, nextState => {
         if (!active) return; setState(nextState);
+        // Reconnecting answers what the banner was complaining about, so it goes without being dismissed.
+        if (nextState === 'connected' && STALE_CONNECTION_FAILURES.has(failure.current)) clearFailure();
         if (nextState === 'connected' && wasConnected) void c.request<Snapshot>('system.snapshot').then(value => { if (active) setSnapshot(previous => previous && previous.cursor > value.cursor ? previous : value); }).catch(() => {});
         if (nextState === 'connected') wasConnected = true;
       }, next.cursor);
-    }).catch(error => { if (active) { setError(errorText(error)); setLoading(false); if (connection?.kind === 'local') setShowConnection(true);  } }).finally(() => { bootstrapping = false; }); }
+    }).catch(error => { if (active) { reportFailure(error); setLoading(false); if (connection?.kind === 'local') setShowConnection(true);  } }).finally(() => { bootstrapping = false; }); }
     bootstrap();
     const resume = () => { if (c instanceof RemoteClient) { if (document.visibilityState === 'visible') c.resume(); else c.suspend(); } };
     const offline = () => { if (c instanceof RemoteClient) c.suspend('offline'); };
@@ -299,7 +307,7 @@ export function App() {
     autoPages.current = 0; historyBusy.current = false;
     void loadHistoryPage(clientRef.current, selected).then(page => {
       if (!active) return; buffer.merge(page, true); setEvents(buffer.events); setBefore(page.nextBefore); setLoading(false);
-    }).catch(error => { if (active) { buffer.cancel(); setHistoryError(true); setError(errorText(error)); setLoading(false); } });
+    }).catch(error => { if (active) { buffer.cancel(); setHistoryError(true); reportFailure(error); setLoading(false); } });
     return () => { active = false; };
   }, [selected, connection]);
   /** `auto` marks a load the reader triggered by holding the conversation at its oldest record. */
@@ -311,17 +319,17 @@ export function App() {
       if (historyRef.current !== history) return;
       if (!replace && scroller.current) { follow.current = false; prepend.current = { height: scroller.current.scrollHeight, top: scroller.current.scrollTop }; }
       history.buffer.merge(page, replace); setEvents(history.buffer.events); setBefore(page.nextBefore); setHistoryError(false); if (auto) autoPages.current++;
-    } catch (error) { if (historyRef.current === history) { history.buffer.cancel(); setError(errorText(error)); } }
+    } catch (error) { if (historyRef.current === history) { history.buffer.cancel(); reportFailure(error); } }
     finally { if (historyRef.current === history) setLoading(false); historyBusy.current = false; }
   }
   useLayoutEffect(() => {
     if (prepend.current && scroller.current) { const old = prepend.current; scroller.current.scrollTop = old.top + scroller.current.scrollHeight - old.height; prepend.current = undefined; }
     else if (follow.current) bottom.current?.scrollIntoView({ block: 'end', behavior: 'instant' });
   }, [events, approvals.length]);
-  async function perform(action: (c: TurnwireClient) => Promise<void>) { if (!clientRef.current) return; setBusy(true); setError(''); try { await action(clientRef.current); } catch (error) { setError(errorText(error)); } finally { setBusy(false); } }
+  async function perform(action: (c: TurnwireClient) => Promise<void>) { if (!clientRef.current) return; setBusy(true); clearFailure(); try { await action(clientRef.current); } catch (error) { reportFailure(error); } finally { setBusy(false); } }
   function saveConnection(value: Connection, remember: boolean) { localStorage.removeItem('turnwire.connection'); sessionStorage.removeItem('turnwire.connection'); (remember ? localStorage : sessionStorage).setItem('turnwire.connection', JSON.stringify(value)); setSnapshot(undefined); setSelected(undefined); setEvents([]); setState('connecting'); setConnection(value); }
   function disconnect() { clientRef.current?.close(); localStorage.removeItem('turnwire.connection'); sessionStorage.removeItem('turnwire.connection'); setConnection(undefined); setSnapshot(undefined); setSelected(undefined); setEvents([]); setShowConnection(true); setState('offline'); }
-  async function checkConnection() { const c = clientRef.current; if (!(c instanceof RemoteClient)) return; setChecking(true); try { await c.checkConnection(); setError(''); } catch (error) { setError(errorText(error)); } finally { setChecking(false); } }
+  async function checkConnection() { const c = clientRef.current; if (!(c instanceof RemoteClient)) return; setChecking(true); try { await c.checkConnection(); clearFailure(); } catch (error) { reportFailure(error); } finally { setChecking(false); } }
   const connected = state === 'connected';
   function rememberDevice() { const c = clientRef.current; if (c instanceof RemoteClient) { localStorage.setItem('turnwire.connection', JSON.stringify({ kind: 'remote', code: encodePairing(c.currentPairing) })); sessionStorage.removeItem('turnwire.connection'); } }
   return <div className="app">
@@ -341,8 +349,13 @@ export function App() {
     <main>
       <header className="topbar"><button className="icon-button mobile-only" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <>{session.autoApprove && <span className="auto-approve-chip" title={t('session.autoApproveHint')}>{t('session.autoApproveOn')}</span>}<Status status={session.status} /><details className="session-actions"><summary>{t('topbar.sessionActions')}</summary><div>{/* One control, stable across the state it switches: its label and payload both follow the state. */
           <button data-auto-approve={session.autoApprove ? 'on' : 'off'} disabled={!connected || busy || session.archived} onClick={() => void setDelegated(session.id, !session.autoApprove)}>{session.autoApprove ? t('session.autoApproveOff') : t('session.autoApprove')}</button>}<button disabled={!connected || busy} onClick={() => { setRenameTitle(session.title); }}>{t('topbar.rename')}</button>{renameTitle !== undefined && <form onSubmit={event => { event.preventDefault(); void perform(async c => { await c.request('session.rename', { sessionId: session.id, title: renameTitle }); setRenameTitle(undefined); }); }}><input aria-label={t('topbar.newSessionName')} value={renameTitle} onChange={event => setRenameTitle(event.target.value)} /><button disabled={busy || !renameTitle.trim()}>{t('topbar.saveName')}</button></form>}<button disabled={!connected || busy || ['running', 'waiting_approval'].includes(session.status)} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: !session.archived }); })}>{session.archived ? t('common.unarchive') : t('topbar.archiveSession')}</button></div></details></>}<button className="icon-button" aria-label={t('topbar.connectionSettings')} onClick={() => setShowConnection(true)}><Plug size={19} /></button></div></header>
-      {connection?.kind === 'remote' && <div className="connection-health" data-phase={health?.phase ?? 'connecting'} role="status"><div><strong>{health?.phase === 'connected' ? t('health.connectedTo', { host: snapshot?.device.name ?? t('health.host') }) : health?.message ?? t('health.connecting')}</strong><small>{health?.phase === 'connected' ? `${t('health.details', { latency: health.latencyMs ?? 0, time: health.lastVerifiedAt ? new Date(health.lastVerifiedAt).toLocaleTimeString() : '—', route: health.route === 'direct' ? t('health.routeDirect') : 'Relay' })}${health.protocol === 1 ? t('health.oldPairing') : ''}` : health?.retryInMs ? t('health.retry', { seconds: Math.ceil(health.retryInMs / 1000) }) : t('health.unconfirmed')}</small></div><button disabled={checking} onClick={() => void checkConnection()}>{checking ? t('health.connectingAction') : t('health.reconnectNow')}</button></div>}
-      {error && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label={t('error.dismiss')} onClick={() => setError('')}><X size={17} /></button></div>}
+      {connection?.kind === 'remote' && (health?.phase === 'connected'
+        // Connected is the normal state, so it costs one thin line: the host and the round trip, with the
+        // full story on the pointer and a click to verify again. Everything else keeps the bar that says
+        // what is wrong and what will happen next.
+        ? <button type="button" className="connection-ok" disabled={checking} onClick={() => void checkConnection()} title={`${t('health.details', { latency: health.latencyMs ?? 0, time: health.lastVerifiedAt ? new Date(health.lastVerifiedAt).toLocaleTimeString() : '—', route: health.route === 'direct' ? t('health.routeDirect') : 'Relay' })} · ${t('health.reconnectNow')}`}><span className="connection-dot" />{t('health.connectedTo', { host: snapshot?.device.name ?? t('health.host') })}{health.latencyMs === undefined ? '' : ` · ${health.latencyMs} ms`}{checking ? <CircleNotch className="spin" size={11} /> : null}</button>
+        : <div className="connection-health" data-phase={health?.phase ?? 'connecting'} role="status"><div><strong>{health?.message ?? t('health.connecting')}</strong><small>{health?.retryInMs ? t('health.retry', { seconds: Math.ceil(health.retryInMs / 1000) }) : t('health.unconfirmed')}</small></div><button disabled={checking} onClick={() => void checkConnection()}>{checking ? t('health.connectingAction') : t('health.reconnectNow')}</button></div>)}
+      {error && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label={t('error.dismiss')} onClick={clearFailure}><X size={17} /></button></div>}
       {showConnection ? <ConnectionView initial={connection?.kind === 'remote' && clientRef.current instanceof RemoteClient ? { kind: 'remote', code: encodePairing(clientRef.current.currentPairing) } : connection} connecting={loading} connected={!!snapshot} onConnect={saveConnection} onDisconnect={disconnect} onBack={() => setShowConnection(false)} />
         : showInbox && clientRef.current ? <Inbox client={clientRef.current} cursor={snapshot?.cursor ?? 0} connected={connected} remember={rememberDevice} onOpen={id => { setSelected(id); setShowInbox(false); }} />
         : !session ? <div className="empty-workspace"><div className="empty-symbol"><TerminalWindow size={38} weight="light" /></div><span className="eyebrow">{t('empty.eyebrow')}</span><h1>{t('empty.title')}</h1><p>{t('empty.bodyLine1')}<br />{t('empty.bodyLine2')}</p><button className="primary" onClick={() => setCreate(true)} disabled={!snapshot}><Plus size={17} />{t('common.newSession')}</button></div>
