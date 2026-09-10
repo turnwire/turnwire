@@ -45,7 +45,9 @@ export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.updated'), session: sessionSchema }),
   z.object({ type: z.literal('message.user'), sessionId: idSchema, messageId: idSchema, text: z.string(),
     /** True when a turn was already running, so this prompt waits behind it instead of interrupting. */
-    queued: z.boolean().optional() }),
+    queued: z.boolean().optional(),
+    /** True when this prompt steered the turn that was already running instead of queueing behind it. */
+    steer: z.boolean().optional() }),
   z.object({ type: z.literal('message.delta'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
   z.object({ type: z.literal('message.completed'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
   z.object({ type: z.literal('tool.started'), sessionId: idSchema, callId: idSchema, tool: z.string(), detail: z.string() }),
@@ -72,7 +74,9 @@ export const methodSchemas = {
   'session.resume': z.object({ sessionId: idSchema }).strict(),
   'session.rename': z.object({ sessionId: idSchema, title: z.string().trim().min(1).max(200) }).strict(),
   'session.archive': z.object({ sessionId: idSchema, archived: z.boolean() }).strict(),
-  'session.message': z.object({ sessionId: idSchema, text: z.string().trim().min(1).max(100_000) }).strict(),
+  'session.message': z.object({ sessionId: idSchema, text: z.string().trim().min(1).max(100_000),
+    /** Steer the running turn instead of waiting behind it; ignored semantics when no turn runs. */
+    steer: z.boolean().optional() }).strict(),
   'session.cancel': z.object({ sessionId: idSchema }).strict(),
   'session.setModel': z.object({ sessionId: idSchema, provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict(),
   'model.catalog': z.object({ runtimeId: idSchema.optional() }).strict(),

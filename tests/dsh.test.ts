@@ -35,7 +35,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
     }
     else if (url.pathname === '/api/session/list') { z.object({ _request: z.object({}).strict() }).strict().parse(args); value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running }] }; }
     else if (url.pathname === '/api/session/prompt') {
-      const input = z.object({ request: z.object({ requestId: z.string(), sessionId: z.literal('s'), mode: z.literal('queue'), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict() }).strict().parse(args);
+      const input = z.object({ request: z.object({ requestId: z.string(), sessionId: z.literal('s'), mode: z.enum(['queue', 'steer']), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict() }).strict().parse(args);
       running = true; emit('user/message', { id: 'user-1', source: { kind: 'user', rpcId: input.request.requestId }, content: input.request.content }); emit('turn/start', { turn: 1 });
       for (const [socket, stream] of streams) {
         item(socket, stream, { type: 'assistant-stream', frame: { type: 'start', attemptId: 'attempt', revision: 1, startedAfterSeq: seq - 1, turn: 1, step: 1 } });
@@ -79,12 +79,17 @@ it('uses the official cookie, exact named RPC arguments and mux, and resolves ap
   await runtime.sendMessage('s', { id: 'prompt', text: 'Do work' }); await until(() => received.some(e => e.type === 'approval.requested'));
   expect(received).toContainEqual({ type: 'status', status: 'running' });
   expect(received).toContainEqual({ type: 'message.user', messageId: 'prompt', text: 'Do work' });
+  const promptCalls = () => host.calls.filter(c => c.path === '/api/session/prompt');
+  expect(promptCalls().at(-1)?.args).toMatchObject({ request: { requestId: 'prompt', mode: 'queue' } });
   expect(received).toContainEqual({ type: 'message.delta', messageId: 'dsh:s:1:1', text: 'Hello' });
   expect(received).toContainEqual({ type: 'message.completed', messageId: 'dsh:s:1:1', text: 'Hello world' });
   await runtime.approve('s', 'approval-1', 'approved'); await until(() => received.some(e => e.type === 'status' && e.status === 'idle'));
   expect(received.filter(e => e.type === 'approval.resolved')).toEqual([{ type: 'approval.resolved', requestId: 'approval-1', decision: 'approved' }]);
   await expect(runtime.approve('s', 'approval-1', 'approved')).rejects.toThrow('失效');
   expect(host.calls.some(c => c.path === '/api/session/list' && '_request' in c.args)).toBe(true);
+  // Steering is a different wire value, not a client-side label.
+  await runtime.sendMessage('s', { id: 'steer', text: '还要看日志', steer: true });
+  expect(promptCalls().at(-1)?.args).toMatchObject({ request: { requestId: 'steer', mode: 'steer' } });
 });
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());

@@ -83,9 +83,11 @@ export class DshRuntime implements AgentRuntime {
     const session = this.sessions.get(sessionId); if (session) session.model = value.selected;
     return value.selected;
   }
-  async sendMessage(sessionId: string, input: { id: string; text: string }) {
+  async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }) {
     await this.connect(); this.follow(sessionId);
-    await this.rpc('session/prompt', { request: { requestId: input.id, sessionId, mode: 'queue', content: [{ type: 'text', text: input.text }] } });
+    // `steer` joins the turn that is already running, `queue` waits behind it: that is the whole
+    // difference between interrupting the agent and adding to its backlog.
+    await this.rpc('session/prompt', { request: { requestId: input.id, sessionId, mode: input.steer ? 'steer' : 'queue', content: [{ type: 'text', text: input.text }] } });
   }
   async cancel(sessionId: string) { await this.connect(); await this.rpc('session/cancel', { request: { sessionId } }); }
   async approve(sessionId: string, requestId: string, decision: ApprovalDecision) {

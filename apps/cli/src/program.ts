@@ -72,7 +72,7 @@ program.command('history <session>').description('Read recent complete records; 
   .action((sessionId: string, options: { before?: number; limit: number; all?: boolean }) => withClient(async c => {
     const page = options.all ? { events: await loadHistory(c, sessionId), hasMore: false, nextBefore: null } : await loadHistoryPage(c, sessionId, options.before, options.limit);
     if (program.opts().json) print(page);
-    else { for (const message of conversation(page.events, sessionId)) console.log(`\n${safe(message.tool ?? message.role)}${message.queued ? '（排队发送）' : ''}\n${safe(message.input !== undefined ? '输入：\n' + message.input + '\n输出：\n' + (message.output ?? '尚未返回') : message.text)}`);
+    else { for (const message of conversation(page.events, sessionId)) console.log(`\n${safe(message.tool ?? message.role)}${message.steer ? '（插话）' : message.queued ? '（排队发送）' : ''}\n${safe(message.input !== undefined ? '输入：\n' + message.input + '\n输出：\n' + (message.output ?? '尚未返回') : message.text)}`);
       if (page.hasMore) console.log(`\n更早记录：turnwire history ${sessionId} --before ${page.nextBefore}`);
     }
   }));
@@ -81,7 +81,8 @@ program.command('export <session>').description('Export the shared transcript as
   const messages = conversation(await loadHistory(c, sessionId), sessionId); const path = resolve(options.output);
   await writeFile(path, transcriptMarkdown(session, messages), { flag: 'wx', mode: 0o600 }); print({ path });
 }));
-program.command('send <session> <prompt>').description('Send a follow-up prompt').action((sessionId: string, text: string) => withClient(async c => print(await c.request('session.message', { sessionId, text }))));
+program.command('send <session> <prompt>').description('Send a follow-up prompt').option('--steer', 'steer the turn that is already running instead of queueing behind it')
+  .action((sessionId: string, text: string, options: { steer?: boolean }) => withClient(async c => print(await c.request('session.message', { sessionId, text, ...(options.steer ? { steer: true } : {}) }))));
 program.command('resume <session>').description('Resume a persisted session').action((sessionId: string) => withClient(async c => print(await c.request('session.resume', { sessionId }))));
 program.command('stop <session>').description('Cancel the current agent turn').action((sessionId: string) => withClient(async c => print(await c.request('session.cancel', { sessionId }))));
 program.command('result <id>').description('Query a command result after a lost response').action((requestId: string) => withClient(async c => print(await c.request('request.result', { requestId }))));

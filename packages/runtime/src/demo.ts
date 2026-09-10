@@ -15,7 +15,7 @@ export class DemoRuntime implements AgentRuntime {
   async createSession(options: { id: string; cwd: string }) { const session: RuntimeSession = { ...options, status: 'idle' }; this.sessions.set(session.id, session); return session; }
   async resumeSession(options: { id: string; cwd: string }) { return this.sessions.get(options.id) ?? this.createSession(options); }
   async listSessions() { return [...this.sessions.values()]; }
-  async sendMessage(sessionId: string, input: { id: string; text: string }) {
+  async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }) {
     this.emit(sessionId, { type: 'message.user', messageId: input.id, text: input.text });
     this.emit(sessionId, { type: 'status', status: 'running' });
     const messageId = randomUUID();

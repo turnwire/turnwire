@@ -26,7 +26,7 @@ export interface AgentRuntime {
    * the returned selection rather than assuming the requested one.
    */
   setModel?(sessionId: string, selection: ModelSelection): Promise<ModelSelection>;
-  sendMessage(sessionId: string, input: { id: string; text: string }): Promise<void>;
+  sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }): Promise<void>;
   cancel(sessionId: string): Promise<void>;
   approve(sessionId: string, requestId: string, decision: ApprovalDecision): Promise<void>;
   subscribe(sessionId: string, listener: (event: RuntimeEvent) => void): Unsubscribe;

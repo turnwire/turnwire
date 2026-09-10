@@ -14,8 +14,8 @@ export class TurnwireCore {
   private subscriptions = new Map<string, () => void>();
   private inFlight = new Map<string, Promise<RpcResponse>>();
   private locks = new Map<string, Promise<unknown>>();
-  /** Prompts accepted while a turn was running, until the runtime echoes them back as events. */
-  private queuedPrompts = new Set<string>();
+  /** How prompts accepted while a turn was running were sent, until the runtime echoes them back. */
+  private promptModes = new Map<string, 'queue' | 'steer'>();
   private runtimes: Map<string, AgentRuntime>;
   constructor(readonly store: Store, runtimes: AgentRuntime[], readonly device: { id: string; name: string }) { this.runtimes = new Map(runtimes.map(runtime => [runtime.id, runtime])); }
   async start() {
@@ -113,12 +113,13 @@ export class TurnwireCore {
           if (session.status === 'interrupted' || session.status === 'error') throw new TurnwireError('RESUME_REQUIRED', '请先恢复此会话，再发送消息');
           // The runtime queues a prompt sent during a turn instead of interrupting it, so record which
           // happened: a client can then say so instead of leaving the user to guess.
-          const queued = session.status === 'running' || session.status === 'waiting_approval';
+          const running = session.status === 'running' || session.status === 'waiting_approval';
+          const mode = p.steer ? 'steer' as const : 'queue' as const;
           // Recorded before the send: the runtime echoes the prompt back as an event while this call is
           // still in flight, and that echo is the message the journal keeps.
-          if (queued) this.queuedPrompts.add(request.id);
-          await this.runtime(session.runtimeId).sendMessage(session.runtimeSessionId, { id: request.id, text: p.text });
-          this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(queued ? { queued: true } : {}) }, `${session.id}:user:${request.id}`);
+          if (running) this.promptModes.set(request.id, mode);
+          await this.runtime(session.runtimeId).sendMessage(session.runtimeSessionId, { id: request.id, text: p.text, ...(p.steer ? { steer: true } : {}) });
+          this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(running ? (mode === 'steer' ? { steer: true } : { queued: true }) : {}) }, `${session.id}:user:${request.id}`);
           return { accepted: true, messageId: request.id };
         });
       }
@@ -200,10 +201,11 @@ export class TurnwireCore {
     // A selection made anywhere in the Host (including its own Web UI) arrives here and
     // becomes the session's recorded model.
     if (event.type === 'model.selected') { this.update(sessionId, { model: event.selection }); return; }
-    // The runtime echo is what the journal keeps, so the queued fact has to ride on it.
-    const queued = event.type === 'message.user' && this.queuedPrompts.delete(event.messageId);
+    // The runtime echo is what the journal keeps, so how the prompt was sent has to ride on it.
+    const mode = event.type === 'message.user' ? this.promptModes.get(event.messageId) : undefined;
+    if (event.type === 'message.user') this.promptModes.delete(event.messageId);
     const source = event.type === 'message.user' ? `${sessionId}:user:${event.messageId}` : undefined;
-    this.publish({ ...event, sessionId, ...(queued ? { queued: true } : {}) }, source);
+    this.publish({ ...event, sessionId, ...(mode === 'steer' ? { steer: true } : mode === 'queue' ? { queued: true } : {}) }, source);
   }
   private update(id: string, patch: Partial<Session>): Session { const session = { ...this.session(id), ...patch, updatedAt: new Date().toISOString() }; this.publish({ type: 'session.updated', session }); return session; }
   private publish(data: EventData, source?: string) { const event = this.store.append(data, source); if (event) for (const listener of this.listeners) { try { listener(event); } catch { /* A disconnected client must not interrupt runtime state. */ } } }

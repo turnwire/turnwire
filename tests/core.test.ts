@@ -32,6 +32,14 @@ describe('durable daemon ownership', () => {
     expect(sent[0]?.data).not.toHaveProperty('queued');
     expect(sent.at(-1)?.data).toMatchObject({ text: '排队的那一条', queued: true });
   });
+  it('steers a running turn when asked instead of queueing behind it', async () => {
+    const { core, store } = setup(); const s = await session(core);
+    await call(core, 'first', 'session.message', { sessionId: s.id, text: 'approval' });
+    await call(core, 'steer', 'session.message', { sessionId: s.id, text: '插话', steer: true });
+    const sent = store.events(0, 100).filter(e => e.data.type === 'message.user');
+    expect(sent.at(-1)?.data).toMatchObject({ text: '插话', steer: true });
+    expect(sent.at(-1)?.data).not.toHaveProperty('queued');
+  });
   it('makes approvals one-shot across competing clients', async () => {
     const { core, runtime, store } = setup(); const s = await session(core); await call(core, 'message', 'session.message', { sessionId: s.id, text: 'approval' });
     const approval = store.approvals()[0]!; const spy = vi.spyOn(runtime, 'approve');
