@@ -59,6 +59,12 @@ try {
   await page.getByRole('button', { name: 'Connection settings', exact: true }).click();
   await page.getByLabel('Remember this trusted device').check(); await page.getByRole('button', { name: 'Connect to host', exact: true }).click();
   await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  // The Relay gives one device identity to its newest socket, so two tabs of the same pairing take
+  // turns kicking each other off unless the one in the background stays put. A real browser reports
+  // a background tab as hidden; Playwright reports every page as visible, so the first page is
+  // hidden explicitly here rather than letting the check depend on which tab wins the race.
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(200);
   const second = await context.newPage(); await second.goto(origin); await expect(second.locator('.connection-health')).toHaveAttribute('data-phase', 'connected'); await second.close();
   expect(errors).toEqual([]);
   console.log('Remote browser checks passed: one-time pairing, reload, offline recovery, tab-switch socket reuse, inbox approval, persistent credentials, responsive layout.');
