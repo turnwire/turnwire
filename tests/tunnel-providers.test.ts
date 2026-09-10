@@ -23,9 +23,9 @@ it('recognizes actual localhost.run JSON announcements and excludes banners and 
   expect(localhostAddress(JSON.stringify({ ...event, tls_termination: false }))).toBeUndefined();
 });
 it('runs anonymous SSH without user credentials, handles address rotation and aborts its child', async () => {
-  const { directory, binary, options } = await fixture(`const fs = require('node:fs'); fs.writeFileSync('args.json', JSON.stringify({args:process.argv.slice(2), secret:process.env.NOVE_HARNESS_DEEPSEEK_API_KEY,agent:process.env.SSH_AUTH_SOCK}));
+  const { directory, binary, options } = await fixture(`const fs = require('node:fs'); fs.writeFileSync('args.json', JSON.stringify({args:process.argv.slice(2), secret:process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY,agent:process.env.SSH_AUTH_SOCK}));
     const emit = address => console.log(JSON.stringify({address,event:'tcpip-forward',status:'success',type:'opened',tls_termination:true})); emit('first.lhr.life'); setTimeout(()=>emit('second.lhr.life'),100); setInterval(()=>{},1000);`);
-  vi.stubEnv('TURNWIRE_SSH_PATH', binary); vi.stubEnv('NOVE_HARNESS_DEEPSEEK_API_KEY', 'never-pass-this'); vi.stubEnv('SSH_AUTH_SOCK', '/private/test-agent');
+  vi.stubEnv('TURNWIRE_SSH_PATH', binary); vi.stubEnv('TURNWIRE_HARNESS_DEEPSEEK_API_KEY', 'never-pass-this'); vi.stubEnv('SSH_AUTH_SOCK', '/private/test-agent');
   let rotated = ''; const aborter = new AbortController();
   const handle = await startLocalhostTunnel({ ...options, signal: aborter.signal, changed: value => { rotated = value; } }); cleanup.push(() => handle.close());
   expect(handle.url).toBe('https://first.lhr.life');

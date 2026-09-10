@@ -41,7 +41,7 @@ it('merges Caddy idempotently, preserves sites and global options, and renders c
 it('keeps credentials out of SSH arguments/environment and quotes remote command values literally',async()=>{
   const c=normalizeConfig(configuration);const args=sshArguments(c,'/private/known_hosts','/private/key');
   expect(args).toContain('StrictHostKeyChecking=accept-new');expect(args).toContain('deployer');expect(args).toContain('IdentitiesOnly=yes');
-  expect(deploymentEnvironment({PATH:'/bin',HOME:'/home/test',SSH_AUTH_SOCK:'/tmp/agent',NOVE_HARNESS_DEEPSEEK_API_KEY:'secret',TURNWIRE_RELAY_TOKEN:'private'})).toEqual({PATH:'/bin',HOME:'/home/test',SSH_AUTH_SOCK:'/tmp/agent'});
+  expect(deploymentEnvironment({PATH:'/bin',HOME:'/home/test',SSH_AUTH_SOCK:'/tmp/agent',TURNWIRE_HARNESS_DEEPSEEK_API_KEY:'secret',TURNWIRE_RELAY_TOKEN:'private'})).toEqual({PATH:'/bin',HOME:'/home/test',SSH_AUTH_SOCK:'/tmp/agent'});
   const literal="single ' quote $(uname) `id` $HOME";
   expect(await execute('sh',['-c',`printf %s ${shellQuote(literal)}`])).toBe(literal);
   const script=bootstrap(c,'/tmp/turnwire-deploy.test');expect(script).toContain('uname -m');expect(script).toContain('sha256sum -c');

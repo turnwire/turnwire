@@ -60,7 +60,7 @@ Facts the shapes alone do not show:
 
 ## DeepSeek environment credential
 
-Start the Host with `npm run dev:dsh`. Its `--patch config/dsh-deepseek.patch.yml` overlay sets the official `llm-deepseek` and `web-search-deepseek` providers' `apiKeyEnv` to **`NOVE_HARNESS_DEEPSEEK_API_KEY`**. This is a credential reference, not an interpolated secret. Export that variable in the Host's environment before starting it. The key is not a Turnwire daemon/client authentication token.
+Start the Host with `npm run dev:dsh`. Its `--patch config/dsh-deepseek.patch.yml` overlay sets the official `llm-deepseek` and `web-search-deepseek` providers' `apiKeyEnv` to **`TURNWIRE_HARNESS_DEEPSEEK_API_KEY`**. This is a credential reference, not an interpolated secret. Export that variable in the Host's environment before starting it. The key is not a Turnwire daemon/client authentication token.
 
 DSH resolves the credential per request; inherited environment takes precedence over its managed credential sources. Existing `llm-deepseek` user settings can override the composition's `apiKeyEnv`, so deployments with an explicit saved reference must update that reference as well. Turnwire's launcher does not rewrite those settings. See the official [DeepSeek adapter](https://github.com/deepseek-ai/deepseek-harness/blob/5dda764ed3aa172535a7967b06ff95d9cbfe536a/packages/llm/llm-deepseek/README.md).
 

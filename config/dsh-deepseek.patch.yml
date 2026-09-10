@@ -1,9 +1,9 @@
 # Credential references only. DSH resolves the inherited environment at runtime.
-# Keep this spelling in sync with the user's exported variable: NOVE, not TURNWIRE.
+# Turnwire's own name, so an unrelated DSH-wide DEEPSEEK_API_KEY cannot be picked up instead.
 - id: llm-deepseek
   config:
-    apiKeyEnv: NOVE_HARNESS_DEEPSEEK_API_KEY
+    apiKeyEnv: TURNWIRE_HARNESS_DEEPSEEK_API_KEY
 
 - id: web-search-deepseek
   config:
-    apiKeyEnv: NOVE_HARNESS_DEEPSEEK_API_KEY
+    apiKeyEnv: TURNWIRE_HARNESS_DEEPSEEK_API_KEY

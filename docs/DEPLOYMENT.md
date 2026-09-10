@@ -101,7 +101,7 @@ npm run turnwire -- devices pair --name 我的手机
 
 The headless host runs the same DSH adapter, daemon, CLI/TUI and encrypted remote-control protocol as the desktop installation. A configurable install directory contains `apps`, `packages`, `config`, private `state`, separate `dsh-state`, and `runtime`. Build the release before copying it. `scripts/install-linux-host.sh` installs a checksum-verified Node runtime, locked production dependencies and the DSH runtime pinned by `config/dsh-runtime`, then registers the user service. Do not copy platform-specific `node_modules` from macOS to Linux.
 
-Put the DSH environment mapping in `config/dsh.env.json` with mode 0600; it contains the `NOVE_HARNESS_DEEPSEEK_API_KEY` environment variable. This private file is supplied on the destination, never included in release archives. The managed launcher passes its value only to DSH. Turnwire receives the short-lived loopback DSH connection URL; model values and URL tokens are redacted from service logs.
+Put the DSH environment mapping in `config/dsh.env.json` with mode 0600; it contains the `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` environment variable. This private file is supplied on the destination, never included in release archives. The managed launcher passes its value only to DSH. Turnwire receives the short-lived loopback DSH connection URL; model values and URL tokens are redacted from service logs.
 
 From the installation directory run:
 

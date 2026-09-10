@@ -12,14 +12,14 @@ export async function runManagedHost() {
   const dshHome = resolve(process.env.TURNWIRE_DSH_HOME ?? join(root, 'dsh-state'));
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await mkdir(dshHome, { recursive: true, mode: 0o700 });
-  let key = process.env.NOVE_HARNESS_DEEPSEEK_API_KEY;
+  let key = process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   if (!key) {
     const values = JSON.parse(await readFile(process.env.TURNWIRE_DSH_ENV_FILE ?? join(root, 'config/dsh.env.json'), 'utf8')) as Record<string, unknown>;
-    if (typeof values.NOVE_HARNESS_DEEPSEEK_API_KEY === 'string') key = values.NOVE_HARNESS_DEEPSEEK_API_KEY;
+    if (typeof values.TURNWIRE_HARNESS_DEEPSEEK_API_KEY === 'string') key = values.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   }
-  if (!key) throw new Error('Configure NOVE_HARNESS_DEEPSEEK_API_KEY in the DSH environment file');
+  if (!key) throw new Error('Configure TURNWIRE_HARNESS_DEEPSEEK_API_KEY in the DSH environment file');
   const base: NodeJS.ProcessEnv = { ...process.env, TURNWIRE_HOME: directory };
-  delete base.NOVE_HARNESS_DEEPSEEK_API_KEY;
+  delete base.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   delete base.TURNWIRE_RELAY_TOKEN; delete base.TURNWIRE_DSH_TOKEN; delete base.TURNWIRE_DSH_URL;
   const dshEntry = resolve(process.env.TURNWIRE_DSH_ENTRY ?? join(root, 'runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'));
   const daemonEntry = resolve(process.env.TURNWIRE_DAEMON_ENTRY ?? join(root, 'apps/daemon/dist/main.js'));
@@ -49,7 +49,7 @@ export async function runManagedHost() {
     child.once('exit', () => { if (!stopping) { console.error(`${label} exited; supervisor will restart the host`); void stop(1); } });
     return child;
   };
-  const dsh = launch(dshEntry, ['web', '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--no-open', '--host', '127.0.0.1', '--port', port], { ...base, DSH_HOME: dshHome, NOVE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
+  const dsh = launch(dshEntry, ['web', '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--no-open', '--host', '127.0.0.1', '--port', port], { ...base, DSH_HOME: dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
   for (const stream of [dsh.stdout!, dsh.stderr!]) createInterface({ input: stream }).on('line', line => {
     if (!launchURL && !stopping) {
       const found = line.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/)?.[1];

@@ -54,9 +54,9 @@ npm run turnwire -- ls
 适配器依据官方源码版本 **0.1.5-alpha.1**、提交 `5dda764ed3aa172535a7967b06ff95d9cbfe536a` 实现，使用官方 API Gateway 和 Remote mux，不解析终端输出。DSH 的稳定发布标签与 alpha 的接口可能不同，不要默认混用。详情见 [DSH 接口说明](docs/DSH.md)。
 
 ```bash
-# 终端 1：确保已 export NOVE_HARNESS_DEEPSEEK_API_KEY。
+# 终端 1：确保已 export TURNWIRE_HARNESS_DEEPSEEK_API_KEY。
 # 只检查是否存在，不输出密钥。
-test -n "$NOVE_HARNESS_DEEPSEEK_API_KEY" && npm run dev:dsh
+test -n "$TURNWIRE_HARNESS_DEEPSEEK_API_KEY" && npm run dev:dsh
 
 # 终端 2：复制 DSH 输出的启动 URL，包含 ?token=...。
 TURNWIRE_DSH_URL='http://127.0.0.1:3080/?token=YOUR_DSH_LAUNCH_TOKEN' npm run dev
@@ -66,9 +66,9 @@ npm run turnwire -- status
 npm run turnwire -- new '说明当前项目的结构' --title '了解项目'
 ```
 
-`npm run dev:dsh` 加载 [DeepSeek 配置](config/dsh-deepseek.patch.yml)，让模型和网页搜索使用环境变量 `NOVE_HARNESS_DEEPSEEK_API_KEY`（拼写为 **NOVE**）。配置仅保存变量名，DSH 在请求时读取凭据。密钥需要存在于启动 DSH 的终端环境中；只设置在 daemon 或桌面端进程中不会传给已经运行的 DSH。
+`npm run dev:dsh` 加载 [DeepSeek 配置](config/dsh-deepseek.patch.yml)，让模型和网页搜索使用环境变量 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`（拼写为 **TURNWIRE**）。配置仅保存变量名，DSH 在请求时读取凭据。密钥需要存在于启动 DSH 的终端环境中；只设置在 daemon 或桌面端进程中不会传给已经运行的 DSH。
 
-DSH 独立运行并保留自己的数据目录、模型配置和凭据。Turnwire 不读取或修改 DSH 内部持久化文件。如果已有 DSH `settings.yaml` 显式设置了 `llm-deepseek.apiKeyEnv`，该用户设置优先于启动配置，需要将其引用名同步为 `NOVE_HARNESS_DEEPSEEK_API_KEY`。`TURNWIRE_DSH_TOKEN` 是单独的本机连接令牌，也可以单独传入；token 缺失、版本不兼容或服务离线时会明确报错，不会自动降级为 Demo。未经配置的模型无法执行真实 coding 任务。
+DSH 独立运行并保留自己的数据目录、模型配置和凭据。Turnwire 不读取或修改 DSH 内部持久化文件。如果已有 DSH `settings.yaml` 显式设置了 `llm-deepseek.apiKeyEnv`，该用户设置优先于启动配置，需要将其引用名同步为 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`。`TURNWIRE_DSH_TOKEN` 是单独的本机连接令牌，也可以单独传入；token 缺失、版本不兼容或服务离线时会明确报错，不会自动降级为 Demo。未经配置的模型无法执行真实 coding 任务。
 
 ## CLI
 

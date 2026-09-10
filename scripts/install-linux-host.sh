@@ -10,7 +10,7 @@ if systemctl --user is-active --quiet turnwire-host.service; then
   echo 'Host is already running. Stop turnwire-host.service after active tasks finish before reinstalling.' >&2
   exit 1
 fi
-unset NOVE_HARNESS_DEEPSEEK_API_KEY TURNWIRE_RELAY_TOKEN TURNWIRE_DSH_TOKEN TURNWIRE_DSH_URL
+unset TURNWIRE_HARNESS_DEEPSEEK_API_KEY TURNWIRE_RELAY_TOKEN TURNWIRE_DSH_TOKEN TURNWIRE_DSH_URL
 turnwire_version=22.23.2
 case $(uname -m) in x86_64) turnwire_arch=x64 ;; aarch64|arm64) turnwire_arch=arm64 ;; *) echo 'Unsupported CPU architecture' >&2; exit 1 ;; esac
 mkdir -p "$turnwire_root/runtime/dsh" "$turnwire_root/state"
