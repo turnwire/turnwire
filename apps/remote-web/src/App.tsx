@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
-import type { ConnectionState, ConnectionHealth, TurnwireClient } from '@turnwire/sdk';
+import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
 import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { shouldLoadEarlier } from './historyScroll';
@@ -65,6 +65,16 @@ export function App() {
   useEffect(() => { if (!turnRunning) setQueuedIds([]); }, [turnRunning]);
   const pending = useMemo(() => turnRunning ? messages.filter(message => message.role === 'user' && message.queued && queuedIds.includes(message.id)) : [], [messages, turnRunning, queuedIds]);
   const visible = useMemo(() => pending.length ? messages.filter(message => !pending.some(item => item.id === message.id)) : messages, [messages, pending]);
+  /** Adjacent tool calls become one row; everything else renders on its own. */
+  const rows = useMemo(() => {
+    const output: Array<{ key: string; tools?: ConversationMessage[]; message?: ConversationMessage }> = [];
+    for (const message of visible) {
+      const last = output[output.length - 1];
+      if (message.role === 'tool') { if (last?.tools) last.tools.push(message); else output.push({ key: message.id, tools: [message] }); }
+      else output.push({ key: message.id, message });
+    }
+    return output;
+  }, [visible]);
   const modelSupport = runtime?.capabilities.modelSelection === true;
   const effortOptions = catalog?.value.groups.find(group => group.id === session?.model?.provider)?.models.find(model => model.id === session?.model?.model)?.reasoning?.efforts ?? [];
   useEffect(() => {
@@ -189,7 +199,7 @@ export function App() {
             {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? '正在读取更早记录…' : historyError ? '重试加载记录' : '加载更早记录'}</button>}
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />正在读取会话…</div>}
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>这个会话准备好了。<br />告诉 Agent 你想完成什么。</p></div>}
-            {visible.map(message => message.role === 'tool' ? <details className="tool-message" key={message.id}><summary><TerminalWindow size={13} /><span>{message.tool}</span><span className="tool-status">{message.isError ? '失败' : message.complete ? '已返回' : ['running', 'waiting_approval'].includes(session.status) ? '执行中' : '未收到结果'}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>输入参数</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>返回结果</strong><pre>{message.output}</pre></>}</details> : <article className={`message ${message.role}`} key={message.id}><div className="message-author">{message.role === 'user' ? <><span className="avatar">你</span>你</> : <><img src="/icon.svg" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>{message.queued && <span className="queued-chip">排队发送</span>}{message.steer && <span className="queued-chip">插话</span>}</div><div className="message-text">{message.role === 'assistant' ? <MarkdownMessage text={message.text} id={message.id} /> : message.text}{!message.complete && <span className="cursor" />}</div></article>)}
+            {rows.map(row => row.tools ? <ToolRun key={row.key} items={row.tools} running={turnRunning} /> : <article className={`message ${row.message!.role}`} key={row.key}><div className="message-author">{row.message!.role === 'user' ? <><span className="avatar">你</span>你</> : <><img src="/icon.svg" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(row.message!.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>{row.message!.queued && <span className="queued-chip">排队发送</span>}{row.message!.steer && <span className="queued-chip">插话</span>}</div><div className="message-text">{row.message!.role === 'assistant' ? <MarkdownMessage text={row.message!.text} id={row.message!.id} /> : row.message!.text}{!row.message!.complete && <span className="cursor" />}</div></article>)}
             <div ref={bottom} /></div></section>
           <footer className="composer-area"><div className="composer-width">{session.archived && <div className="resume-row"><span>会话已归档，历史记录仍可查看。</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>取消归档</button></div>}
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label="待审批操作"><div className="approval-title"><ShieldCheck size={20} /><strong>需要你的批准</strong><span>仅本次</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />拒绝</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />批准本次</button></div></section>)}
@@ -212,6 +222,24 @@ function ConnectionView({ initial, connecting, connected, onConnect, onDisconnec
   const [kind, setKind] = useState<'local' | 'remote'>(initial?.kind ?? 'remote'); const [url, setUrl] = useState(initial?.kind === 'local' ? initial.url : 'http://127.0.0.1:9898');
   const [token, setToken] = useState(initial?.kind === 'local' ? initial.token : ''); const [code, setCode] = useState(initial?.kind === 'remote' ? initial.code : ''); const [remember, setRemember] = useState(false);
   return <section className="connection-view"><div className="connection-intro"><div className="connection-symbol"><Laptop size={38} weight="light" /><span /><ChatCircle size={28} weight="light" /></div><span className="eyebrow">你的主机，随身接续</span><h1>连接，继续工作。</h1><p>查看同一个会话的实时进度，<br />把下一步想法发回主机。</p><div className="connection-facts"><div><ShieldCheck size={18} /><span>操作权限由你掌握</span></div><div><TerminalWindow size={18} /><span>代码和执行留在本机</span></div></div></div><form className="connection-form" onSubmit={(event: FormEvent) => { event.preventDefault(); onConnect(kind === 'local' ? { kind, url, token } : { kind, code }, remember); }}><h2>连接设备</h2><div className="segmented"><button type="button" className={kind === 'remote' ? 'active' : ''} onClick={() => setKind('remote')}>远程配对</button><button type="button" className={kind === 'local' ? 'active' : ''} onClick={() => setKind('local')}>本机连接</button></div>{kind === 'remote' ? <><label>配对码<textarea required value={code} onChange={e => setCode(e.target.value)} placeholder="粘贴主机生成的配对码或配对链接" rows={4} /></label><p className="field-help">在主机的终端运行 <code>turnwire devices pair</code> 获取配对码。</p></> : <><label>主机服务地址<input type="url" required value={url} onChange={e => setUrl(e.target.value)} /></label><label>连接令牌<input type="password" required value={token} onChange={e => setToken(e.target.value)} autoComplete="off" placeholder="粘贴本机连接令牌" /></label><p className="field-help">在这台主机上运行 <code>turnwire connect</code> 查看连接信息。</p></>}<label className="remember"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />记住这台受信任设备</label><button className="primary wide" disabled={connecting}>{connecting ? <CircleNotch size={18} className="spin" /> : <Plug size={18} />}{connecting ? '正在连接' : '连接主机'}<ArrowRight size={17} /></button>{connected && <div className="connection-actions"><button type="button" onClick={onBack}>返回会话</button><button type="button" onClick={onDisconnect}>断开并忘记连接</button></div>}</form></section>;
+}
+
+/** One tool call: a quiet line until someone opens it. */
+function ToolCall({ message }: { message: ConversationMessage }) {
+  return <details className="tool-message"><summary><TerminalWindow size={13} /><span>{message.tool}</span><span className="tool-status">{message.isError ? '失败' : message.complete ? '已返回' : '执行中'}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>输入参数</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>返回结果</strong><pre>{message.output}</pre></>}</details>;
+}
+
+/**
+ * Consecutive tool calls read as one line and open into the calls themselves: a turn that runs ten
+ * tools should not look like ten blocks of content.
+ */
+function ToolRun({ items, running }: { items: ConversationMessage[]; running: boolean }) {
+  if (items.length === 1) return <ToolCall message={items[0]!} />;
+  const names = [...new Set(items.map(item => item.tool ?? '工具'))];
+  const failures = items.filter(item => item.isError).length;
+  const label = names.length === 1 ? `${names[0]} ×${items.length}` : `${names[0]} 等 ${items.length} 项`;
+  const status = failures ? `${failures} 项失败` : items.every(item => item.complete) ? '全部已返回' : running ? '执行中' : '未收到结果';
+  return <details className="tool-group"><summary><TerminalWindow size={13} /><span>{label}</span><span className="tool-status">{status}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{items.map(item => <ToolCall key={item.id} message={item} />)}</div></details>;
 }
 
 function CreateSession({ snapshot, busy, close, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
