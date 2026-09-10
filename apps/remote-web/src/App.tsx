@@ -239,7 +239,7 @@ export function App() {
     }).catch(error => { if (active) { setError(errorText(error)); setLoading(false); if (connection?.kind === 'local') setShowConnection(true);  } }).finally(() => { bootstrapping = false; }); }
     bootstrap();
     const resume = () => { if (c instanceof RemoteClient) { if (document.visibilityState === 'visible') c.resume(); else c.suspend(); } };
-    const offline = () => { if (c instanceof RemoteClient) c.suspend(); };
+    const offline = () => { if (c instanceof RemoteClient) c.suspend('offline'); };
     const network = (navigator as Navigator & { connection?: EventTarget }).connection;
     const notification = (event: MessageEvent) => { if (event.data?.type === 'turnwire.inbox') { setShowInbox(true); setShowConnection(false); resume(); } };
     navigator.serviceWorker?.addEventListener('message', notification);

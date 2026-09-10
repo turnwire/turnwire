@@ -20,6 +20,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
 await context.addInitScript(() => { try { localStorage.setItem('turnwire.locale', 'en'); } catch { /* the app still defaults to English */ } });
 const page = await context.newPage(); const errors = []; page.on('pageerror', error => errors.push(error.message));
+const sockets = []; page.on('websocket', socket => sockets.push(socket));
 const output = process.env.TURNWIRE_SCREENSHOTS ?? '/tmp/turnwire-resilience-screenshots'; await mkdir(output, { recursive: true });
 try {
   const session = await local.request('session.create', { title: '远程连接验证', cwd: directory, runtimeId: 'demo' });
@@ -44,17 +45,23 @@ try {
   await page.getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect.poll(() => core.store.approvals().filter(a => a.status === 'pending').length).toBe(0);
   await page.getByLabel('Include handled').check(); await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+  // Hiding the page pauses retries and keeps the verified socket: a tab switch must not flicker
+  // the bar back to offline, and it must not open a second WebSocket to rebuild what it still holds.
+  const socketsBeforeTabSwitch = sockets.length;
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'offline');
-  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(300);
   await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  expect(sockets.length).toBe(socketsBeforeTabSwitch);
   await page.getByRole('button', { name: 'Reconnect now', exact: true }).click(); await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
   await page.getByRole('button', { name: 'Connection settings', exact: true }).click();
   await page.getByLabel('Remember this trusted device').check(); await page.getByRole('button', { name: 'Connect to host', exact: true }).click();
   await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
   const second = await context.newPage(); await second.goto(origin); await expect(second.locator('.connection-health')).toHaveAttribute('data-phase', 'connected'); await second.close();
   expect(errors).toEqual([]);
-  console.log('Remote browser checks passed: one-time pairing, reload, offline recovery, foreground resume, inbox approval, persistent credentials, responsive layout.');
+  console.log('Remote browser checks passed: one-time pairing, reload, offline recovery, tab-switch socket reuse, inbox approval, persistent credentials, responsive layout.');
   console.log(`Screenshots: ${output}`);
 } catch (error) { await page.screenshot({ path: join(output, 'failure.png'), fullPage: true }); console.error(await page.locator('main').innerText()); throw error; }
 finally { await browser.close(); local.close(); await remote.close(); await server.close(); await relay.close(); await core.dispose(); await rm(directory, { recursive: true, force: true }); }

@@ -104,6 +104,8 @@ class Transport {
     void this.send('ping', { nonce }).catch(error => this.abort(error)); return promise;
   }
   activate() { this.heartbeat = setInterval(() => { void this.ping().catch(() => {}); }, this.options.heartbeatIntervalMs ?? 15_000); }
+  /** A socket that survived a background period can be reused; a closed one cannot. */
+  get open() { return this.active && !!this.channel && this.socket.readyState === WebSocket.OPEN; }
   send(kind: SecureMessage['kind'], body: unknown): Promise<void> {
     const task = this.outgoing.then(async () => {
       if (!this.active || !this.channel) throw new TurnwireError('DISCONNECTED', 'Remote connection unavailable');
@@ -205,10 +207,25 @@ export class RemoteClient implements TurnwireClient {
     if (this.transport) void this.transport.send('subscribe', { after: this.cursor }).catch(() => {}); else void this.connect().catch(() => {});
     return () => { this.listeners.delete(listener); if (state) this.states.delete(state); if (!this.listeners.size) this.close(); };
   }
-  /** Foreground/manual reconnect discards zombie sockets and bypasses background backoff. */
-  async checkConnection(): Promise<ConnectionHealth> { this.resume(); await this.connect(); return this.health; }
-  suspend() { this.suspended = true; this.reset(); this.healthChanged({ phase: 'offline', message: 'Background connection paused; it resumes on return', retryInMs: undefined }); }
-  resume() { const reset = this.suspended || this.stopped || this.terminal || !!this.transport; this.suspended = false; this.stopped = false; this.terminal = false; this.attempts = 0; if (reset) this.reset(); void this.connect().catch(() => {}); }
+  /** A manual reconnect rebuilds the encrypted session instead of trusting a socket that may be a zombie. */
+  async checkConnection(): Promise<ConnectionHealth> { this.suspended = false; this.stopped = false; this.terminal = false; this.attempts = 0; this.reset(); await this.connect(); return this.health; }
+  /**
+   * Leaving the page only pauses retries: a verified socket is expensive to rebuild and a hidden
+   * tab usually still holds it. Losing the network is different — that socket cannot survive, so
+   * `offline` drops it and the bar says so instead of showing a connection that cannot deliver.
+   */
+  suspend(reason: 'hidden' | 'offline' = 'hidden') {
+    this.suspended = true; if (reason === 'hidden') return;
+    this.reset(); this.healthChanged({ phase: 'offline', message: 'The device is offline; the connection resumes when the network returns', retryInMs: undefined });
+  }
+  /** Returning to the foreground reuses the socket that survived and drops only one that is genuinely gone. */
+  resume() {
+    this.suspended = false; this.stopped = false; this.terminal = false;
+    const transport = this.transport;
+    if (transport?.open) { this.attempts = 0; void transport.ping().catch(() => {}); return; }
+    if (!transport && (this.ready || this.candidates.size)) return;
+    this.attempts = 0; if (transport) this.reset(); void this.connect().catch(() => {});
+  }
   private reset() { ++this.generation; clearTimeout(this.timer); this.timer = undefined; this.transport?.close(); this.transport = undefined; for (const transport of this.candidates) transport.close(); this.candidates.clear(); this.ready = undefined; this.rejectPending(); this.setState('offline'); }
   private setState(value: ConnectionState) { if (this.state === value) return; this.state = value; for (const listener of this.states) listener(value); }
   private rejectPending() { for (const [id, pending] of this.pending) { clearTimeout(pending.timer); pending.reject(new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`)); } this.pending.clear(); }

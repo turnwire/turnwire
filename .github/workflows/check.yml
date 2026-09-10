@@ -26,3 +26,7 @@ jobs:
       # It imports the TypeScript sources directly, so it runs through tsx like the suite does.
       - name: History paging in the phone PWA
         run: node --import tsx scripts/history-ui-check.mjs
+      # The reconnection contract is observable only in a browser: hiding the page must reuse the
+      # verified socket, not rebuild it. It starts its own isolated Relay, daemon and pairing.
+      - name: Tab switching in the phone PWA
+        run: node --import tsx scripts/remote-resilience-check.mjs
