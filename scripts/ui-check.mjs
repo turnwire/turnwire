@@ -30,25 +30,45 @@ try {
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
   await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false }).first()).toBeVisible();
   // A queued prompt owns its own controls: edit, cancel and jump the queue live on that row and
-  // nowhere else, so an empty queue has no queue controls at all.
+  // nowhere else, so an empty queue has no queue controls at all. The message is deliberately long,
+  // because a queued prompt may not grow the screen: the row truncates and the box caps itself.
+  const queuedText = '需要批准这条日志：这是一条很长的排队消息，用来验证超出屏幕时后面的内容会被省略。'.repeat(4);
   await expect(page.locator('.queued-strip')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(0);
-  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('需要批准这条日志');
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill(queuedText);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const queuedRow = page.locator('.queued-item');
   await expect(queuedRow).toHaveCount(1);
-  await expect(queuedRow.locator('.queued-text')).toHaveText('需要批准这条日志');
   await expect(queuedRow.getByRole('button')).toHaveText(['Edit', 'Cancel', 'Jump the queue']);
+  // Too long means one ellipsised line, with the whole prompt still available to the pointer.
+  const text = queuedRow.locator('.queued-text');
+  await expect(text).toHaveCSS('text-overflow', 'ellipsis');
+  await expect(text).toHaveAttribute('title', queuedText);
+  expect(await text.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
   // Typing does not grow a second set of controls: the row is the only place they exist.
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('另一条草稿');
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(1);
   // Edit opens the row in place, and the same three slots stay in the same order.
   await queuedRow.getByRole('button', { name: 'Edit', exact: true }).click();
-  await expect(queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true })).toHaveValue('需要批准这条日志');
+  await expect(queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true })).toHaveValue(queuedText);
   await expect(queuedRow.getByRole('button')).toHaveText(['Save', 'Cancel', 'Jump the queue']);
   await queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true }).press('Escape');
   await expect(queuedRow.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('');
+  // A queue of many messages scrolls inside its own box instead of taking the screen: the bound is
+  // measured on the live row duplicated in place, so it holds for a queue longer than this run can
+  // produce without the demo answering every send.
+  const bounded = await page.evaluate(() => {
+    const strip = document.querySelector('.queued-strip');
+    const row = strip.firstElementChild;
+    for (let index = 0; index < 12; index++) strip.append(row.cloneNode(true));
+    const measured = { rows: strip.children.length, height: strip.getBoundingClientRect().height, limit: innerHeight * 0.32, scrolls: strip.scrollHeight > strip.clientHeight + 1 };
+    for (let index = 0; index < 12; index++) strip.lastElementChild.remove();
+    return measured;
+  });
+  expect(bounded.rows).toBe(13);
+  expect(bounded.height).toBeLessThanOrEqual(bounded.limit + 1);
+  expect(bounded.scrolls).toBe(true);
   await page.screenshot({ path: join(output, 'desktop-session.png'), fullPage: true, animations: 'disabled' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
