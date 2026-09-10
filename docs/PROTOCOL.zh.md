@@ -102,6 +102,8 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 
 `session.queue {sessionId}` 返回 `{items: [{messageId, target, text}]}` —— 还在排队的提示，`next-turn` 在 `next-step` 之前。它是读取，因此刚加载页面的客户端不必"看着队列长出来"就能渲染它；`text` 是 runtime 自己那份，所以任何一端改过的内容，其他端看到的都是改后的。
 
+runtime 已经开始执行的提示既不在队列里，也不可再改：它会从 `session.queue` 消失，对它的操作返回 `QUEUE_ITEM_STARTED`，而不会再被转发出去。runtime 在把提示交给模型之后仍会保留一段时间的 inbox 条目，并且会接受对它的修改——这正是「取消了却还是收到」和「行从所有客户端消失、模型却在回答它」的成因。主机知道自己何时宣布它开始，因此就以这个事实作答。
+
 `session.queueAction {sessionId, messageId, action}` 修改一条还排在运行中回合后面的提示。`messageId` 是客户端拿到的那条消息的 id；runtime 会把它翻译成自己队列里的条目，因此已经过期的行只会失败，不会改到别的提示上。动作有三种：`{kind:"edit", text}`、`{kind:"remove"}`、`{kind:"steer"}` —— 改写它、收回它，或者把它送进正在运行的那个回合。已经离开队列的提示返回 `QUEUE_ITEM_GONE`。
 
 journal 记录的是提示最初发出时的样子，所以结果会写回：编辑发出带新 `text` 的 `message.updated`，插队发出 `steer: true` 的 `message.updated`，收回发出 `message.removed`，后者会把这条消息从所有投影里删掉。没有这一步，记录就会描述一条并非真正运行的提示，或者一条根本没跑过的提示。

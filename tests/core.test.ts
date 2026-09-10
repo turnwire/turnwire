@@ -36,6 +36,21 @@ describe('durable daemon ownership', () => {
     expect(sent[0]?.data).not.toHaveProperty('queued');
     expect(sent.at(-1)?.data).toMatchObject({ text: '排队的那一条', queued: true });
   });
+  it('refuses to take back a queued prompt the runtime has already started', async () => {
+    const { core, store } = setup(); const s = await session(core);
+    await call(core, 'turn', 'session.message', { sessionId: s.id, text: 'approval' });
+    await call(core, 'queued', 'session.message', { sessionId: s.id, text: '排队的那一条' });
+    // While it waits, taking it back is the reader's to do.
+    expect(value<{ items: unknown[] }>(await call(core, 'q1', 'session.queue', { sessionId: s.id })).items).toHaveLength(1);
+    await call(core, 'decide', 'approval.decide', { approvalId: value<{ approvals: Array<{ id: string }> }>(await call(core, 'snap', 'system.snapshot')).approvals[0]!.id, decision: 'approved' });
+    // Once the turn that starts it is under way the model has the prompt; a runtime may still accept a
+    // removal for it, and accepting that would erase a message that is being answered right now.
+    const taken = await call(core, 'remove-late', 'session.queueAction', { sessionId: s.id, messageId: 'queued', action: { kind: 'remove' } });
+    expect(taken).toMatchObject({ ok: false, error: { code: 'QUEUE_ITEM_STARTED' } });
+    expect(store.session(s.id)).toBeDefined();
+    expect(value<{ items: unknown[] }>(await call(core, 'q2', 'session.queue', { sessionId: s.id })).items).toHaveLength(0);
+    expect(conversation(store.events(0, 1000), s.id).some(message => message.id === 'queued')).toBe(true);
+  });
   it('marks where a queued prompt actually started, not where it was written', async () => {
     const { core, store } = setup(); const s = await session(core);
     await call(core, 'turn', 'session.message', { sessionId: s.id, text: 'approval' });

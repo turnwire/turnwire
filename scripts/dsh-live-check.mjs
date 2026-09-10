@@ -105,6 +105,15 @@ try {
   }, 'the host to record when the queued prompt started', 180_000);
   if (!dispatched) throw new Error('The queued prompt never started');
   console.log('The host recorded the moment the queued prompt started');
+  // The runtime keeps its inbox entry after it has handed the prompt over, which is exactly why a
+  // late cancel used to look like it worked: the removal was accepted and the answer came anyway.
+  const listed = await client.request('session.queue', { sessionId: session.id });
+  if (listed.items.some(item => item.messageId === queued.messageId)) throw new Error('The queue still lists a prompt that has started');
+  let refused = '';
+  await client.request('session.queueAction', { sessionId: session.id, messageId: queued.messageId, action: { kind: 'remove' } }).catch(error => { refused = error.code; });
+  if (refused !== 'QUEUE_ITEM_STARTED') throw new Error(`Taking back a started prompt answered ${JSON.stringify(refused)}`);
+  console.log('A started prompt has left the queue and cannot be taken back');
+
   await until(async () => (await answers()).some(text => /SECOND/.test(text)) ? true : undefined, 'the queued prompt to run', 180_000);
   console.log('The queued prompt ran and answered');
   console.log('\nDSH live check passed: prompt, streamed answer, approval waterfall, queue projection and dispatch record.');

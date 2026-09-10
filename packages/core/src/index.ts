@@ -18,12 +18,12 @@ export class TurnwireCore {
   /** How prompts accepted while a turn was running were sent, until the runtime echoes them back. */
   private promptModes = new Map<string, 'queue' | 'steer'>();
   /**
-   * Prompts waiting behind a running turn, by message id. The journal records a prompt when the host
+   * Prompts accepted behind a running turn, by message id. The journal records a prompt when the host
    * accepts it, which is where it was *written*; this is what lets the host say when the runtime
-   * actually started it, so a client can put it where it ran instead of in the middle of the answer
-   * it was waiting behind.
+   * actually started it, and — because a prompt the model already has cannot be taken back — which
+   * ones are still the reader's to change.
    */
-  private waiting = new Map<string, string>();
+  private waiting = new Map<string, { sessionId: string; started: boolean }>();
   /**
    * Sessions whose approvals are granted on arrival. Deliberately in memory only: delegating a
    * session's approvals is a decision about the work happening right now, and a host that restarts
@@ -95,7 +95,11 @@ export class TurnwireCore {
       case 'session.queue': {
         const p = methodSchemas['session.queue'].parse(request.params);
         const session = this.session(p.sessionId); const runtime = this.runtime(session.runtimeId);
-        return { items: runtime.listQueue ? await runtime.listQueue(session.runtimeSessionId) : [] };
+        const items = runtime.listQueue ? await runtime.listQueue(session.runtimeSessionId) : [];
+        // A runtime keeps its inbox entry around after it has picked the prompt up, so a prompt the
+        // host has already announced as started is filtered out here: it belongs to the transcript
+        // now, and it is not something a reader can still take back.
+        return { items: items.filter(item => !this.waiting.get(item.messageId)?.started) };
       }
       case 'subagent.list': {
         const p = methodSchemas['subagent.list'].parse(request.params);
@@ -153,7 +157,7 @@ export class TurnwireCore {
           // Recorded before the send: the runtime echoes the prompt back as an event while this call is
           // still in flight, and that echo is the message the journal keeps.
           if (running) this.promptModes.set(request.id, mode);
-          if (running && mode === 'queue') this.waiting.set(request.id, session.id);
+          if (running && mode === 'queue') this.waiting.set(request.id, { sessionId: session.id, started: false });
           await this.runtime(session.runtimeId).sendMessage(session.runtimeSessionId, { id: request.id, text: p.text, ...(p.steer ? { steer: true } : {}) });
           this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(running ? (mode === 'steer' ? { steer: true } : { queued: true }) : {}) }, `${session.id}:user:${request.id}`);
           // The client is told which of the two happened, so it can put the prompt where it belongs
@@ -167,7 +171,7 @@ export class TurnwireCore {
         // Cancellation is independent of the command lock, so a slow prompt cannot block Stop.
         const session = this.session(p.sessionId); await this.runtime(session.runtimeId).cancel(session.runtimeSessionId);
         // The runtime drops whatever was waiting with the turn, so none of it will be dispatched.
-        for (const [messageId, owner] of this.waiting) if (owner === session.id) this.waiting.delete(messageId);
+        for (const [messageId, entry] of this.waiting) if (entry.sessionId === session.id) this.waiting.delete(messageId);
         return { accepted: true };
       }
       case 'session.queueAction': {
@@ -177,14 +181,18 @@ export class TurnwireCore {
         const queueAction = runtime.queueAction?.bind(runtime);
         if (!queueAction) throw new TurnwireError('NOT_AVAILABLE', 'This runtime cannot change a prompt that is already waiting');
         return this.lock(p.sessionId, async () => {
+          // Runtimes accept a change for an item they have already handed to the model, and taking it
+          // would erase a prompt that is being answered right now from every client. The host knows
+          // when it started, so that answer is the honest one.
+          if (this.waiting.get(p.messageId)?.started) throw new TurnwireError('QUEUE_ITEM_STARTED', 'That prompt has already started running and cannot be taken back');
           await queueAction(session.runtimeSessionId, p.messageId, p.action);
           // The journal recorded the prompt as it was first sent. An edit or a steer would otherwise
           // leave the transcript describing a prompt that is not the one that ran, and a removal
           // would leave one that never did, so each outcome is written back under the command's own
           // id — a retry stays a no-op because the daemon replays the receipt instead of re-running.
           const source = `${p.sessionId}:queue:${p.action.kind}:${request.id}`;
-          // Taking a prompt back or steering it means it will never be dispatched from the queue, so
-          // the host stops waiting to announce a start that cannot happen.
+          // Taking a prompt back or steering it settles it here: it will not be dispatched from the
+          // queue, so there is no start left to announce.
           if (p.action.kind !== 'edit') this.waiting.delete(p.messageId);
           if (p.action.kind === 'remove') this.publish({ type: 'message.removed', sessionId: p.sessionId, messageId: p.messageId }, source);
           else if (p.action.kind === 'edit') this.publish({ type: 'message.updated', sessionId: p.sessionId, messageId: p.messageId, text: p.action.text }, source);
@@ -320,9 +328,9 @@ export class TurnwireCore {
    * prompt that has been waiting longest is the one a new turn begins with.
    */
   private startWaiting(sessionId: string) {
-    for (const [messageId, owner] of this.waiting) {
-      if (owner !== sessionId) continue;
-      this.waiting.delete(messageId);
+    for (const [messageId, entry] of this.waiting) {
+      if (entry.sessionId !== sessionId || entry.started) continue;
+      entry.started = true;
       this.publish({ type: 'message.updated', sessionId, messageId, queued: false }, `${sessionId}:queue:started:${messageId}`);
       return;
     }

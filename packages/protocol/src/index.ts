@@ -224,6 +224,7 @@ export const turnwireErrorCodes = [
   'OUTCOME_UNKNOWN',
   'PROBE_TIMEOUT',
   'QUEUE_ITEM_GONE',
+  'QUEUE_ITEM_STARTED',
   'QUESTION_EXPIRED',
   'RATE_LIMITED',
   'REKEY_REQUIRED',
