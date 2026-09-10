@@ -81,6 +81,11 @@ it('backfills an existing journal once and persists its projection across reopen
   // Reopening the file-backed journal re-projects the whole 4088-event fixture twice, so a loaded
   // CI runner can exceed the default budget even though this takes milliseconds on an idle machine.
 }, 60_000);
+it('keeps the queued marker on a prompt that was sent during a turn', () => {
+  const store = new Store(':memory:'); cleanup.push(() => store.close());
+  store.append({ type: 'message.user', sessionId: 's', messageId: 'queued', text: 'later', queued: true });
+  expect(conversation(store.events(0, 50), 's')[0]).toMatchObject({ text: 'later', queued: true });
+});
 it('local and encrypted clients fetch the same bounded history without unsolicited full replay', async () => {
   const core = new TurnwireCore(fixture(), [new DemoRuntime()], { id: 'mac', name: 'History Mac' }); cleanup.push(() => core.dispose());
   const token = randomSecret(); const server = await startDaemonServer({ core, token, port: 0 }); cleanup.push(() => server.close());

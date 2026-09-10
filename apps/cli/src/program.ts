@@ -72,7 +72,7 @@ program.command('history <session>').description('Read recent complete records; 
   .action((sessionId: string, options: { before?: number; limit: number; all?: boolean }) => withClient(async c => {
     const page = options.all ? { events: await loadHistory(c, sessionId), hasMore: false, nextBefore: null } : await loadHistoryPage(c, sessionId, options.before, options.limit);
     if (program.opts().json) print(page);
-    else { for (const message of conversation(page.events, sessionId)) console.log(`\n${safe(message.tool ?? message.role)}\n${safe(message.input !== undefined ? '输入：\n' + message.input + '\n输出：\n' + (message.output ?? '尚未返回') : message.text)}`);
+    else { for (const message of conversation(page.events, sessionId)) console.log(`\n${safe(message.tool ?? message.role)}${message.queued ? '（排队发送）' : ''}\n${safe(message.input !== undefined ? '输入：\n' + message.input + '\n输出：\n' + (message.output ?? '尚未返回') : message.text)}`);
       if (page.hasMore) console.log(`\n更早记录：turnwire history ${sessionId} --before ${page.nextBefore}`);
     }
   }));

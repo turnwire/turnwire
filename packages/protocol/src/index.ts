@@ -43,7 +43,9 @@ export type ApprovalDecision = 'approved' | 'rejected';
 export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.created'), session: sessionSchema }),
   z.object({ type: z.literal('session.updated'), session: sessionSchema }),
-  z.object({ type: z.literal('message.user'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
+  z.object({ type: z.literal('message.user'), sessionId: idSchema, messageId: idSchema, text: z.string(),
+    /** True when a turn was already running, so this prompt waits behind it instead of interrupting. */
+    queued: z.boolean().optional() }),
   z.object({ type: z.literal('message.delta'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
   z.object({ type: z.literal('message.completed'), sessionId: idSchema, messageId: idSchema, text: z.string() }),
   z.object({ type: z.literal('tool.started'), sessionId: idSchema, callId: idSchema, tool: z.string(), detail: z.string() }),

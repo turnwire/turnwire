@@ -23,6 +23,15 @@ describe('durable daemon ownership', () => {
     const conflict = await call(core, 'prompt', 'session.message', { ...request, text: 'different' }); expect(conflict.ok).toBe(false);
     expect(conversation(store.events(0, 100), s.id).map(m => m.role)).toEqual(['user', 'assistant']);
   });
+  it('records that a prompt sent during a turn waits behind it instead of interrupting', async () => {
+    const { core, store } = setup(); const s = await session(core);
+    await call(core, 'first', 'session.message', { sessionId: s.id, text: 'approval' });
+    expect(['running', 'waiting_approval']).toContain(store.session(s.id)?.status);
+    await call(core, 'second', 'session.message', { sessionId: s.id, text: '排队的那一条' });
+    const sent = store.events(0, 100).filter(e => e.data.type === 'message.user');
+    expect(sent[0]?.data).not.toHaveProperty('queued');
+    expect(sent.at(-1)?.data).toMatchObject({ text: '排队的那一条', queued: true });
+  });
   it('makes approvals one-shot across competing clients', async () => {
     const { core, runtime, store } = setup(); const s = await session(core); await call(core, 'message', 'session.message', { sessionId: s.id, text: 'approval' });
     const approval = store.approvals()[0]!; const spy = vi.spyOn(runtime, 'approve');

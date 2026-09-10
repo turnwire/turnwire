@@ -88,7 +88,7 @@ export function decodePairing(value: string): Pairing {
   const input = value.trim().includes('#pair=') ? value.trim().split('#pair=')[1]! : value.trim();
   return pairingSchema.parse(JSON.parse(decodeURIComponent(escape(atob(input.replaceAll('-', '+').replaceAll('_', '/'))))));
 }
-export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'error'; text: string; time: string; tool?: string; complete: boolean; input?: string; output?: string; endedAt?: string; isError?: boolean }
+export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'error'; text: string; time: string; tool?: string; complete: boolean; input?: string; output?: string; endedAt?: string; isError?: boolean; queued?: boolean;}
 export function conversation(events: TurnwireEvent[], sessionId: string): ConversationMessage[] {
   const messages = new Map<string, ConversationMessage>();
   for (const event of [...events].sort(historyOrder)) {
@@ -97,6 +97,9 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
       const existing = messages.get(d.messageId);
       messages.set(d.messageId, { id: d.messageId, role: d.type === 'message.user' ? 'user' : 'assistant', text: d.type === 'message.delta' ? (existing?.text ?? '') + d.text : d.text, time: existing?.time ?? event.time, complete: d.type !== 'message.delta' });
     }
+    // A prompt accepted while a turn was running waits behind it; keep that on the projection so every
+    // client, and the exported transcript, can say so.
+    if (d.type === 'message.user' && d.queued) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, queued: true }); }
     if (d.type === 'tool.started' || d.type === 'tool.finished') {
       const existing = messages.get(d.callId); const finished = d.type === 'tool.finished';
       messages.set(d.callId, { id: d.callId, role: 'tool', text: d.detail, tool: existing?.tool ?? d.tool, time: existing?.time ?? event.time, complete: finished,
@@ -133,7 +136,7 @@ export function transcriptMarkdown(session: Session, messages: ConversationMessa
   const sections = ['# ' + session.title, '工作目录：' + session.cwd + '\n\n会话：' + session.id];
   for (const message of messages) {
     if (message.role === 'tool') sections.push('## 工具 · ' + message.tool + '\n\n### 输入\n\n' + code(message.input ?? '') + '\n\n### 输出\n\n' + code(message.output ?? '尚未返回'));
-    else sections.push('## ' + (message.role === 'user' ? '你' : message.role === 'error' ? '执行错误' : 'Turnwire') + '\n\n' + message.text);
+    else sections.push('## ' + (message.role === 'user' ? (message.queued ? '你（排队发送）' : '你') : message.role === 'error' ? '执行错误' : 'Turnwire') + '\n\n' + message.text);
   }
   return sections.join('\n\n') + '\n';
 }
