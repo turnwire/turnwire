@@ -6,7 +6,9 @@ import { join } from 'node:path';
 // daemon whose TURNWIRE_HOME holds client.json and whose runtime advertises modelSelection.
 const config = JSON.parse(await readFile(join(process.env.TURNWIRE_HOME, 'client.json'), 'utf8'));
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+// Connect and create at a desktop width: the phone layout hides the session list, so the
+// new-session button is off-screen until the list is opened.
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 const page = await context.newPage(); const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 try {
@@ -22,6 +24,10 @@ try {
   await page.getByLabel('工作目录').fill(process.cwd());
   await page.getByRole('button', { name: '创建会话', exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型选择验证' })).toBeVisible();
+
+  // The picker has to survive the phone layout, which is where it is actually used.
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   // The catalog needs no credential, so every registered model is listed before a selection exists.
   const picker = page.getByLabel('模型', { exact: true });
