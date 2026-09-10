@@ -224,9 +224,18 @@ function ConnectionView({ initial, connecting, connected, onConnect, onDisconnec
   return <section className="connection-view"><div className="connection-intro"><div className="connection-symbol"><Laptop size={38} weight="light" /><span /><ChatCircle size={28} weight="light" /></div><span className="eyebrow">你的主机，随身接续</span><h1>连接，继续工作。</h1><p>查看同一个会话的实时进度，<br />把下一步想法发回主机。</p><div className="connection-facts"><div><ShieldCheck size={18} /><span>操作权限由你掌握</span></div><div><TerminalWindow size={18} /><span>代码和执行留在本机</span></div></div></div><form className="connection-form" onSubmit={(event: FormEvent) => { event.preventDefault(); onConnect(kind === 'local' ? { kind, url, token } : { kind, code }, remember); }}><h2>连接设备</h2><div className="segmented"><button type="button" className={kind === 'remote' ? 'active' : ''} onClick={() => setKind('remote')}>远程配对</button><button type="button" className={kind === 'local' ? 'active' : ''} onClick={() => setKind('local')}>本机连接</button></div>{kind === 'remote' ? <><label>配对码<textarea required value={code} onChange={e => setCode(e.target.value)} placeholder="粘贴主机生成的配对码或配对链接" rows={4} /></label><p className="field-help">在主机的终端运行 <code>turnwire devices pair</code> 获取配对码。</p></> : <><label>主机服务地址<input type="url" required value={url} onChange={e => setUrl(e.target.value)} /></label><label>连接令牌<input type="password" required value={token} onChange={e => setToken(e.target.value)} autoComplete="off" placeholder="粘贴本机连接令牌" /></label><p className="field-help">在这台主机上运行 <code>turnwire connect</code> 查看连接信息。</p></>}<label className="remember"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />记住这台受信任设备</label><button className="primary wide" disabled={connecting}>{connecting ? <CircleNotch size={18} className="spin" /> : <Plug size={18} />}{connecting ? '正在连接' : '连接主机'}<ArrowRight size={17} /></button>{connected && <div className="connection-actions"><button type="button" onClick={onBack}>返回会话</button><button type="button" onClick={onDisconnect}>断开并忘记连接</button></div>}</form></section>;
 }
 
+/** A subagent call carries a description; showing it beats printing the whole prompt as the title. */
+function toolName(message: ConversationMessage) {
+  if (message.tool !== 'subagent' || !message.input) return message.tool;
+  try {
+    const parsed = JSON.parse(message.input) as { description?: string };
+    return parsed.description ? `子代理 · ${parsed.description}` : message.tool;
+  } catch { return message.tool; }
+}
+
 /** One tool call: a quiet line until someone opens it. */
 function ToolCall({ message }: { message: ConversationMessage }) {
-  return <details className="tool-message"><summary><TerminalWindow size={13} /><span>{message.tool}</span><span className="tool-status">{message.isError ? '失败' : message.complete ? '已返回' : '执行中'}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>输入参数</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>返回结果</strong><pre>{message.output}</pre></>}</details>;
+  return <details className="tool-message"><summary><TerminalWindow size={13} /><span>{toolName(message)}</span><span className="tool-status">{message.isError ? '失败' : message.complete ? '已返回' : '执行中'}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>输入参数</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>返回结果</strong><pre>{message.output}</pre></>}</details>;
 }
 
 /**
@@ -235,9 +244,9 @@ function ToolCall({ message }: { message: ConversationMessage }) {
  */
 function ToolRun({ items, running }: { items: ConversationMessage[]; running: boolean }) {
   if (items.length === 1) return <ToolCall message={items[0]!} />;
-  const names = [...new Set(items.map(item => item.tool ?? '工具'))];
+  const tools = [...new Set(items.map(item => item.tool ?? '工具'))];
   const failures = items.filter(item => item.isError).length;
-  const label = names.length === 1 ? `${names[0]} ×${items.length}` : `${names[0]} 等 ${items.length} 项`;
+  const label = tools.length === 1 && tools[0] === 'subagent' ? `子代理 ×${items.length}` : tools.length === 1 ? `${tools[0]} ×${items.length}` : `${tools[0]} 等 ${items.length} 项`;
   const status = failures ? `${failures} 项失败` : items.every(item => item.complete) ? '全部已返回' : running ? '执行中' : '未收到结果';
   return <details className="tool-group"><summary><TerminalWindow size={13} /><span>{label}</span><span className="tool-status">{status}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{items.map(item => <ToolCall key={item.id} message={item} />)}</div></details>;
 }
