@@ -115,6 +115,9 @@ export async function startCloudflareNamedTunnel(options: TunnelOptions): Promis
   await writeFile(config, [
     `tunnel: ${JSON.stringify(name)}`,
     `credentials-file: ${JSON.stringify(credentialsFile)}`,
+    // Written here rather than passed as a flag: this is the form measured to connect on a
+    // network where cloudflared's default transport failed. `auto` omits it entirely.
+    ...(protocol === 'auto' ? [] : [`protocol: ${protocol}`]),
     'ingress:',
     `  - hostname: ${JSON.stringify(hostname)}`,
     `    service: http://127.0.0.1:${port}`,
@@ -125,7 +128,7 @@ export async function startCloudflareNamedTunnel(options: TunnelOptions): Promis
   log.on('error', () => {});
   const env: NodeJS.ProcessEnv = {};
   for (const key of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy']) if (process.env[key]) env[key] = process.env[key];
-  const args = ['tunnel', '--config', config, '--no-autoupdate', ...(protocol === 'auto' ? [] : ['--protocol', protocol]), 'run', name];
+  const args = ['tunnel', '--config', config, '--no-autoupdate', 'run', name];
   const child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stopping = false; let settled = false; let tail = ''; let registered = false;
   let resolveClosed!: () => void;

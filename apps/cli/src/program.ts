@@ -164,7 +164,15 @@ remote.command('status').option('--watch', 'follow connection status; Ctrl+C exi
     await new Promise(resolve => setTimeout(resolve, 500));
   } } finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); c.close(); }
 });
-remote.command('temporary').description('Start a temporary public address').option('--provider <provider>', 'localhost-run, cpolar or cloudflare; defaults to the saved provider').action(async (options: { provider?: string }) => { const provider = options.provider ? tunnelProviderSchema.parse(options.provider) : undefined; const c = await localClient(); const selected = provider ?? (await c.remoteStatus()).provider ?? 'cloudflare'; showRemote(await c.configureRemote({ mode: 'temporary', provider: selected, ...(selected === 'cpolar' && process.env.TURNWIRE_CPOLAR_AUTH_TOKEN ? { cpolarToken: process.env.TURNWIRE_CPOLAR_AUTH_TOKEN } : {}) })); });
+remote.command('temporary').description('Start a temporary public address').option('--provider <provider>', 'cloudflare, cloudflare-named, localhost-run or cpolar; defaults to the saved provider').option('--tunnel-name <name>', 'named tunnel: tunnel name or id already registered with Cloudflare').option('--tunnel-hostname <hostname>', 'named tunnel: public hostname routed to that tunnel').option('--tunnel-credentials <path>', 'named tunnel: provider credential file, readable on this host').option('--tunnel-protocol <protocol>', 'named tunnel: auto, http2 or quic', 'http2').action(async (options: { provider?: string; tunnelName?: string; tunnelHostname?: string; tunnelCredentials?: string; tunnelProtocol?: string }) => {
+  const provider = options.provider ? tunnelProviderSchema.parse(options.provider) : undefined;
+  const c = await localClient();
+  const selected = provider ?? (await c.remoteStatus()).provider ?? 'cloudflare';
+  // Every named-tunnel value belongs to the operator; nothing is created on their behalf.
+  if (selected === 'cloudflare-named' && !(options.tunnelName && options.tunnelHostname && options.tunnelCredentials)) throw new Error('命名隧道需要 --tunnel-name、--tunnel-hostname 和 --tunnel-credentials');
+  const namedTunnel = selected === 'cloudflare-named' ? { name: options.tunnelName!, hostname: options.tunnelHostname!, credentialsFile: options.tunnelCredentials!, protocol: (options.tunnelProtocol ?? 'http2') as 'auto' | 'http2' | 'quic' } : undefined;
+  showRemote(await c.configureRemote({ mode: 'temporary', provider: selected, ...(selected === 'cpolar' && process.env.TURNWIRE_CPOLAR_AUTH_TOKEN ? { cpolarToken: process.env.TURNWIRE_CPOLAR_AUTH_TOKEN } : {}), ...(namedTunnel ? { namedTunnel } : {}) }));
+});
 remote.command('relay <serverUrl>').description('Connect a self-hosted Relay; reads TURNWIRE_RELAY_TOKEN or retains the saved key for this URL').action(async (serverUrl: string) => showRemote(await (await localClient()).configureRemote({ mode: 'relay', serverUrl, ...(process.env.TURNWIRE_RELAY_TOKEN ? { token: process.env.TURNWIRE_RELAY_TOKEN } : {}) })));
 const direct = remote.command('direct').description('Configure the isolated TLS LAN bridge');
 direct.command('status').action(async () => print(await (await localClient()).directStatus()));
