@@ -28,6 +28,8 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   /** Host-plane push, the channel api-session/status and approval requests already use. */
   const publish = (name: string, args: unknown[]) => { for (const socket of events) item(socket, 'events', { type: 'emit', event: name, args }); };
   /** The Host asks through the waterfall channel, exactly as an approval request arrives. */
+  /** The Host withdrawing a pending waterfall request, as it does when a turn is aborted. */
+  const cancel = (eventId: string) => { for (const socket of events) item(socket, 'events', { type: 'cancel', eventId }); };
   const ask = (questions: unknown[]) => { for (const socket of events) item(socket, 'events', { type: 'waterfall', event: 'user-questions/request', agentId: 's', eventId: 'question-1', request: { questions } }); };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, 'http://localhost');
@@ -119,7 +121,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); server.closeAllConnections?.(); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, ask, sockets: () => events.size, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, ask, cancel, sockets: () => events.size, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -207,6 +209,17 @@ it('carries a question to the client watching the session and returns that answe
   // The whole batch goes back as the Host's own answer shape, under the client that was asked.
   expect(host.calls.at(-1)).toMatchObject({ path: '/api/$events/result', args: { clientId: 'generation', eventId: 'question-1', outcome: { kind: 'result', value: { answers: [{ id: 'q1', selected: ['SQLite'] }] } } } });
   await until(() => received.some(event => event.type === 'question.resolved'));
+  await expect(runtime.answerQuestion('s', 'question-1', [{ id: 'q1', selected: ['SQLite'] }])).rejects.toMatchObject({ code: 'QUESTION_EXPIRED' });
+});
+it('clears a pending question when the Host withdraws it', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); const received: RuntimeEvent[] = []; runtime.subscribe('s', event => received.push(event)); await until(() => host.sockets() === 1);
+  host.ask([{ id: 'q1', question: 'Which database?' }]);
+  await until(() => received.some(event => event.type === 'question.requested'));
+  host.cancel('question-1');
+  await until(() => received.some(event => event.type === 'question.resolved'));
+  expect(received.find(event => event.type === 'question.resolved')).toMatchObject({ type: 'question.resolved', requestId: 'question-1', decision: 'cancelled' });
+  // And the answer that arrives afterwards is refused rather than sent to a withdrawn request.
   await expect(runtime.answerQuestion('s', 'question-1', [{ id: 'q1', selected: ['SQLite'] }])).rejects.toMatchObject({ code: 'QUESTION_EXPIRED' });
 });
 it('leaves a question to the Host when nobody is watching the session', async () => {

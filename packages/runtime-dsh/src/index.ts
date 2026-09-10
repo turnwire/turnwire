@@ -364,7 +364,13 @@ export class DshRuntime implements AgentRuntime {
     this.cursors.set(id, event.seq); this.options.saveCursor?.(id, event.seq);
   }
   private async remoteEvent(frame: Record<string, unknown>) {
-    if (frame.type === 'cancel') { const id = String(frame.eventId); const pending = this.pending.get(id); if (pending) { if (pending.resolving) pending.cancelled = true; else { this.pending.delete(id); this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); } } }
+    if (frame.type === 'cancel') {
+      const id = String(frame.eventId); const pending = this.pending.get(id);
+      if (pending) { if (pending.resolving) pending.cancelled = true; else { this.pending.delete(id); this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); } }
+      // A question the Host has given up on — an aborted turn, for instance — leaves no panel behind.
+      const question = this.questions.get(id);
+      if (question) { this.questions.delete(id); this.emit(question.sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' }); }
+    }
     if (frame.type === 'emit') {
       const args = Array.isArray(frame.args) ? frame.args : [];
       if (frame.event === 'api-session/status' && typeof args[0] === 'string' && this.listeners.has(args[0])) this.emit(args[0], { type: 'status', status: args[1] === true ? 'running' : 'idle' });
