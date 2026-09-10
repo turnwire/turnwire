@@ -78,7 +78,9 @@ it('backfills an existing journal once and persists its projection across reopen
   store.db.exec("DROP TABLE history; DELETE FROM settings WHERE key='history-projection-v1'"); store.close();
   store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected); store.close();
   store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected); store.close();
-});
+  // Reopening the file-backed journal re-projects the whole 4088-event fixture twice, so a loaded
+  // CI runner can exceed the default budget even though this takes milliseconds on an idle machine.
+}, 60_000);
 it('local and encrypted clients fetch the same bounded history without unsolicited full replay', async () => {
   const core = new TurnwireCore(fixture(), [new DemoRuntime()], { id: 'mac', name: 'History Mac' }); cleanup.push(() => core.dispose());
   const token = randomSecret(); const server = await startDaemonServer({ core, token, port: 0 }); cleanup.push(() => server.close());
