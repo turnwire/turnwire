@@ -13,10 +13,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      # The model picker is the only client surface that needs a real browser. It skips itself
-      # when no Chrome is present, and needs no model credential because the catalog lists
-      # provider routes before any turn runs.
+      # The model picker is the only client surface that needs a real browser, and the catalog
+      # lists provider routes before any turn runs, so no model credential is required.
+      # TURNWIRE_REQUIRE_BROWSER keeps a runner-image change from silently skipping this check.
       - name: Model picker in the phone PWA
+        env:
+          TURNWIRE_REQUIRE_BROWSER: '1'
         run: |
           npm ci --prefix config/dsh-runtime
           bash scripts/ui-model-check.sh

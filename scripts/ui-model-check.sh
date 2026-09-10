@@ -6,8 +6,9 @@
 # required: the Host lists its routes before any turn runs.
 #
 # Skips itself when no Chrome or Chromium is installed, so it is safe in environments without
-# a browser. Pass --force to attempt the browser step anyway (useful when a browser lives
-# somewhere this script does not look).
+# a browser. Set TURNWIRE_REQUIRE_BROWSER=1 to fail instead of skipping, so a run cannot
+# silently lose this coverage when a runner image changes. Pass --force to attempt the browser
+# step anyway (useful when a browser lives somewhere this script does not look).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,9 +17,16 @@ found=""
 for candidate in /opt/google/chrome/chrome /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do
   if [ -x "$candidate" ]; then found="$candidate"; break; fi
 done
-if [ -z "$found" ] && [ "$force" != "--force" ]; then
-  echo "Skipping the model-picker browser check: no Chrome or Chromium found."
-  exit 0
+if [ -z "$found" ]; then
+  if [ "${TURNWIRE_REQUIRE_BROWSER:-}" = "1" ]; then
+    echo "No Chrome or Chromium found, and TURNWIRE_REQUIRE_BROWSER=1 requires one." >&2
+    echo "Install a browser, or unset TURNWIRE_REQUIRE_BROWSER to skip this check." >&2
+    exit 1
+  fi
+  if [ "$force" != "--force" ]; then
+    echo "Skipping the model-picker browser check: no Chrome or Chromium found."
+    exit 0
+  fi
 fi
 
 dsh_bin="${DSH_BIN:-config/dsh-runtime/node_modules/.bin/dsh}"
