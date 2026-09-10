@@ -22,16 +22,19 @@ const subagentEntrySchema = z.object({ kind: z.string(), id: z.string(), activit
  * the Host owns these projections, and a shape this adapter has not seen must cost one child its
  * detail rather than the whole listing.
  */
-const subagentDetailSchema = z.object({ sessionId: z.string(), projections: z.object({
+const subagentDetailSchema = z.object({ sessionId: z.string(), projections: z.object({ values: z.object({
   title: z.string().nullable().optional(),
   todos: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })).nullable().optional(),
-  subagent: z.object({ identity: z.object({ mode: z.string(), label: z.string().optional() }).optional() }).nullable().optional(),
+  // `session/list` reports a projection's client-facing value: the delegation label is flat here,
+  // while the projection *cache* stores it under `identity`. Reading the cache's shape, or reading
+  // these off `projections` instead of `projections.values`, silently finds nothing at all.
+  subagent: z.object({ mode: z.string(), label: z.string().optional() }).nullable().optional(),
   subagentTiming: z.object({ settledMs: z.number().optional(), active: z.object({ since: z.number() }).optional() }).optional(),
-}).optional() }).passthrough();
+}).optional() }).optional() }).passthrough();
 interface SubagentDetail { label?: string; title?: string; elapsedMs?: number; todos: SubagentView['todos'] }
 /** One prompt still waiting in a session's inbox, with the client id it arrived under. */
 const inboxMessageSchema = z.object({ id: z.string(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()), source: z.object({ rpcId: z.string().optional() }).passthrough().optional() }).passthrough();
-const sessionInboxSchema = z.object({ sessionId: z.string(), projections: z.object({ inbox: z.object({ 'next-turn': z.array(z.unknown()), 'next-step': z.array(z.unknown()) }).optional() }).optional() }).passthrough();
+const sessionInboxSchema = z.object({ sessionId: z.string(), projections: z.object({ values: z.object({ inbox: z.object({ 'next-turn': z.array(z.unknown()), 'next-step': z.array(z.unknown()) }).optional() }).optional() }).optional() }).passthrough();
 /** The Host's question item, as its own client UI receives it. */
 const questionItemSchema = z.object({ id: z.string(), question: z.string(), detail: z.string().optional(), header: z.string().optional(), options: z.array(z.object({ label: z.string(), description: z.string().optional() })).optional(), multiSelect: z.boolean().optional() }).passthrough();
 export interface DshOptions {
@@ -126,14 +129,15 @@ export class DshRuntime implements AgentRuntime {
       const parsed = subagentDetailSchema.safeParse(row);
       if (!parsed.success) continue;
       const item = parsed.data;
-      const timing = item.projections?.subagentTiming;
+      const values = item.projections?.values;
+      const timing = values?.subagentTiming;
       // A live child is timed from its own start; a settled one keeps the duration it ran for.
       const elapsedMs = timing === undefined ? undefined : Math.max(0, timing.active ? Date.now() - timing.active.since : timing.settledMs ?? 0);
       details.set(item.sessionId, {
-        ...(item.projections?.subagent?.identity?.label === undefined ? {} : { label: item.projections.subagent.identity.label }),
-        ...(item.projections?.title == null ? {} : { title: item.projections.title }),
+        ...(values?.subagent?.label === undefined ? {} : { label: values.subagent.label }),
+        ...(values?.title == null ? {} : { title: values.title }),
         ...(elapsedMs === undefined ? {} : { elapsedMs }),
-        todos: item.projections?.todos?.map(todo => ({ content: todo.content, status: todo.status })) ?? [],
+        todos: values?.todos?.map(todo => ({ content: todo.content, status: todo.status })) ?? [],
       });
     }
     return details;
@@ -174,7 +178,7 @@ export class DshRuntime implements AgentRuntime {
     for (const row of value.items) {
       const parsed = sessionInboxSchema.safeParse(row);
       if (!parsed.success || parsed.data.sessionId !== sessionId) continue;
-      const inbox = parsed.data.projections?.inbox;
+      const inbox = parsed.data.projections?.values?.inbox;
       if (inbox === undefined) return [];
       const read = (entries: unknown[], step: boolean) => entries.flatMap(entry => {
         const message = inboxMessageSchema.safeParse(entry);

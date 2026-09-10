@@ -189,10 +189,14 @@ export function App() {
     if (!session) return;
     const sessionId = session.id;
     void perform(async c => {
-      await c.request('session.message', { sessionId, text, ...(asSteer ? { steer: true } : {}) });
+      const accepted = await c.request<{ messageId?: string; queued?: boolean }>('session.message', { sessionId, text, ...(asSteer ? { steer: true } : {}) });
       setPrompt('');
-      // The prompt may have been accepted into the queue rather than run, so read the queue back
-      // instead of assuming which of the two happened.
+      // The daemon says whether this waits behind the turn. If it does, show it above the composer
+      // at once rather than letting the echo put it in the flow for a round trip and then move it.
+      if (accepted?.queued === true && accepted.messageId !== undefined) {
+        setQueue(current => current.some(item => item.messageId === accepted.messageId) ? current : [...current, { messageId: accepted.messageId!, target: 'next-turn', text }]);
+      }
+      // Then the runtime's own list is the authority, in case it disagrees.
       await refreshQueue(sessionId);
     });
   }

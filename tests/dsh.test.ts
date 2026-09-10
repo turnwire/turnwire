@@ -51,17 +51,19 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
       z.object({ _request: z.object({}).strict() }).strict().parse(args);
       // The Host projects each child's plan, label and timing onto the same listing every session
       // appears in, so a progress view needs no second read per child.
+      // `session/list` carries projections as `{ asOfSeq, values }`, and a value is the projection's
+      // client-facing shape — a fixture that nests these anywhere else would test nothing.
       const described = options.omitDetails ? [] : children.map(child => ({
         sessionId: child.id, running: child.activity === 'running',
-        projections: {
+        projections: { asOfSeq: seq, values: {
           ...(child.title === undefined ? {} : { title: child.title }),
           ...(child.todos === undefined ? {} : { todos: child.todos }),
-          // The Host nests the mode and label under `identity`, exactly as its projection cache holds them.
-          subagent: { identity: { mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }) }, seq: 1 },
+          subagent: { mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }), seq: 1 },
           subagentTiming: child.activity === 'running' ? { descriptorSeen: true, settledMs: 0, active: { since: Date.now() - (child.elapsedMs ?? 0), through: seq } } : { descriptorSeen: true, settledMs: child.settledMs ?? 0 },
-        },
+        } },
       }));
-      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running, projections: { inbox: { 'next-turn': queued.filter(entry => entry.step !== true).map(entry => ({ id: entry.itemId, role: 'user', content: [{ type: 'text', text: entry.text }], source: { kind: 'user', ...(entry.rpcId === undefined ? {} : { rpcId: entry.rpcId }) } })), 'next-step': queued.filter(entry => entry.step === true).map(entry => ({ id: entry.itemId, role: 'user', content: [{ type: 'text', text: entry.text }], source: { kind: 'user', rpcId: entry.rpcId } })) } } }, ...described, ...(options.oddDetail ? [{ sessionId: 'odd', running: false, projections: { todos: 'a projection shape this adapter has never seen' } }] : [])] };
+      const inbox = { 'next-turn': queued.filter(entry => entry.step !== true).map(entry => ({ id: entry.itemId, role: 'user', content: [{ type: 'text', text: entry.text }], source: { kind: 'user', ...(entry.rpcId === undefined ? {} : { rpcId: entry.rpcId }) } })), 'next-step': queued.filter(entry => entry.step === true).map(entry => ({ id: entry.itemId, role: 'user', content: [{ type: 'text', text: entry.text }], source: { kind: 'user', rpcId: entry.rpcId } })) };
+      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running, projections: { asOfSeq: seq, values: { inbox } } }, ...described, ...(options.oddDetail ? [{ sessionId: 'odd', running: false, projections: { asOfSeq: 0, values: { todos: 'a projection shape this adapter has never seen' } } }] : [])] };
     }
     else if (url.pathname === '/api/session/prompt') {
       const input = z.object({ request: z.object({ requestId: z.string(), sessionId: z.literal('s'), mode: z.enum(['queue', 'steer']), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict() }).strict().parse(args);

@@ -39,10 +39,23 @@ try {
   await expect(page.locator('.queued-strip')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill(queuedText);
+  // Watch every insertion while it is sent: a queued prompt must never appear in the flow at all,
+  // not even for the round trip it takes to learn where it belongs.
+  await page.evaluate(text => {
+    window.__leaked = false;
+    const observer = new MutationObserver(() => { for (const node of document.querySelectorAll('.message.user')) if (node.textContent.includes(text)) window.__leaked = true; });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }, queuedText);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const queuedRow = page.locator('.queued-item');
   await expect(queuedRow).toHaveCount(1);
+  expect(await page.evaluate(() => window.__leaked), 'the queued prompt appeared in the transcript').toBe(false);
+  await expect(queuedRow).toHaveCount(1);
   await expect(queuedRow.getByRole('button')).toHaveText(['Edit', 'Cancel', 'Jump the queue']);
+  // A queued prompt waits above the composer; the flow behind it must not also show it, or the
+  // reader sees it twice and reads it as already sent.
+  await expect(page.locator('.message.user').filter({ hasText: '需要批准这条日志' })).toHaveCount(0);
+  await expect(page.locator('.queued-text')).toHaveCount(1);
   // Too long means one ellipsised line, with the whole prompt still available to the pointer.
   const text = queuedRow.locator('.queued-text');
   await expect(text).toHaveCSS('text-overflow', 'ellipsis');

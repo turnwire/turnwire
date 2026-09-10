@@ -143,7 +143,10 @@ export class TurnwireCore {
           if (running) this.promptModes.set(request.id, mode);
           await this.runtime(session.runtimeId).sendMessage(session.runtimeSessionId, { id: request.id, text: p.text, ...(p.steer ? { steer: true } : {}) });
           this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(running ? (mode === 'steer' ? { steer: true } : { queued: true }) : {}) }, `${session.id}:user:${request.id}`);
-          return { accepted: true, messageId: request.id };
+          // The client is told which of the two happened, so it can put the prompt where it belongs
+          // before the event stream catches up: a queued prompt belongs above the composer, not in
+          // the flow, and waiting for a queue read to move it leaves it visible in the wrong place.
+          return { accepted: true, messageId: request.id, ...(running && mode === 'queue' ? { queued: true } : {}) };
         });
       }
       case 'session.cancel': {
