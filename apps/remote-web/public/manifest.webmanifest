@@ -1,0 +1,1 @@
+{"name":"Turnwire Remote","short_name":"Turnwire","description":"接续 Mac 上的 Agent 会话","start_url":"/","scope":"/","display":"standalone","background_color":"#f5f6f8","theme_color":"#f5f6f8","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}

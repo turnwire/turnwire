@@ -1,0 +1,42 @@
+{
+  "name": "turnwire-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "overrides": {
+    "vite": "6.4.3"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs && npm run build -w @turnwire/remote-web",
+    "build:packages": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build",
+    "dev": "tsx apps/daemon/src/main.ts",
+    "dev:dsh": "npx --yes @deepseek-ai/dsh@0.1.5-alpha.1 web --patch config/dsh-deepseek.patch.yml --no-open",
+    "dev:web": "npm run dev -w @turnwire/remote-web",
+    "dev:relay": "tsx apps/relay/src/main.ts",
+    "turnwire": "tsx apps/cli/src/main.ts",
+    "deploy:relay": "tsx apps/cli/src/main.ts deploy"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.19.0",
+    "@types/qrcode": "1.5.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "turnwire-dsh-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.5-alpha.1"
+  }
+}

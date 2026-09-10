@@ -1,0 +1,28 @@
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: relay
+    environment:
+      TURNWIRE_RELAY_TOKEN: ${TURNWIRE_RELAY_TOKEN:?Set a random Relay secret}
+    restart: unless-stopped
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: web
+    environment:
+      TURNWIRE_DOMAIN: ${TURNWIRE_DOMAIN:?Set the public domain}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - relay
+    restart: unless-stopped
+volumes:
+  caddy_data:
+  caddy_config:

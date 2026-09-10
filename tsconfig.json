@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@turnwire/protocol": ["packages/protocol/src/index.ts"],
+      "@turnwire/runtime": ["packages/runtime/src/index.ts"],
+      "@turnwire/core": ["packages/core/src/index.ts"],
+      "@turnwire/runtime-dsh": ["packages/runtime-dsh/src/index.ts"],
+      "@turnwire/sdk": ["packages/sdk/src/index.ts"]
+    }
+  },
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+  "exclude": ["**/dist", "node_modules"]
+}

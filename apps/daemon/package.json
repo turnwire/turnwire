@@ -1,0 +1,17 @@
+{
+  "name": "@turnwire/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@turnwire/core": "*",
+    "@turnwire/protocol": "*",
+    "@turnwire/runtime": "*",
+    "@turnwire/runtime-dsh": "*",
+    "@turnwire/sdk": "*",
+    "ws": "^8.18.0"
+  },
+  "bin": {
+    "turnwire-host": "./dist/main.js"
+  }
+}

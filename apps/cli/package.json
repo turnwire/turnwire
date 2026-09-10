@@ -1,0 +1,15 @@
+{
+  "name": "@turnwire/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@turnwire/protocol": "*",
+    "@turnwire/sdk": "*",
+    "commander": "^13.1.0",
+    "qrcode": "1.5.4"
+  },
+  "bin": {
+    "turnwire": "./dist/main.js"
+  }
+}

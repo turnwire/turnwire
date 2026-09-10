@@ -1,0 +1,6 @@
+{
+  "host": "server.example.com",
+  "sshUser": "your-login-user",
+  "publicAddress": "relay.example.com",
+  "connectAfterDeploy": true
+}
