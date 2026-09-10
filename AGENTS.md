@@ -6,5 +6,6 @@
 - TypeScript clients use `packages/sdk`. CLI and TUI reuse `apps/cli/src/program.ts`; do not add a second command dispatcher or bypass the SDK. Native Swift uses the same wire contract, verified against a live isolated daemon.
 - Keep administration local-only across every client. Capability parity does not grant paired remote devices additional host-management permissions.
 - For behavior changes, verify cross-client effects on the same isolated session/state. Update `docs/CLIENTS.md` when capabilities change. Report actual test coverage and unverified network conditions precisely.
+- `tests/docs.test.ts` asserts the mechanical claims in the docs: script names, repository paths, CLI commands (documented ones must exist, existing ones must be documented), the pinned DSH version and revision, the credential variable name, and documentation anchors. Fix the docs there instead of letting them drift.
 - DSH reads `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`. Do not copy model credentials into clients, Relay, tunnel processes, logs or source files.
 - Models are runtime-owned. Never add, hardcode, alias or invent a model id in any Turnwire layer — protocol, core, daemon, provider adapters or clients. Every client shows exactly what the runtime's model catalog returns, so a model the runtime does not register must stay unselectable.

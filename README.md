@@ -83,12 +83,17 @@ DSH 独立运行并保留自己的数据目录、模型配置和凭据。Turnwir
 | `turnwire history SESSION_ID` | 查看消息和完整工具输入、输出 |
 | `turnwire export SESSION_ID --output 会话.md` | 导出 Markdown 记录 |
 | `turnwire new [prompt] --cwd /absolute/path --title 标题` | 创建会话，默认 DSH |
+| `turnwire models` | 列出当前 runtime 注册的模型、默认模型与可选思考强度 |
+| `turnwire model SESSION_ID provider/model [--effort EFFORT]` | 选择会话运行的模型与思考强度；只接受 runtime 目录里的模型 |
 | `turnwire attach SESSION_ID` | 读取历史并跟随实时输出；TTY 下可继续输入 |
 | `turnwire send SESSION_ID '消息'` | 发送后续消息 |
 | `turnwire resume SESSION_ID` | 恢复中断的会话 |
 | `turnwire stop SESSION_ID` | 取消当前 Agent turn |
 | `turnwire approvals` | 列出待审批操作 |
 | `turnwire approve APPROVAL_ID` / `turnwire reject APPROVAL_ID` | 一次性审批 |
+| `turnwire inbox` / `turnwire inbox --all` | 待审批收件箱；`--all` 含已处理和已过期记录 |
+| `turnwire result REQUEST_ID` | 查询结果不确定的请求最终是否已提交 |
+| `turnwire notifications status` / `on` / `off` | 查看或切换主机的 Web Push 投递 |
 | `turnwire devices pair --name 我的手机` | 生成远程设备配对码 |
 | `turnwire devices list` / `turnwire devices revoke DEVICE_ID` | 查看或撤销设备 |
 | `turnwire connect` | 查看本机连接信息 |
@@ -126,6 +131,7 @@ open dist/Turnwire.app
 | 方式 | 使用流程 |
 | --- | --- |
 | 临时隧道 | 选择 localhost.run、cpolar 或 Cloudflare，再点击「开启临时访问」；无需自己的服务器，cpolar 首次需要账号的 Auth Token |
+| Cloudflare 命名隧道 | 用自己账号下**已存在**的隧道与固定域名，地址不随重启变化；需要隧道名、公开域名和隧道凭据文件 |
 | 自托管 Relay | 填写服务器的 HTTPS 地址和 Relay 连接密钥，点击「保存并连接」；服务器部署见下方文档 |
 
 通道就绪后填写设备名称并生成配对二维码。手机顶部显示「已连接到 Mac」、延迟和最近确认时间才表示完成实际连接检测；Mac 的设备列表也会显示已连接、离线或等待连接。手机在前台每 15 秒检测，超时退出已连接状态并自动重连。可以随时关闭远程访问；切换和关闭只影响远程连接，本地 Agent 会话保持运行。切换到新地址后需要重新生成配对链接。临时模式会在 daemon 下次启动时重新创建地址，自托管配置会恢复连接。
@@ -136,6 +142,10 @@ CLI 也支持同样的选择：
 npm run turnwire -- remote temporary --provider localhost-run
 # cpolar 首次可用 turnwire remote 菜单隐藏输入 Token，或通过 TURNWIRE_CPOLAR_AUTH_TOKEN 传入。
 npm run turnwire -- remote temporary --provider cpolar
+# 命名隧道：用自己 Cloudflare 账号里已存在的隧道与固定域名，重启不换地址。
+npm run turnwire -- remote temporary --provider cloudflare-named \
+  --tunnel-name turnwire --tunnel-hostname turnwire.example.com \
+  --tunnel-credentials ~/.cloudflared/TUNNEL_ID.json
 npm run turnwire -- remote status
 # TURNWIRE_RELAY_TOKEN 通过调用 CLI 的终端环境传入；同一地址已保存密钥时可省略。
 npm run turnwire -- remote relay https://turnwire.example.com
@@ -160,7 +170,7 @@ npm run dev
 
 公网使用 HTTPS/WSS，参见 [部署文档](docs/DEPLOYMENT.md)。配置后，在 Mac 原生客户端「远程控制」生成配对码，或使用 `turnwire devices pair`。手机打开已部署的 PWA，粘贴配对码。Safari 中可「添加到主屏幕」。配对链接把密钥放在 URL fragment 中，网页接收后立即移除 fragment。默认为本次浏览会话保存连接；只有选中「记住这台受信任设备」才持久保存。
 
-要先用手机蜂窝网络体验，可按部署文档的「临时跨网络体验」选择隧道服务并启动临时访问。扫码或打开配对链接后会自动连接，刷新保留本次浏览会话的配对。手机与原生客户端共享会话、消息、进度和审批；Mac 需要保持唤醒、联网。
+要先用手机蜂窝网络体验，可按部署文档的「临时跨网络体验」选择隧道服务并启动临时访问。扫码或打开配对链接后会自动连接，刷新保留本次浏览会话的配对。手机与原生客户端共享会话、消息、进度和审批；Mac 需要保持唤醒、联网。手机也能切换该会话的模型与思考强度：输入框上方的小 chip 展开后只列出 runtime 注册的模型，改动落在主机上，刷新不丢。
 
 ## 工程结构
 
@@ -187,6 +197,6 @@ TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev
 TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs
 ```
 
-测试覆盖请求去重、审批竞态、数据库恢复、事件补发、本机鉴权、DNS rebinding 防护、Relay 撤销、密文完整性、跨设备隔离、重放拒绝、DSH 合约和 UI 主要流程。DSH 合约夹具用于校验具体协议，不能替代实际模型与工程的端到端验证。
+测试覆盖请求去重、审批竞态、数据库恢复、事件补发、本机鉴权、DNS rebinding 防护、Relay 撤销、密文完整性、跨设备隔离、重放拒绝、模型目录与选择校验（未注册的模型会被拒绝）、DSH 合约和 UI 主要流程。文档里的脚本名、仓库路径、CLI 命令、DSH 版本与凭据变量名由 `tests/docs.test.ts` 机械核对，说明过时会直接让 CI 失败。DSH 合约夹具用于校验具体协议，不能替代实际模型与工程的端到端验证。
 
 当前交付包含一次性配对、经设备凭据认证的每连接 ECDH 会话加密、分阶段连接恢复、持久审批收件箱、Web Push 和可配置的 TLS 局域网入口。已有旧配对可以继续使用并从主机显式升级。Relay 的连接路由仍在内存中，推送密钥与投递队列持久化。尚不包含 Codex/Claude adapter、团队账户、原生 iOS、自动更新或发行签名。参见 [协议与状态边界](docs/PROTOCOL.md)。
