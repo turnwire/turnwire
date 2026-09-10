@@ -4,7 +4,7 @@ import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, TurnwireClient } from '@turnwire/sdk';
-import type { TurnwireEvent, Session, SessionStatus, Snapshot } from '@turnwire/protocol';
+import type { TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 
 type Connection = { kind: 'local'; url: string; token: string } | { kind: 'remote'; code: string };
@@ -43,6 +43,21 @@ export function App() {
   const messages = useMemo(() => selected ? conversation(events, selected) : [], [events, selected]);
   const approvals = snapshot?.approvals.filter(a => a.sessionId === selected) ?? [];
   const runtime = snapshot?.runtimes.find(r => r.id === session?.runtimeId);
+  // Model choice belongs to the runtime that owns the session, so the catalog is fetched per
+  // runtime and only from a runtime that advertises the capability.
+  const [catalog, setCatalog] = useState<{ runtimeId: string; value: ModelCatalog }>();
+  const modelSupport = runtime?.capabilities.modelSelection === true;
+  const effortOptions = catalog?.value.groups.find(group => group.id === session?.model?.provider)?.models.find(model => model.id === session?.model?.model)?.reasoning?.efforts ?? [];
+  useEffect(() => {
+    if (!runtime?.capabilities.modelSelection || catalog?.runtimeId === runtime.id) return;
+    let active = true;
+    void clientRef.current?.request<ModelCatalog>('model.catalog', { runtimeId: runtime.id })
+      .then(value => { if (active) setCatalog({ runtimeId: runtime.id, value }); })
+      .catch(() => { /* A runtime whose providers are unreachable simply offers no choices. */ });
+    return () => { active = false; };
+  }, [runtime, catalog]);
+  /** The daemon records the resolved selection, so the request omits what the runtime may fill in. */
+  function chooseModel(provider: string, model: string, reasoningEffort?: string) { void perform(async c => { await c.request('session.setModel', { sessionId: session!.id, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) }); }); }
   useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key.toLowerCase() === 'n' && (event.metaKey || event.ctrlKey) && snapshot) { event.preventDefault(); setCreate(true); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [snapshot]);
 
   useEffect(() => {
@@ -138,7 +153,7 @@ export function App() {
         : showInbox && clientRef.current ? <Inbox client={clientRef.current} cursor={snapshot?.cursor ?? 0} connected={connected} remember={rememberDevice} onOpen={id => { setSelected(id); setShowInbox(false); }} />
         : !session ? <div className="empty-workspace"><div className="empty-symbol"><TerminalWindow size={38} weight="light" /></div><span className="eyebrow">一个会话，随处接续</span><h1>工作从这里开始。</h1><p>在主机上运行 Agent，<br />在这里查看进度、补充想法和处理审批。</p><button className="primary" onClick={() => setCreate(true)} disabled={!snapshot}><Plus size={17} />新建会话</button></div>
         : <>
-          <section className="conversation" aria-label="会话内容" ref={scroller} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && ' · 不执行真实代码'}</p></div>
+          <section className="conversation" aria-label="会话内容" ref={scroller} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && ' · 不执行真实代码'}</p>{modelSupport && <div className="model-picker">{catalog?.runtimeId === runtime?.id ? <><label>模型<select aria-label="模型" value={session.model ? `${session.model.provider}/${session.model.model}` : ''} disabled={!connected || busy || session.archived} onChange={event => { const [provider, model] = event.target.value.split('/'); if (provider && model) chooseModel(provider, model, session.model?.reasoningEffort); }}>{!session.model && <option value="">运行时默认（{catalog.value.default.provider}/{catalog.value.default.model}）</option>}{catalog.value.groups.map(group => <optgroup key={group.id} label={group.name}>{group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}{catalog.value.routableProviders.includes(group.id) ? '' : ' · 当前不可用'}</option>)}</optgroup>)}</select></label>{session.model && effortOptions.length > 0 && <label>思考强度<select aria-label="思考强度" value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">运行时默认</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? '（默认）' : ''}</option>)}</select></label>}</> : <span className="model-loading">正在读取模型目录…</span>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => `${failure.name} 不可用`).join('、')}</span>}</div>}</div>
             {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? '正在读取更早记录…' : historyError ? '重试加载记录' : '加载更早记录'}</button>}
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />正在读取会话…</div>}
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>这个会话准备好了。<br />告诉 Agent 你想完成什么。</p></div>}
