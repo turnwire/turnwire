@@ -13,3 +13,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      # The model picker is the only client surface that needs a real browser. It skips itself
+      # when no Chrome is present, and needs no model credential because the catalog lists
+      # provider routes before any turn runs.
+      - name: Model picker in the phone PWA
+        run: |
+          npm ci --prefix config/dsh-runtime
+          bash scripts/ui-model-check.sh
