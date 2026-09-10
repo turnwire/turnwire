@@ -29,11 +29,12 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
   await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false })).toBeVisible();
-  // The queue row names the draft that jumping the queue would send, and explains nothing: the
-  // button is the instruction. An empty draft leaves the row empty rather than filling it with prose.
-  await expect(page.locator('.queue-area')).toBeVisible();
+  // While the turn runs with nothing queued and nothing typed, the queue area is absent: there is
+  // no message to jump the queue with, so a button sitting there disabled would be furniture.
+  await expect(page.locator('.queue-area')).toHaveCount(0);
   await expect(page.locator('.queue-hint')).toHaveCount(0);
-  await expect(page.locator('.queue-draft')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(0);
+  // Typing is what makes it appear, and it names the draft it would send rather than explaining itself.
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('把日志一起看下');
   await expect(page.locator('.queue-draft')).toHaveText('把日志一起看下');
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toBeEnabled();
