@@ -199,6 +199,20 @@ describe('durable daemon ownership', () => {
     // Answering twice is refused rather than silently re-sent.
     await expect(call(core, 'again', 'question.answer', { questionId: pending[0]!.id, answers: [] })).resolves.toMatchObject({ ok: false, error: { code: 'QUESTION_EXPIRED' } });
   });
+  it('repairs a session left running by a daemon that died in the middle of a turn', async () => {
+    const { store } = setup(); const runtime = new DemoRuntime();
+    const first = new TurnwireCore(store, [runtime], { id: 'mac', name: 'Test Mac' }); cleanup.push(() => first.dispose());
+    const s = value<Session>(await call(first, 'create', 'session.create', { title: 'Test', cwd: process.cwd(), runtimeId: 'demo' }));
+    // The daemon wrote `running` and then died with nothing behind it. A host that only reloads when
+    // nothing is running would never reload again, so the read that reports the state repairs it.
+    store.db.prepare('UPDATE sessions SET body = ? WHERE id = ?').run(JSON.stringify({ ...s, status: 'running', updatedAt: new Date(Date.now() - 60_000).toISOString() }), s.id);
+    const restarted = new TurnwireCore(store, [new DemoRuntime()], { id: 'mac', name: 'Test Mac' }); cleanup.push(() => restarted.dispose());
+    expect(value<{ sessions: Session[] }>(await call(restarted, 'snap', 'system.snapshot')).sessions.find(entry => entry.id === s.id)?.status).toBe('interrupted');
+    // A turn that started a moment ago is never mistaken for a left-over one, even by another core.
+    store.db.prepare('UPDATE sessions SET body = ? WHERE id = ?').run(JSON.stringify({ ...s, status: 'running', updatedAt: new Date().toISOString() }), s.id);
+    const other = new TurnwireCore(store, [new DemoRuntime()], { id: 'mac', name: 'Test Mac' }); cleanup.push(() => other.dispose());
+    expect(value<{ sessions: Session[] }>(await call(other, 'snap2', 'system.snapshot')).sessions.find(entry => entry.id === s.id)?.status).toBe('running');
+  });
   it('does not replay a command whose result was interrupted by a crash', async () => {
     const { core, store } = setup(); const params = { cwd: process.cwd(), runtimeId: 'demo' };
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: 'session.create', params })).digest('hex');

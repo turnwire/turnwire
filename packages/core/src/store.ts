@@ -7,6 +7,7 @@ import type { Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session 
 
 export class Store {
   readonly db: DatabaseSync;
+  private closed = false;
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
@@ -98,5 +99,6 @@ export class Store {
   addDevice(pairing: Pairing) { this.db.prepare('INSERT INTO devices VALUES(?,?)').run(pairing.clientId, JSON.stringify(pairing)); }
   updateDevice(pairing: Pairing) { this.db.prepare('UPDATE devices SET body=? WHERE id=?').run(JSON.stringify(pairing), pairing.clientId); }
   removeDevice(id: string) { this.db.prepare('DELETE FROM devices WHERE id=?').run(id); }
-  close() { this.db.close(); }
+  /** Closing twice is a no-op: every owner of a store may dispose it on its way out. */
+  close() { if (this.closed) return; this.closed = true; this.db.close(); }
 }

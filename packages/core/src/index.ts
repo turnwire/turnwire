@@ -47,6 +47,8 @@ export class TurnwireCore {
     }
   }
   async snapshot(): Promise<Snapshot> {
+    // A read that is about to report whether anything is running repairs a status left behind first.
+    await this.reconcileStatuses();
     const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? { busy: await runtime.busy().catch(() => 0) } : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
     // The delegated flag is host state, not a stored field, so the snapshot is where a client sees it.
@@ -319,6 +321,29 @@ export class TurnwireCore {
     // One level of a huge tree is still unbounded (a flat `node_modules`), so the client is told how
     // many folders exist even when it only receives the first page.
     return { path, home, ...(parent === path ? {} : { parent }), total: folders.length, entries: folders.slice(0, 1000) };
+  }
+  private reconciledAt = 0;
+  /**
+   * A daemon that dies in the middle of a turn leaves that session marked `running` with nothing running
+   * behind it — and a host that only reloads when nothing runs would then never reload again, which is
+   * exactly how a stale status can stall an update for hours. The runtime's own view is the authority, so
+   * this repairs the status before it is reported. It is throttled, and it only touches a session that has
+   * looked busy for a while: a turn that started a moment ago must not be mistaken for a left-over one.
+   */
+  private async reconcileStatuses() {
+    const now = Date.now();
+    const stale = this.store.sessions().filter(session => (session.status === 'running' || session.status === 'waiting_approval') && now - Date.parse(session.updatedAt) > 30_000);
+    if (!stale.length || now - this.reconciledAt < 15_000) return;
+    this.reconciledAt = now;
+    for (const [id, runtime] of this.runtimes) {
+      const claimed = stale.filter(session => session.runtimeId === id);
+      if (!claimed.length || !runtime.listSessions) continue;
+      // A runtime that cannot be asked leaves the status alone: guessing is worse than waiting.
+      const rows = await runtime.listSessions().catch(() => undefined);
+      if (!rows) continue;
+      const running = new Set(rows.filter(row => row.status === 'running').map(row => row.id));
+      for (const session of claimed) if (!running.has(session.runtimeSessionId)) this.update(session.id, { status: 'interrupted' });
+    }
   }
   private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', 'Session not found'); return session; }
   /**
