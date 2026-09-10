@@ -95,6 +95,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 | [用 Turnwire 开发 Turnwire](docs/SELF-HOSTING.md) | 开发主机自动更新与安全点 |
 | [DSH 接口说明](docs/DSH.md) / [协议与状态边界](docs/PROTOCOL.md) | 运行时契约与 RPC 边界 |
 | [验证记录](docs/VALIDATION.md) | 已验证与未验证的条件，逐条列出 |
+| [参与贡献](CONTRIBUTING.md) / [安全策略](SECURITY.md) | 开发约束、验证要求与漏洞报告渠道 |
 
 ## 现状与边界
 
