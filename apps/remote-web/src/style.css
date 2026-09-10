@@ -63,11 +63,15 @@
 /* A prompt sent during a turn waits behind it: it is listed above the composer while it waits,
    and keeps this chip once it reads as history. */
 .queued-chip { margin-left: 8px; padding: 2px 6px; border-radius: 999px; background: #fdf3e2; color: #9a6a1f; font-size: 9.5px; }
+.queue-area { margin: 0 0 8px; }
 .queued-strip { display: grid; gap: 5px; margin: 0 2px 8px; padding: 9px 11px; border: 1px dashed #e5cf9f; border-radius: 10px; background: #fffaf0; }
 .queued-item { display: flex; gap: 8px; align-items: baseline; font-size: 11px; color: #7c6a45; }
 .queued-label { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: #f6e6c4; color: #8a6a1f; font-size: 9.5px; }
 .queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.steer-button { border: 0; border-radius: 8px; padding: 7px 10px; background: #fdf3e2; color: #9a6a1f; font-size: 11px; }
+/* The action row is deliberately outside the dashed box: it is about the draft, not about what waits. */
+.queue-actions { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin: 0 2px; }
+.queue-hint { font-size: 10px; line-height: 1.5; color: #95a1b1; }
+.steer-button { flex-shrink: 0; border: 0; border-radius: 8px; padding: 7px 10px; background: #fdf3e2; color: #9a6a1f; font-size: 11px; }
 .steer-button:disabled { opacity: .5; }
 /* Collapsed by default: the composer keeps its height, and the chip carries the runtime name. */
 .model-chip { display: flex; align-items: center; max-width: 44vw; border: 0; border-radius: 8px; padding: 7px 9px; background: #f2f4f8; color: #66768c; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

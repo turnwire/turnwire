@@ -121,6 +121,7 @@ const en = {
   // Queued prompts.
   'queue.aria': 'Queued messages',
   'queue.label': 'Queued',
+  'queue.runningHint': 'The agent is working. Jump the queue to send this into the running turn; Enter waits behind it.',
 
   // Composer.
   'composer.messageAria': 'Message',
@@ -352,6 +353,7 @@ const zh: Catalog = {
 
   'queue.aria': '排队中的消息',
   'queue.label': '排队',
+  'queue.runningHint': 'Agent 正在运行。插队会把这条送进当前回合；直接回车则排在它后面。',
 
   'composer.messageAria': '消息',
   'composer.placeholder': '描述任务，或补充下一步想法…',
