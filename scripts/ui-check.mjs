@@ -29,6 +29,14 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
   await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false })).toBeVisible();
+  // The queue row names the draft that jumping the queue would send, and explains nothing: the
+  // button is the instruction. An empty draft leaves the row empty rather than filling it with prose.
+  await expect(page.locator('.queue-area')).toBeVisible();
+  await expect(page.locator('.queue-hint')).toHaveCount(0);
+  await expect(page.locator('.queue-draft')).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('把日志一起看下');
+  await expect(page.locator('.queue-draft')).toHaveText('把日志一起看下');
+  await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toBeEnabled();
   await page.screenshot({ path: join(output, 'desktop-session.png'), fullPage: true, animations: 'disabled' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);

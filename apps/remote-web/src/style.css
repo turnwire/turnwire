@@ -69,8 +69,9 @@
 .queued-label { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: #f6e6c4; color: #8a6a1f; font-size: 9.5px; }
 .queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The action row is deliberately outside the dashed box: it is about the draft, not about what waits. */
-.queue-actions { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin: 0 2px; }
-.queue-hint { font-size: 10px; line-height: 1.5; color: #95a1b1; }
+.queue-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; margin: 0 2px; }
+/* The draft itself, not an explanation of the button: the reader can see what would jump the queue. */
+.queue-draft { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #95a1b1; }
 .steer-button { flex-shrink: 0; border: 0; border-radius: 8px; padding: 7px 10px; background: #fdf3e2; color: #9a6a1f; font-size: 11px; }
 /* Background agents sit above the queue: a delegation returns at once, so a running child has no
    other surface until it reports back. */

@@ -121,7 +121,6 @@ const en = {
   // Queued prompts.
   'queue.aria': 'Queued messages',
   'queue.label': 'Queued',
-  'queue.runningHint': 'The agent is working. Jump the queue to send this into the running turn; Enter waits behind it.',
 
   // Background agents: a delegation returns at once, so this is where a child's progress shows.
   'agents.aria': 'Background agents',
@@ -362,7 +361,6 @@ const zh: Catalog = {
 
   'queue.aria': '排队中的消息',
   'queue.label': '排队',
-  'queue.runningHint': 'Agent 正在运行。插队会把这条送进当前回合；直接回车则排在它后面。',
 
   'agents.aria': '后台子代理',
   'agents.running': '{count} 个子代理正在运行',
