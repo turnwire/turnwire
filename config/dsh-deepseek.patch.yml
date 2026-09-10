@@ -22,6 +22,8 @@
         api: openai-completions
         apiKeyEnv: TURNWIRE_HARNESS_CODEX_BRIDGE_KEY
         models:
+          # The endpoint's own /v1/models is the authority for these ids; the Codex cache on this
+          # machine lists a few more that the bridge does not serve.
           - id: gpt-5.6-sol
             name: GPT-5.6 Sol
           - id: gpt-5.6-terra
@@ -34,9 +36,3 @@
             name: GPT-5.4
           - id: gpt-5.4-mini
             name: GPT-5.4 mini
-          - id: gpt-5.3-codex-spark
-            name: GPT-5.3 Codex Spark
-          - id: gpt-reserve
-            name: GPT Reserve
-          - id: codex-auto-review
-            name: Codex Auto Review
