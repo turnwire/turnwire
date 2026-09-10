@@ -64,7 +64,18 @@ export async function remoteMenu(client: LocalClient, io: TerminalIO = terminalI
           const answer = await io.ask('选择临时通道（留空返回）> '); if (!answer?.trim()) break;
           const provider = providers[Number(answer) - 1]; if (!provider) throw new Error('通道序号无效');
           let token: string | undefined; if (provider.requiresToken) { token = await io.ask(status.hasCpolarToken ? 'cpolar Auth Token（已保存，可留空）> ' : 'cpolar Auth Token > ', true); if (token === undefined) break; }
-          await client.configureRemote({ mode: 'temporary', provider: provider.id, ...(token?.trim() ? { cpolarToken: token.trim() } : {}) }); break;
+          // A named tunnel already exists under the operator's account, so only its reference is collected.
+          let namedTunnel: { name: string; hostname: string; credentialsFile: string; protocol: 'auto' | 'http2' | 'quic' } | undefined;
+          if (provider.id === 'cloudflare-named') {
+            const name = await io.ask('隧道名称或 ID > '); if (name === undefined) break;
+            const hostname = await io.ask('公开域名 > '); if (hostname === undefined) break;
+            const credentialsFile = await io.ask('凭证文件路径（本机可读）> '); if (credentialsFile === undefined) break;
+            const transport = (await io.ask('传输协议 auto/http2/quic [http2] > '))?.trim() || 'http2';
+            if (!name.trim() || !hostname.trim() || !credentialsFile.trim()) { io.write('命名隧道需要隧道名称、公开域名和凭证文件'); break; }
+            if (!['auto', 'http2', 'quic'].includes(transport)) { io.write('传输协议只能是 auto、http2 或 quic'); break; }
+            namedTunnel = { name: name.trim(), hostname: hostname.trim(), credentialsFile: credentialsFile.trim(), protocol: transport as 'auto' | 'http2' | 'quic' };
+          }
+          await client.configureRemote({ mode: 'temporary', provider: provider.id, ...(token?.trim() ? { cpolarToken: token.trim() } : {}), ...(namedTunnel ? { namedTunnel } : {}) }); break;
         }
         case '2': {
           const serverUrl = await io.ask(`服务器地址${status.relayServerUrl ? '（留空使用 ' + safe(status.relayServerUrl) + '）' : ''} > `);
