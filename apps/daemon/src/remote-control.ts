@@ -9,12 +9,12 @@ import type { TurnwireCore } from '@turnwire/core';
 import { validateEndpoint } from '@turnwire/sdk';
 import { startRelay } from '../../relay/src/server.js';
 import { RemoteBridge } from './remote.js';
-import type { TunnelHandle, TunnelOptions } from './tunnel.js';
+import type { TunnelHandle, TunnelOptions, NamedTunnelOptions } from './tunnel.js';
 import { DevicePresence } from './presence.js';
 
 export type { RemoteMode, RemoteStatus } from '@turnwire/protocol';
 interface RelaySettings { serverUrl: string; relayUrl: string; remoteUrl?: string; token: string }
-interface Preferences { mode: RemoteMode; relay?: RelaySettings; provider?: TunnelProvider; cpolarToken?: string }
+interface Preferences { mode: RemoteMode; relay?: RelaySettings; provider?: TunnelProvider; cpolarToken?: string; namedTunnel?: NamedTunnelOptions }
 export interface RemoteAccess {
   status(): RemoteStatus;
   configure(value: unknown): RemoteStatus;
@@ -77,6 +77,9 @@ export class RemoteController implements RemoteAccess {
       if (request.cpolarToken && next.provider !== 'cpolar') throw new Error('cpolar Token 只能用于 cpolar 通道');
       if (request.cpolarToken) next.cpolarToken = request.cpolarToken;
       if (next.provider === 'cpolar' && !next.cpolarToken) throw new Error('首次使用 cpolar，请填写账号的 Auth Token');
+      // A named tunnel already exists under the operator's account; only its reference is stored.
+      if (request.namedTunnel) next.namedTunnel = request.namedTunnel;
+      if (next.provider === 'cloudflare-named' && !next.namedTunnel) throw new Error('命名隧道需要填写隧道名称、公开域名和凭证文件');
       if (!this.options.providers?.some(p => p.id === next.provider) && !(next.provider === 'cloudflare' && this.options.startTunnel)) throw new Error('此 daemon 未安装所选通道，请更新服务');
     }
     if (request.mode === 'relay') {
@@ -120,7 +123,7 @@ export class RemoteController implements RemoteAccess {
           bridgeUrl = 'ws://127.0.0.1:' + this.relay.port + '/relay';
           aborter.signal.throwIfAborted();
           this.tunnel = await startTunnel({
-            directory: this.options.directory, port: this.relay.port, signal: aborter.signal, ...(provider === 'cpolar' ? { token: preferences.cpolarToken } : {}),
+            directory: this.options.directory, port: this.relay.port, signal: aborter.signal, ...(provider === 'cpolar' ? { token: preferences.cpolarToken } : {}), ...(preferences.namedTunnel ? { namedTunnel: preferences.namedTunnel } : {}),
             changed: url => { if (!aborter.signal.aborted && this.active) { this.active = { remoteUrl: url, relayUrl: url.replace(/^http/, 'ws') + '/relay' }; } },
             progress: message => { if (!aborter.signal.aborted) this.message = message; },
             exited: () => {

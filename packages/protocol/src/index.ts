@@ -102,13 +102,18 @@ export type Pairing = z.infer<typeof pairingSchema>;
 // Host administration is shared by every local UI, but is never a remote RPC.
 export const remoteModeSchema = z.enum(['off', 'temporary', 'relay']);
 export type RemoteMode = z.infer<typeof remoteModeSchema>;
-export const tunnelProviderSchema = z.enum(['cloudflare', 'localhost-run', 'cpolar']);
+export const tunnelProviderSchema = z.enum(['cloudflare', 'cloudflare-named', 'localhost-run', 'cpolar']);
 export type TunnelProvider = z.infer<typeof tunnelProviderSchema>;
 export const tunnelProviderInfoSchema = z.object({ id: tunnelProviderSchema, name: z.string(), description: z.string(), requiresToken: z.boolean() });
 export type TunnelProviderInfo = z.infer<typeof tunnelProviderInfoSchema>;
 export const remoteConfigurationSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('off') }).strict(),
-  z.object({ mode: z.literal('temporary'), provider: tunnelProviderSchema.optional(), cpolarToken: z.string().trim().min(1).max(500).regex(/^[A-Za-z0-9_.-]+$/).optional() }).strict(),
+  z.object({ mode: z.literal('temporary'), provider: tunnelProviderSchema.optional(), cpolarToken: z.string().trim().min(1).max(500).regex(/^[A-Za-z0-9_.-]+$/).optional(),
+    /**
+     * A tunnel the operator already created under their own account. Turnwire only targets it, so
+     * every value is operator-supplied and no deployment is performed.
+     */
+    namedTunnel: z.object({ name: idSchema, hostname: z.string().trim().min(1).max(253), credentialsFile: z.string().trim().min(1).max(4096), protocol: z.enum(['auto', 'http2', 'quic']).default('http2') }).strict().optional() }).strict(),
   z.object({ mode: z.literal('relay'), serverUrl: z.string().trim().min(1).max(2000), token: z.string().trim().min(32).max(500).optional() }).strict(),
 ]);
 export type RemoteConfiguration = z.infer<typeof remoteConfigurationSchema>;

@@ -9,7 +9,7 @@ import { DemoRuntime } from '@turnwire/runtime';
 import { DshRuntime } from '@turnwire/runtime-dsh';
 import { startDaemonServer } from './server.js';
 import { RemoteController } from './remote-control.js';
-import { startCloudflareTunnel, cloudflareNotice } from './providers/cloudflare.js';
+import { startCloudflareTunnel, startCloudflareNamedTunnel, cloudflareNotice, cloudflareNamedNotice } from './providers/cloudflare.js';
 import { startLocalhostTunnel } from './providers/localhost-run.js';
 import { startCpolarTunnel } from './providers/cpolar.js';
 import { DeploymentController } from './deployment.js';
@@ -18,6 +18,7 @@ const providers = [
   { id: 'localhost-run' as const, name: 'localhost.run', description: '免费免注册，使用系统 SSH；免费通道有限速，地址可能变化。', requiresToken: false, start: startLocalhostTunnel },
   { id: 'cpolar' as const, name: 'cpolar', description: '国内线路候选；首次需要账号 Auth Token。免费版 1 Mbps、随机地址，速度取决于实际网络。', requiresToken: true, start: startCpolarTunnel },
   { id: 'cloudflare' as const, name: 'Cloudflare', description: cloudflareNotice, requiresToken: false, start: startCloudflareTunnel },
+  { id: 'cloudflare-named' as const, name: 'Cloudflare 命名隧道', description: cloudflareNamedNotice, requiresToken: false, start: startCloudflareNamedTunnel },
 ];
 
 const directory = resolve(process.env.TURNWIRE_HOME ?? join(homedir(), '.turnwire'));
