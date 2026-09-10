@@ -81,8 +81,8 @@ it('names the DSH credential variable the same way everywhere', () => {
 it('links to files that exist', () => {
   const broken = new Set<string>();
   for (const document of documents) {
-    for (const [, target] of read(document).matchAll(/\]\(([^)#\s]+\.md)(?:#[^)]*)?\)/g)) {
-      if (target!.includes('://')) continue;  // external links are not repository files
+    for (const [, target] of read(document).matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)) {
+      if (target!.includes('://') || target!.startsWith('mailto:')) continue;  // external links are not repository files
       if (!existsSync(resolve(root, document, '..', target!))) broken.add(`${document} -> ${target}`);
     }
   }

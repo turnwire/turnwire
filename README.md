@@ -101,3 +101,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 当前交付包含一次性配对、经设备凭据认证的每连接 ECDH 会话加密、分阶段连接恢复、持久审批收件箱、Web Push 和可配置的 TLS 局域网入口。已有旧配对可以继续使用并从主机显式升级。Relay 的连接路由仍在内存中，推送密钥与投递队列持久化。
 
 尚不包含 Codex / Claude adapter、团队账户、原生 iOS、自动更新或发行签名。"哪些只在特定条件下验证过"以 [验证记录](docs/VALIDATION.md) 为准。
+
+## 许可
+
+Apache License 2.0 —— 详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。可以自由使用、修改和分发（含商用），需要保留版权与许可声明；本项目不提供任何担保。
