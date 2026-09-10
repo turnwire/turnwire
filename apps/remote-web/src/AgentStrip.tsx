@@ -33,7 +33,7 @@ export function AgentStrip({ agents }: { agents: SubagentView[] }) {
   const byId = new Map(agents.map(agent => [agent.id, agent]));
   return <div className="agent-strip" role="status" aria-label={translate('agents.aria')}>
     <div className="agent-heading">{translate('agents.running', { count: agents.length })}</div>
-    {shown.map(agent => {
+    <div className="agent-list">{shown.map(agent => {
       const expanded = open === agent.id;
       return <div className="agent-row" key={agent.id}>
         <button type="button" className="agent-item" aria-expanded={expanded} aria-label={`${translate('agents.detailAria', { label: agent.label })} — ${expanded ? translate('agents.detailHide') : translate('agents.detailShow')}`} onClick={() => setOpen(expanded ? undefined : agent.id)}>
@@ -58,7 +58,7 @@ export function AgentStrip({ agents }: { agents: SubagentView[] }) {
           </>}
         </div>}
       </div>;
-    })}
-    {agents.length > MAX_AGENT_ROWS && <button type="button" className="agent-more" onClick={() => setAll(value => !value)}>{all ? translate('agents.collapse') : translate('agents.showAll', { count: agents.length })}</button>}
+    })}</div>
+    {agents.length > MAX_AGENT_ROWS && <button type="button" className="agent-more" aria-expanded={all} onClick={() => setAll(value => !value)}>{all ? translate('agents.collapse') : translate('agents.showAll', { count: agents.length })}</button>}
   </div>;
 }

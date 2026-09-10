@@ -132,6 +132,9 @@ const en = {
   'model.reasoningEffort': 'Reasoning effort',
   'model.defaultSuffix': ' (default)',
   'model.loadingCatalog': 'Loading model catalog…',
+  'model.catalogFailed': 'Could not load model catalog.',
+  'model.catalogStale': 'Showing the last loaded catalog; availability may have changed.',
+  'model.catalogRetry': 'Retry model catalog',
   'model.unavailable': '{name} unavailable',
 
   // Queued prompts: the row owns the only edit/cancel/steer controls in the page.
@@ -418,6 +421,9 @@ const zh: Catalog = {
   'model.reasoningEffort': '思考强度',
   'model.defaultSuffix': '（默认）',
   'model.loadingCatalog': '正在读取模型目录…',
+  'model.catalogFailed': '无法读取模型目录。',
+  'model.catalogStale': '正在显示上次读取的目录；可用性可能已改变。',
+  'model.catalogRetry': '重试读取模型目录',
   'model.unavailable': '{name} 不可用',
 
   'queue.aria': '排队中的消息',

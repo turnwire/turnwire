@@ -16,8 +16,17 @@ class Fixture extends DemoRuntime {
   targets = new Map();
   subscribe(id, listener) { this.targets.set(id, listener); return super.subscribe(id, listener); }
   emitFixture(id, event) { this.targets.get(id)(event); }
-  async answerQuestion() { /* the core records the answer itself */ }
-  async listSubagents() {
+  answerGate;
+  listFailures = 0;
+  listCalls = 0;
+  extraAgents = false;
+  emptySession;
+  listGate;
+  async answerQuestion() { await this.answerGate; /* the core records the answer itself */ }
+  async listSubagents(sessionId) {
+    this.listCalls += 1;
+    if (sessionId === this.emptySession) { await this.listGate; return []; }
+    if (this.listFailures > 0) { this.listFailures -= 1; throw new Error('Transient fixture list failure'); }
     return [
       { id: 'agent-1', parentId: 'root', depth: 1, label: 'Review the queue strip for sideways panning', mode: 'continuable', activity: 'running', elapsedMs: 83000,
         todos: [
@@ -26,6 +35,7 @@ class Fixture extends DemoRuntime {
           { content: 'Report /Users/someone/Library/Application Support/turnwire/a/very/long/path/that/never/breaks/config.yaml', status: 'pending' },
         ] },
       { id: 'agent-2', parentId: 'agent-1', depth: 2, label: 'Nested child', mode: 'one-shot', activity: 'running', elapsedMs: 4000, todos: [] },
+      ...(this.extraAgents ? Array.from({ length: 30 }, (_, index) => ({ id: `extra-${index}`, parentId: 'root', depth: 1, label: `Extra child ${index}`, mode: 'continuable', activity: 'running', todos: [] })) : []),
     ];
   }
 }
@@ -68,7 +78,7 @@ if (!answered.ok) throw new Error('Answering the fixture question failed: ' + JS
 const token = randomSecret(); const relay = await startRelay({ token, port: 0, webRoot: resolve('apps/remote-web/dist') });
 const origin = `http://127.0.0.1:${relay.port}`;
 const pairing = { v: 1, hostId: core.device.id, clientId: crypto.randomUUID(), name: 'Browser', relayUrl: origin.replace('http:', 'ws:') + '/relay', token: randomSecret(), key: randomSecret() };
-core.store.addDevice(pairing); const bridge = new RemoteBridge(core, pairing.relayUrl, token); bridge.start();
+core.store.addDevice(pairing); let bridge = new RemoteBridge(core, pairing.relayUrl, token); bridge.start();
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
 await context.addInitScript(() => { try { localStorage.setItem('turnwire.locale', 'en'); } catch { /* the app still defaults to English */ } });
@@ -125,15 +135,62 @@ try {
   const pendingCard = page.locator('.question-card[data-status="pending"]');
   const items = pendingCard.locator('.question-item');
   await expect(items).toHaveCount(3);
-  for (let index = 0; index < 3; index += 1) await expect(items.nth(index).locator('.question-other-row button')).toHaveCount(1);
-  const typedRow = items.first().locator('.question-other-row');
-  await expect(typedRow.locator('button')).toBeDisabled();
-  await typedRow.locator('input.question-other').fill('Staging tonight, then production tomorrow');
-  await expect(typedRow.locator('button')).toBeEnabled();
-  await typedRow.locator('button').click();
+  const submit = pendingCard.locator('.question-actions button');
+  await expect(submit).toHaveCount(1);
+  await expect(pendingCard.locator('.question-other-row button')).toHaveCount(0);
+  await expect(submit).toBeDisabled();
+  const typed = items.first().locator('input.question-other');
+  await typed.fill('Staging tonight, then production tomorrow');
+  await expect(submit).toBeDisabled();
+  await typed.press('Enter');
+  await expect(pendingCard).toHaveCount(1); // unanswered siblings must never be finalized
+  const staging = items.first().getByRole('button', { name: /^Staging/ });
+  await staging.click();
+  await expect(staging).toHaveAttribute('aria-pressed', 'true');
+  await expect(submit).toBeDisabled();
+  await items.nth(1).locator('input').fill('   ');
+  const email = items.nth(2).getByRole('button', { name: 'Email', exact: true });
+  await email.click();
+  await expect(email).toHaveAttribute('aria-pressed', 'true');
+  await expect(submit).toBeDisabled();
+  await items.nth(1).locator('input').fill('Explain the release');
+  await expect(submit).toBeEnabled();
+  await bridge.close();
+  await expect(typed).toBeDisabled();
+  await expect(items.locator('input')).toHaveCount(3);
+  await expect(staging).toHaveAttribute('aria-pressed', 'true');
+  await expect(typed).toHaveValue('Staging tonight, then production tomorrow');
+  bridge = new RemoteBridge(core, pairing.relayUrl, token); bridge.start();
+  await expect(submit).toBeEnabled({ timeout: 20000 });
+  await typed.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+  await typed.dispatchEvent('keydown', { key: 'Enter', keyCode: 229 });
+  await expect(pendingCard).toHaveCount(1);
+  let finishAnswer;
+  runtime.answerGate = new Promise(resolve => { finishAnswer = resolve; });
+  await typed.press('Enter');
+  await expect(submit).toBeDisabled();
+  await expect(items.locator('input')).toHaveCount(3);
+  await expect(typed).toBeDisabled();
+  await expect(typed).toHaveValue('Staging tonight, then production tomorrow');
+  await expect(staging).toBeDisabled();
+  await expect(staging).toHaveAttribute('aria-pressed', 'true');
+  finishAnswer();
   await expect(pendingCard).toHaveCount(0);
   await expect(page.locator('.question-given').filter({ hasText: 'Staging tonight' })).toHaveCount(1);
-  await expect(page.locator('.question-given').filter({ hasText: 'No answer' })).toHaveCount(2);
+  await expect(page.locator('.question-given').filter({ hasText: 'No answer' })).toHaveCount(0);
+
+  // Single-choice and multi-choice cards use the same explicit submit, with no duplicate action.
+  for (const multiSelect of [false, true]) {
+    runtime.emitFixture(session.id, { type: 'question.requested', requestId: `single-${multiSelect}`, questions: [{ id: 'single', question: 'Choose a channel', multiSelect, options: [{ label: 'One' }, { label: 'Two' }] }] });
+    await expect(pendingCard).toHaveCount(1);
+    await expect(pendingCard.locator('.question-actions button')).toHaveCount(1);
+    await pendingCard.getByRole('button', { name: 'One', exact: true }).click();
+    await expect(pendingCard).toHaveCount(1);
+    await pendingCard.getByRole('button', { name: 'Two', exact: true }).click();
+    await expect(pendingCard.getByRole('button', { name: 'One', exact: true })).toHaveAttribute('aria-pressed', String(multiSelect));
+    await pendingCard.locator('.question-actions button').click();
+    await expect(pendingCard).toHaveCount(0);
+  }
 
   // Opening a child shows its own plan, with the status column aligned down the list.
   const row = page.locator('.agent-item').first();
@@ -168,6 +225,43 @@ try {
   await nested.click();
   await expect(page.locator('.agent-noplan')).toBeVisible();
   await expect(page.locator('.agent-detail')).toHaveCount(1);
+  // A list failure while the parent is idle must retain children and continue retrying.
+  runtime.emitFixture(session.id, { type: 'status', status: 'idle' });
+  runtime.listFailures = 2;
+  const calls = runtime.listCalls;
+  await expect.poll(() => runtime.listCalls, { timeout: 15000 }).toBeGreaterThanOrEqual(calls + 2);
+  await expect(page.locator('.agent-item')).toHaveCount(2);
+  runtime.extraAgents = true;
+  await expect(page.locator('.agent-more')).toBeVisible({ timeout: 15000 });
+  await page.locator('.agent-more').click();
+  await expect(page.locator('.agent-item')).toHaveCount(32);
+  for (let index = 0; index < 12; index += 1) runtime.emitFixture(session.id, { type: 'approval.requested', requestId: `approval-${index}`, tool: 'shell', reason: `Approval ${index}` });
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 640 });
+    await expect(page.locator('.approval-panel')).toHaveCount(12);
+    const bounds = await page.locator('.composer').boundingBox();
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(640);
+    expect(await page.locator('.agent-list').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+  }
+  // Delay the new session's list: old children must disappear before that request resolves.
+  const second = await core.handle({ v: 1, id: crypto.randomUUID(), method: 'session.create', params: { runtimeId: 'demo', title: 'Empty session', cwd: process.cwd() } });
+  if (!second.ok) throw new Error('Second fixture session failed');
+  runtime.emptySession = second.result.id;
+  let finishList;
+  runtime.listGate = new Promise(resolve => { finishList = resolve; });
+  await page.locator('.topbar button[aria-controls="session-sidebar"]').click();
+  await page.locator('.session-row').filter({ hasText: 'Empty session' }).click();
+  await expect(page.locator('.agent-strip')).toHaveCount(0);
+  finishList();
+  await page.locator('.topbar button[aria-controls="session-sidebar"]').click();
+  await page.locator('.session-row').filter({ hasText: 'Question check' }).click();
+  await expect(page.locator('.agent-item')).toHaveCount(3);
+  await expect(page.locator('.agent-detail')).toHaveCount(0);
+  await expect(page.locator('.agent-more')).toHaveAttribute('aria-expanded', 'false');
   expect(errors).toEqual([]);
   console.log(JSON.stringify({ widths: [390, 320], aligned: true, cardsOverflow: 0, planRows: 3, nestedPlan: false, given: [wide.given, narrow.given] }));
+} catch (error) {
+  console.error('Browser diagnostics:', JSON.stringify({ errors, body: await page.locator('body').innerText() }));
+  throw error;
 } finally { await browser.close(); await bridge.close(); await relay.close(); await core.dispose(); }

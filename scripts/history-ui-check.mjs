@@ -52,6 +52,10 @@ try {
   await expect(page.locator('.message.assistant').last()).toContainText('New task finished');
   await expect(page.locator('.status')).toHaveText('Ready');
   await expect(page.locator('.cursor')).toHaveCount(0);
+  // A later assistant message is not evidence that it summarizes earlier substantive content.
+  // Keep the earlier response visible after the turn settles, even when tools intervene.
+  await expect(page.getByRole('heading', { name: '已完成的结果' })).toBeVisible();
+  await expect(page.locator('.turn-process')).toHaveCount(0);
   await page.locator('.conversation').evaluate(el => { el.scrollTop = 0; });
   await expect(page.locator('.message, .tool-message')).toHaveCount(93);
   await expect(page.getByRole('button', { name: 'Load earlier records', exact: true })).toHaveCount(0);

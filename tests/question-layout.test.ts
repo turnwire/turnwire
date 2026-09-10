@@ -36,6 +36,14 @@ it('wraps question text that has no break opportunity', () => {
   }
 });
 
+it('bounds all composer attachments together and the expanded agent list separately', () => {
+  for (const selector of ['.composer-attachments', '.agent-list']) {
+    expect(rule(selector)).toMatch(/max-height:\d+dvh/);
+    expect(rule(selector)).toContain('overflow-y:auto');
+    expect(rule(selector)).toContain('min-width:0');
+  }
+});
+
 it('lines up the columns of a revealed plan', () => {
   const plan = rule('.agent-plan>li');
   expect(plan).toContain('display:grid');

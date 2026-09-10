@@ -1,5 +1,5 @@
 import { Inbox } from './Inbox';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
@@ -37,39 +37,41 @@ function modelChipLabel(session: Session, catalog?: { runtimeId: string; value: 
   return entry?.name ?? session.model.model;
 }
 /**
- * A question the agent is blocked on, rendered where it was asked. One tap answers a single-choice
- * question; a multi-choice one collects its picks first. Once it is settled the card becomes the
+ * A question batch the agent is blocked on, rendered where it was asked. Choices and free text
+ * are collected before one explicit, batch-validated submission. Once settled the card becomes the
  * record of what was asked and what was chosen, which is why the answer lives in the transcript at all.
  */
 function QuestionCard({ question, pending, disabled, onAnswer }: { question: Question; pending: boolean; disabled: boolean; onAnswer: (answers: QuestionAnswerItem[]) => void }) {
   const t = useLocale();
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [texts, setTexts] = useState<Record<string, string>>({});
-  const answer = (override?: Record<string, string[]>) => onAnswer(question.questions.map(item => {
-    const selected = (override ?? picks)[item.id] ?? [];
-    const custom = (texts[item.id] ?? '').trim();
-    return { id: item.id, selected, ...(custom === '' ? {} : { custom }) };
-  }));
-  const ready = question.questions.every(item => (picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '');
-  const asked = question.questions.length === 1 ? question.questions[0]! : undefined;
-  const answerable = pending && !disabled;
+  const ready = question.questions.length > 0 && question.questions.every(item => (picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '');
+  const answer = () => {
+    if (!pending || disabled || !ready) return;
+    onAnswer(question.questions.map(item => {
+      const custom = (texts[item.id] ?? '').trim();
+      return { id: item.id, selected: picks[item.id] ?? [], ...(custom === '' ? {} : { custom }) };
+    }));
+  };
   return <section className="question-card" aria-label={t('question.aria')} data-status={pending ? 'pending' : question.status}>
     <div className="question-title"><QuestionIcon size={17} /><strong>{pending ? t('question.title') : t('question.answeredTitle')}</strong></div>
     {question.questions.map(item => <div className="question-item" key={item.id}>
       {item.header && <span className="question-header">{item.header}</span>}
       <p className="question-text">{item.question}</p>
       {item.detail && <p className="question-detail">{item.detail}</p>}
-      {answerable && item.options && item.options.length > 0 && <div className="question-options">{item.options.map(option => <button key={option.label} type="button" className={(picks[item.id] ?? []).includes(option.label) ? 'chosen' : ''} disabled={disabled} onClick={() => {
-        // One choice means the tap is the answer; several means the reader says when they are done.
-        if (item.multiSelect === true) { const chosen = picks[item.id] ?? []; setPicks(current => ({ ...current, [item.id]: chosen.includes(option.label) ? chosen.filter(entry => entry !== option.label) : [...chosen, option.label] })); }
-        else { const next = { ...picks, [item.id]: [option.label] }; setPicks(next); if (asked) answer(next); }
+      {pending && item.options && item.options.length > 0 && <div className="question-options">{item.options.map(option => <button key={option.label} type="button" aria-pressed={(picks[item.id] ?? []).includes(option.label)} className={(picks[item.id] ?? []).includes(option.label) ? 'chosen' : ''} disabled={disabled} onClick={() => {
+        setPicks(current => {
+          const chosen = current[item.id] ?? [];
+          return { ...current, [item.id]: item.multiSelect === true ? (chosen.includes(option.label) ? chosen.filter(entry => entry !== option.label) : [...chosen, option.label]) : [option.label] };
+        });
       }}>{option.label}{option.description ? <small>{option.description}</small> : null}</button>)}</div>}
-      {answerable && <span className="question-other-row"><input className="question-other" aria-label={t('question.other')} placeholder={t('question.other')} value={texts[item.id] ?? ''} disabled={disabled} onChange={event => setTexts(current => ({ ...current, [item.id]: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter' && ready) { event.preventDefault(); answer(); } }} />{/* Every answerable question offers the button, including a single-choice one that has options: tapping an
-          option answers it, but someone who types instead needs something to press, and a phone keyboard gives
-          them no Enter. It stays disabled until the row holds an answer. */}<button className="primary" type="button" disabled={disabled || !((picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '')} onClick={() => answer()}>{t('question.send')}</button></span>}
+      {pending && <span className="question-other-row"><input className="question-other" aria-label={`${item.header ?? item.question} — ${t('question.other')}`} placeholder={t('question.other')} value={texts[item.id] ?? ''} disabled={disabled} onChange={event => setTexts(current => ({ ...current, [item.id]: event.target.value }))} onKeyDown={event => {
+        if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+        event.preventDefault(); answer();
+      }} /></span>}
       {!pending && <p className="question-given">{answerText(question, item.id) || t('question.noAnswer')}</p>}
     </div>)}
-    {answerable && asked?.multiSelect === true && <div className="question-actions"><button className="primary" type="button" disabled={disabled || !ready} onClick={() => answer()}>{t('question.send')}</button></div>}
+    {pending && <div className="question-actions"><button className="primary" type="button" disabled={disabled || !ready} onClick={answer}>{t('question.send')}</button></div>}
   </section>;
 }
 
@@ -115,6 +117,35 @@ export function App() {
   // Model choice belongs to the runtime that owns the session, so the catalog is fetched per
   // runtime and only from a runtime that advertises the capability.
   const [catalog, setCatalog] = useState<{ runtimeId: string; value: ModelCatalog }>();
+  const [catalogStatus, setCatalogStatus] = useState<{ runtimeId: string; loading: boolean; error: string }>();
+  const catalogRequest = useRef(0);
+  const catalogContext = useRef(runtime?.id ?? session?.runtimeId); catalogContext.current = runtime?.id ?? session?.runtimeId;
+  useEffect(() => { catalogRequest.current++; setCatalog(undefined); setCatalogStatus(undefined); }, [connection]);
+  const sidebar = useRef<HTMLElement>(null); const sidebarTrigger = useRef<HTMLButtonElement>(null);
+  const [mobileSidebar, setMobileSidebar] = useState(() => window.matchMedia('(max-width: 700px)').matches);
+  const sidebarWasOpen = useRef(false);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 700px)');
+    const change = () => { setMobileSidebar(media.matches); setDrawer(false); };
+    media.addEventListener('change', change); return () => media.removeEventListener('change', change);
+  }, []);
+  useLayoutEffect(() => {
+    if (mobileSidebar && drawer) sidebar.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    else if (mobileSidebar && sidebarWasOpen.current) sidebarTrigger.current?.focus();
+    sidebarWasOpen.current = mobileSidebar && drawer;
+  }, [mobileSidebar, drawer]);
+  useEffect(() => {
+    if (!mobileSidebar || !drawer) return;
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setDrawer(false); }
+      if (event.key !== 'Tab') return;
+      const controls = Array.from(sidebar.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []);
+      const first = controls[0]; const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', key); return () => document.removeEventListener('keydown', key);
+  }, [mobileSidebar, drawer]);
   // The picker stays collapsed behind a chip in the composer: a phone needs that space for the
   // conversation and the keyboard, so the control appears only when it is wanted.
   const [showModel, setShowModel] = useState(false); const modelSwitch = useRef<HTMLSpanElement | null>(null);
@@ -122,7 +153,7 @@ export function App() {
   const [modelPending, setModelPending] = useState(false);
   const [modelError, setModelError] = useState('');
   const modelContext = useRef(selected); modelContext.current = selected;
-  const closeModel = () => { setShowModel(false); modelSwitch.current?.querySelector('button')?.focus(); };
+  const closeModel = (restoreFocus = true) => { setShowModel(false); if (restoreFocus) modelSwitch.current?.querySelector('button')?.focus({ preventScroll: true }); };
   useEffect(() => { setShowModel(false); setModelError(''); }, [selected, connection]);
   // Queued prompts are shown as their own list above the composer instead of inside the running
   // turn's flow. The list is the runtime's own queue, not this tab's memory of what it saw arrive:
@@ -137,24 +168,31 @@ export function App() {
    * goes quiet while children work; this is the only place their progress shows. Polled while the
    * session runs, and once more when it settles so the last state is not left half-read.
    */
-  const [agents, setAgents] = useState<SubagentView[]>([]);
-  // Only the ones still working: a session that has delegated all day must not grow a panel of
-  // finished children over the conversation. What finished is already in the transcript.
-  const runningAgents = useMemo(() => agents.filter(agent => agent.activity === 'running'), [agents]);
-  // A child can outlive the turn that started it, so the poll continues while one is running.
-  const hasRunningAgent = runningAgents.length > 0;
+  const [agents, setAgents] = useState<{ sessionId: string; children: SubagentView[] }>();
+  // Scope during render, not in an effect: even the first frame of a session switch must not show
+  // another session's children. Only working children belong in the composer attachment.
+  const runningAgents = useMemo(() => agents && agents.sessionId === selected && !session?.archived ? agents.children.filter(agent => agent.activity === 'running') : [], [agents, selected, session?.archived]);
   useEffect(() => {
-    if (!selected || !session || session.archived || !clientRef.current) { setAgents([]); return; }
+    const client = clientRef.current;
+    if (!selected || !session || session.archived || !client) return;
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
-      try { const result = await clientRef.current!.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId: selected }); if (active) setAgents(result.subagents); }
-      catch { if (active) setAgents([]); }
+      let retry = true;
+      try {
+        const result = await client.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId: selected });
+        if (!active) return;
+        setAgents({ sessionId: selected, children: result.subagents });
+        retry = turnRunning || result.subagents.some(agent => agent.activity === 'running');
+      } catch {
+        // A failed list is not an empty list. Retain known children and retry even if the parent
+        // turn is idle (including a failure of the first request after opening a session).
+      }
+      if (active && retry) timer = setTimeout(() => void load(), 4000);
     };
     void load();
-    if (!turnRunning && !hasRunningAgent) return () => { active = false; };
-    const timer = setInterval(load, 4000);
-    return () => { active = false; clearInterval(timer); };
-  }, [selected, session?.archived, session?.status, turnRunning, hasRunningAgent, state]);
+    return () => { active = false; clearTimeout(timer); };
+  }, [selected, session?.id, session?.archived, session?.status, turnRunning, state]);
   // A queued prompt can be reconsidered before it runs: rewritten, taken back, or pulled into the
   // turn that is already going. The row owns those actions, so nothing else in the page repeats them.
   const [editingQueued, setEditingQueued] = useState<string>();
@@ -196,24 +234,6 @@ export function App() {
     }
     return output;
   }, [visible]);
-  /**
-   * Rows split into turns: a prompt and everything it caused, up to the next prompt. The last
-   * assistant row in a turn is its result; what came before it is how the turn got there.
-   */
-  const turns = useMemo(() => {
-    const output: Array<{ key: string; user?: (typeof rows)[number]; body: Array<(typeof rows)[number]>; resultIndex: number }> = [];
-    for (const row of rows) {
-      const user = row.message?.role === 'user';
-      if (user || !output.length) output.push({ key: row.key, ...(user ? { user: row } : {}), body: user ? [] : [row], resultIndex: user ? 0 : 0 });
-      else output[output.length - 1]!.body.push(row);
-    }
-    for (const turn of output) {
-      let result = -1;
-      turn.body.forEach((row, index) => { if (row.message?.role === 'assistant') result = index; });
-      turn.resultIndex = result < 0 ? turn.body.length : result;
-    }
-    return output;
-  }, [rows]);
   // The model panel hangs off the chip, so it closes the way a menu does: a tap anywhere else, or Esc.
   useEffect(() => {
     if (!showModel) return;
@@ -230,16 +250,19 @@ export function App() {
    * the session was selected. A selection the host refuses for that reason refreshes it the same way.
    */
   const refreshCatalog = useCallback(() => {
-    const target = runtime?.id ?? session?.runtimeId;
-    if (!target) return;
-    return clientRef.current?.request<ModelCatalog>('model.catalog', { runtimeId: target })
-      .then(value => setCatalog({ runtimeId: target, value }))
-      .catch(() => { /* A runtime whose providers are unreachable simply offers no choices. */ });
+    const target = runtime?.id ?? session?.runtimeId; const client = clientRef.current;
+    if (!target || !client) return;
+    const request = ++catalogRequest.current;
+    const current = () => request === catalogRequest.current && clientRef.current === client && catalogContext.current === target;
+    setCatalogStatus({ runtimeId: target, loading: true, error: '' });
+    return client.request<ModelCatalog>('model.catalog', { runtimeId: target })
+      .then(value => { if (current()) { setCatalog({ runtimeId: target, value }); setCatalogStatus({ runtimeId: target, loading: false, error: '' }); } })
+      .catch(error => { if (current()) setCatalogStatus({ runtimeId: target, loading: false, error: errorText(error) }); });
   }, [runtime?.id, session?.runtimeId]);
   useEffect(() => {
-    if (!runtime?.capabilities.modelSelection || catalog?.runtimeId === runtime.id) return;
+    if (!runtime?.capabilities.modelSelection || state !== 'connected') return;
     void refreshCatalog();
-  }, [runtime, catalog, refreshCatalog]);
+  }, [runtime?.capabilities.modelSelection, refreshCatalog, state, connection]);
   /** The daemon records the resolved selection, so the request omits what the runtime may fill in. */
   /** Sending is always queueing; steering is the separate action that jumps the queue. */
   const pendingQuestions = useMemo(() => new Set(questions.map(question => question.id)), [questions]);
@@ -265,12 +288,15 @@ export function App() {
     const client = clientRef.current;
     if (!client || !session || state !== 'connected' || busy || session.archived || modelRequest.current) return;
     const sessionId = session.id;
+    const requestPanel = modelSwitch.current?.querySelector('.model-picker');
     modelRequest.current = true; setModelPending(true); setModelError('');
     void client.request<Session>('session.setModel', { sessionId, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) })
       .then(updated => {
         if (clientRef.current !== client) return;
         setSnapshot(previous => previous ? { ...previous, sessions: previous.sessions.map(item => item.id === updated.id ? { ...item, model: updated.model } : item) } : previous);
-        if (modelContext.current === sessionId) closeModel();
+        // Only the still-open panel that initiated this request may restore focus. A dismissal,
+        // reopening, or Tab/click into another control must not be undone by a late response.
+        if (modelContext.current === sessionId && requestPanel?.isConnected) closeModel(requestPanel.contains(document.activeElement));
       })
       .catch(error => {
         if (clientRef.current !== client || modelContext.current !== sessionId) return;
@@ -359,7 +385,7 @@ export function App() {
   function rememberDevice() { const c = clientRef.current; if (c instanceof RemoteClient) { localStorage.setItem('turnwire.connection', JSON.stringify({ kind: 'remote', code: encodePairing(c.currentPairing) })); sessionStorage.removeItem('turnwire.connection'); } }
   return <div className="app">
     {drawer && <button className="scrim" aria-label={t('sidebar.closeSessionList')} onClick={() => setDrawer(false)} />}
-    <aside className={`sidebar ${drawer ? 'visible' : ''}`}>
+    <aside ref={sidebar} id="session-sidebar" inert={mobileSidebar && !drawer} aria-hidden={mobileSidebar && !drawer ? true : undefined} className={`sidebar ${drawer ? 'visible' : ''}`}>
       <div className="brand"><img src="/icon-192.png" width="30" height="30" alt="" /><span>turnwire<span className="brand-suffix">remote</span></span><button className="icon-button mobile-only" aria-label={t('sidebar.closeList')} onClick={() => setDrawer(false)}><X size={20} /></button></div>
       <button className="new-session" disabled={!snapshot} onClick={() => { setCreate(true); setDrawer(false); }}><Plus size={18} />{t('common.newSession')}<span>⌘ N</span></button>
       <button className="new-session" disabled={!snapshot} onClick={() => { setShowInbox(true); setShowConnection(false); setDrawer(false); }}>{t('sidebar.inbox')} <span>{snapshot?.approvals.length ?? 0}</span></button>
@@ -372,7 +398,7 @@ export function App() {
       <div className="sidebar-bottom"><button className="device-row" onClick={() => { setShowConnection(true); setDrawer(false); }}><Desktop size={20} /><span><strong>{snapshot?.device.name ?? t('sidebar.connectHost')}</strong><small><i className={connected ? 'online' : ''} />{connected ? t('sidebar.connected') : state === 'connecting' ? t('sidebar.connecting') : t('sidebar.offline')}</small></span><GearSix size={17} /></button><div className="local-note"><ShieldCheck size={14} />{t('sidebar.localNote')}</div></div>
     </aside>
     <main>
-      <header className="topbar"><button className="icon-button mobile-only" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <>{session.autoApprove && <span className="auto-approve-chip" title={t('session.autoApproveHint')}>{t('session.autoApproveOn')}</span>}<Status status={session.status} /><details className="session-actions"><summary>{t('topbar.sessionActions')}</summary><div>{/* One control, stable across the state it switches: its label and payload both follow the state. */
+      <header className="topbar"><button ref={sidebarTrigger} className="icon-button mobile-only" aria-expanded={drawer} aria-controls="session-sidebar" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <>{session.autoApprove && <span className="auto-approve-chip" title={t('session.autoApproveHint')}>{t('session.autoApproveOn')}</span>}<Status status={session.status} /><details className="session-actions"><summary>{t('topbar.sessionActions')}</summary><div>{/* One control, stable across the state it switches: its label and payload both follow the state. */
           <button data-auto-approve={session.autoApprove ? 'on' : 'off'} disabled={!connected || busy || session.archived} onClick={() => void setDelegated(session.id, !session.autoApprove)}>{session.autoApprove ? t('session.autoApproveOff') : t('session.autoApprove')}</button>}<button disabled={!connected || busy} onClick={() => { setRenameTitle(session.title); }}>{t('topbar.rename')}</button>{renameTitle !== undefined && <form onSubmit={event => { event.preventDefault(); void perform(async c => { await c.request('session.rename', { sessionId: session.id, title: renameTitle }); setRenameTitle(undefined); }); }}><input aria-label={t('topbar.newSessionName')} value={renameTitle} onChange={event => setRenameTitle(event.target.value)} /><button disabled={busy || !renameTitle.trim()}>{t('topbar.saveName')}</button></form>}<button disabled={!connected || busy || ['running', 'waiting_approval'].includes(session.status)} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: !session.archived }); })}>{session.archived ? t('common.unarchive') : t('topbar.archiveSession')}</button></div></details></>}<button className="icon-button" aria-label={t('topbar.connectionSettings')} onClick={() => setShowConnection(true)}><Plug size={19} /></button></div></header>
       {connection?.kind === 'remote' && (health?.phase === 'connected'
         // Connected is the normal state, so it costs one thin line: the host and the round trip, with the
@@ -389,32 +415,19 @@ export function App() {
             {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? t('conversation.loadingEarlier') : historyError ? t('conversation.retryEarlier') : t('conversation.loadEarlier')}</button>}
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />{t('conversation.loading')}</div>}
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
-            {turns.map((turn, index) => {
-              // A turn is what one prompt caused, up to the next prompt. While it is the live one it
-              // is shown step by step; once it is finished the steps collapse and the result stands
-              // alone, so a conversation of many turns reads as its answers.
-              const live = index === turns.length - 1 && turnRunning;
-              const steps = turn.body.slice(0, turn.resultIndex);
-              const collapsed = !live && steps.length > 0 && !steps.some(row => row.message?.role === 'error' || row.message?.role === 'question');
-              const result = turn.body.slice(turn.resultIndex);
-              return <Fragment key={turn.key}>
-                {turn.user && <ConversationRow row={turn.user} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />}
-                {collapsed
-                  ? <details className="turn-process"><summary><TerminalWindow size={13} /><span>{t('turn.process')}</span><span className="tool-status">{t(steps.length === 1 ? 'turn.step' : 'turn.steps', { count: steps.length })}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{steps.map(row => <ConversationRow key={row.key} row={row} running={false} />)}</div></details>
-                  : steps.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
-                {result.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
-              </Fragment>;
-            })}
+            {/* The wire history does not say that the last assistant message summarizes its predecessors.
+                Keep every received answer visible; only explicit tool details are collapsible. */}
+            {rows.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
             <div ref={bottom} /></div></section>
-          <footer className="composer-area"><div className="composer-width">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
+          <footer className="composer-area"><div className="composer-width"><div className="composer-attachments">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
-          <AgentStrip agents={runningAgents} />
+          <AgentStrip key={session.id} agents={runningAgents} />
           {pending.length > 0 && <div className="queued-strip" role="status" aria-label={t('queue.aria')}>{pending.map(item => <div className="queued-item" key={item.id}>{editingQueued === item.id ? <input className="queued-edit" aria-label={t('queue.editLabel')} value={queuedDraft} autoFocus onChange={event => setQueuedDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (queuedDraft.trim()) void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() }); } if (event.key === 'Escape') setEditingQueued(undefined); }} /> : <span className="queued-text" title={item.text}>{item.text}</span>}<span className="queued-buttons">{editingQueued === item.id ? <button type="button" disabled={!connected || busy || !queuedDraft.trim()} onClick={() => void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() })}>{t('queue.save')}</button> : <button type="button" disabled={!connected || busy} onClick={() => { setEditingQueued(item.id); setQueuedDraft(item.text); }}>{t('queue.edit')}</button>}<button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'remove' })}>{t('queue.remove')}</button><button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'steer' })}>{t('queue.steer')}</button></span></div>)}</div>}
-          <form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim()) return; submit(prompt, false); }}>
+          </div><form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim()) return; submit(prompt, false); }}>
               <textarea aria-label={t('composer.messageAria')} placeholder={t('composer.placeholder')} value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} disabled={!connected || session.archived || ['interrupted', 'error'].includes(session.status)} onKeyDown={event => { if (event.key !== 'Enter') return; if (event.altKey) { event.preventDefault(); submit(prompt, true); } else if (event.metaKey || event.ctrlKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-              <div className="composer-bottom"><span><FolderSimple size={14} />{shortPath(session.cwd)}</span><div>{modelSupport && <span className="model-switch" ref={modelSwitch}><button type="button" className="model-chip" aria-label={t('composer.chooseModel')} aria-expanded={showModel} aria-haspopup="dialog" disabled={!connected || session.archived} onClick={() => { if (!showModel) void refreshCatalog(); setShowModel(value => !value); }}>{modelPending ? t('model.switching') : modelChipLabel(session, catalog)}</button>{showModel && <ModelPicker anchor={modelSwitch} catalog={catalog?.runtimeId === runtime?.id ? catalog?.value : undefined} current={session.model} disabled={!connected || busy || session.archived === true} pending={modelPending} error={modelError} choose={chooseModel}>{catalog?.runtimeId === runtime?.id && <>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || modelPending || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</ModelPicker>}</span>}{['running', 'waiting_approval'].includes(session.status) && <button className="stop-button" type="button" aria-label={t('composer.stopTask')} disabled={!connected} onClick={() => void perform(async c => { await c.request('session.cancel', { sessionId: session.id }); })}><Stop size={13} weight="fill" />{t('composer.stop')}</button>}<button className="send-button" type="submit" aria-label={t('composer.send')} disabled={busy || !connected || session.archived || !prompt.trim() || ['interrupted', 'error'].includes(session.status)}>{busy ? <CircleNotch className="spin" size={18} /> : <ArrowUp size={20} />}</button></div></div>
+              <div className="composer-bottom"><span><FolderSimple size={14} />{shortPath(session.cwd)}</span><div>{modelSupport && <span className="model-switch" ref={modelSwitch}><button type="button" className="model-chip" aria-label={t('composer.chooseModel')} aria-expanded={showModel} aria-haspopup="dialog" disabled={!connected || session.archived} onClick={() => { if (!showModel) void refreshCatalog(); setShowModel(value => !value); }}>{modelPending ? t('model.switching') : modelChipLabel(session, catalog)}</button>{showModel && <ModelPicker anchor={modelSwitch} catalog={catalog?.runtimeId === runtime?.id ? catalog?.value : undefined} current={session.model} disabled={!connected || busy || session.archived === true} pending={modelPending} error={modelError} catalogLoading={catalogStatus?.runtimeId === runtime?.id && catalogStatus.loading} catalogError={catalogStatus?.runtimeId === runtime?.id ? catalogStatus.error : ''} retryCatalog={() => void refreshCatalog()} choose={chooseModel}>{catalog?.runtimeId === runtime?.id && <>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || modelPending || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</ModelPicker>}</span>}{['running', 'waiting_approval'].includes(session.status) && <button className="stop-button" type="button" aria-label={t('composer.stopTask')} disabled={!connected} onClick={() => void perform(async c => { await c.request('session.cancel', { sessionId: session.id }); })}><Stop size={13} weight="fill" />{t('composer.stop')}</button>}<button className="send-button" type="submit" aria-label={t('composer.send')} disabled={busy || !connected || session.archived || !prompt.trim() || ['interrupted', 'error'].includes(session.status)}>{busy ? <CircleNotch className="spin" size={18} /> : <ArrowUp size={20} />}</button></div></div>
             </form><div className="composer-caption"><LocaleSwitch /><span><ShieldCheck size={12} />{connection?.kind === 'remote' ? t('composer.encrypted') : t('composer.local')}</span><span>{connected ? t('composer.shared') : t('composer.disconnected')}</span></div>
           </div></footer>
         </>}

@@ -6,9 +6,10 @@ import { carriedEffort, type ModelChoice } from './modelChoice';
 import { useLocale } from './i18n';
 
 /** Native buttons keep Tab/Enter/Space available without a second, native select popup. */
-export function ModelPicker({ anchor, catalog, current, disabled, pending, error, choose, children }: {
+export function ModelPicker({ anchor, catalog, current, disabled, pending, error, catalogLoading, catalogError, retryCatalog, choose, children }: {
   anchor: RefObject<HTMLSpanElement | null>; catalog?: ModelCatalog; current?: ModelChoice;
   disabled: boolean; pending: boolean; error: string;
+  catalogLoading: boolean; catalogError: string; retryCatalog: () => void;
   choose: (provider: string, model: string, effort?: string) => void; children?: ReactNode;
 }) {
   const t = useLocale();
@@ -34,7 +35,7 @@ export function ModelPicker({ anchor, catalog, current, disabled, pending, error
   const needle = query.trim().toLocaleLowerCase();
   const groups = catalog?.groups.map(group => ({ ...group, models: group.models.filter(model => `${group.name} ${group.id} ${model.name} ${model.id}`.toLocaleLowerCase().includes(needle)) })).filter(group => group.models.length) ?? [];
   const selected = current ?? catalog?.default;
-  return <div ref={panel} className="model-picker" style={position} role="dialog" aria-label={t('model.label')} aria-busy={pending} onKeyDown={event => {
+  return <div ref={panel} className="model-picker" style={position} role="dialog" aria-label={t('model.label')} aria-busy={pending || catalogLoading} onKeyDown={event => {
     // Search is inside the composer form; Enter must never send its draft.
     if (event.key === 'Enter' && event.target === search.current) { event.preventDefault(); return; }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || event.target instanceof HTMLSelectElement) return;
@@ -58,7 +59,9 @@ export function ModelPicker({ anchor, catalog, current, disabled, pending, error
         })}
       </section>)}{!groups.length && <p role="status">{t('model.noResults')}</p>}</div>
       {children}
-    </> : <p className="model-loading">{t('model.loadingCatalog')}</p>}
+    </> : null}
+    {catalogLoading && <p className="model-loading" role="status">{t('model.loadingCatalog')}</p>}
+    {catalogError && <div className="model-catalog-failure"><p className="model-error" role="alert">{t('model.catalogFailed')} {catalogError}</p>{catalog && <p className="model-loading">{t('model.catalogStale')}</p>}<button type="button" disabled={catalogLoading} onClick={retryCatalog}>{t('model.catalogRetry')}</button></div>}
     {pending && <p role="status">{t('model.switching')}</p>}
     {error && <p className="model-error" role="alert">{error}</p>}
   </div>;

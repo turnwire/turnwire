@@ -48,6 +48,20 @@ try {
 
   // The picker has to survive the phone layout, which is where it is actually used.
   await page.setViewportSize({ width: 390, height: 844 });
+  const sidebar = page.locator('.sidebar');
+  await expect(sidebar).toHaveAttribute('inert', '');
+  const sidebarOpen = page.getByRole('button', { name: 'Open session list', exact: true });
+  await sidebarOpen.click();
+  const sidebarClose = sidebar.getByRole('button', { name: 'Close list', exact: true });
+  await expect(sidebarClose).toBeFocused();
+  await sidebarClose.press('Escape');
+  await expect(sidebarOpen).toBeFocused();
+  await expect(sidebar).toHaveAttribute('inert', '');
+  await sidebar.locator('input').first().evaluate(input => input.focus());
+  await expect(sidebarOpen).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(sidebar).not.toHaveAttribute('inert', '');
+  await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   // The page itself must not move: the document fits the viewport and the conversation is the only
   // scroller, so a thumb swipe cannot drag the topbar or the composer out from under the finger.
@@ -104,6 +118,13 @@ try {
     const rect = panel.getBoundingClientRect();
     return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1;
   })).toBe(true);
+  // Stress presentation without inventing a catalog/model ID or changing selectable options.
+  await picker.locator('.model-default').evaluate(element => {
+    const original = element.textContent; element.textContent = original.repeat(20).replaceAll(' ', '');
+    const panel = element.closest('.model-picker');
+    if (panel.scrollWidth > panel.clientWidth + 1) throw new Error('Long runtime default overflows picker');
+    element.textContent = original;
+  });
   expect(await picker.locator('.model-list').evaluate(list => getComputedStyle(list).overflowY)).toBe('auto');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -148,7 +169,30 @@ try {
   await search.press('Escape');
   await expect(picker).toHaveCount(0);
   await expect(chip).toBeFocused();
-  await openPicker();
+  // Refresh failures retain runtime-owned stale options and provide a retry, not an endless spinner.
+  let releaseCatalog;
+  const catalogGate = new Promise(resolve => { releaseCatalog = resolve; });
+  const catalogFailure = async route => {
+    const body = rpcBody(route.request());
+    if (body?.method !== 'model.catalog') return route.continue();
+    await catalogGate;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ v: 1, id: body.id, ok: false, error: { code: 'REMOTE_ERROR', message: 'Catalog transport failure '.repeat(30) } }) });
+  };
+  await page.route(rpcUrl, catalogFailure);
+  try {
+    await chip.click();
+    await expect(picker.getByRole('status')).toHaveText('Loading model catalog…');
+    await expect(modelButtons).toHaveCount(entries.length);
+    releaseCatalog();
+    await expect(picker.getByRole('alert')).toContainText('Could not load model catalog.');
+    await expect(picker.getByText('Showing the last loaded catalog; availability may have changed.')).toBeVisible();
+    await expect(modelButtons).toHaveCount(entries.length);
+    expect(await picker.evaluate(panel => panel.scrollWidth <= panel.clientWidth + 1)).toBe(true);
+  } finally { releaseCatalog(); await page.unroute(rpcUrl, catalogFailure); }
+  const retryResponse = page.waitForResponse(response => rpcBody(response.request())?.method === 'model.catalog');
+  await picker.getByRole('button', { name: 'Retry model catalog', exact: true }).click();
+  expect((await (await retryResponse).json()).ok).toBe(true);
+  await expect(picker.getByRole('alert')).toHaveCount(0);
 
   // Hold a real local-RPC attempt at the transport boundary. A second DOM click while disabled
   // must not emit another request. Reject without forwarding, so the host selection cannot change.
@@ -201,9 +245,27 @@ try {
     await page.keyboard.press('ArrowDown');
   }
   await expect(targetButton).toBeFocused();
+  let releaseSuccess; let successHeld = false;
+  const successGate = new Promise(resolve => { releaseSuccess = resolve; });
+  const delayedSuccess = async route => {
+    if (rpcBody(route.request())?.method !== 'session.setModel') return route.continue();
+    const response = await route.fetch(); // Preserve the real daemon/runtime selection response.
+    successHeld = true; await successGate; await route.fulfill({ response });
+  };
+  await page.route(rpcUrl, delayedSuccess);
   const selectionResponse = page.waitForResponse(response => rpcBody(response.request())?.method === 'session.setModel');
-  await page.keyboard.press('Enter');
-  const selected = await (await selectionResponse).json();
+  let selected;
+  try {
+    await page.keyboard.press('Enter');
+    await expect.poll(() => successHeld).toBe(true);
+    await search.press('Escape');
+    const composerInput = page.locator('.composer textarea');
+    await composerInput.focus();
+    releaseSuccess();
+    selected = await (await selectionResponse).json();
+    await expect(chip).not.toHaveText('Switching model…');
+    await expect(composerInput).toBeFocused();
+  } finally { releaseSuccess(); await page.unroute(rpcUrl, delayedSuccess); }
   expect(selected.ok).toBe(true);
   expect(selected.result.model.provider).toBe(target.provider);
   expect(selected.result.model.model).toBe(target.model.id);
@@ -246,9 +308,25 @@ try {
   if (efforts.length) await expect(effort).toHaveValue(storedEffort);
   else await expect(effort).toHaveCount(0);
 
+  // On a fresh page there is no stale catalog: failure must still end loading and expose retry.
+  await page.route(rpcUrl, catalogFailure);
+  try {
+    await page.reload();
+    await expect(chip).toBeVisible();
+    await chip.click();
+    await expect(picker.getByRole('alert')).toContainText('Could not load model catalog.');
+    await expect(picker.getByRole('status')).toHaveCount(0);
+    await expect(modelButtons).toHaveCount(0);
+    await expect(picker.getByRole('button', { name: 'Retry model catalog' })).toBeEnabled();
+  } finally { await page.unroute(rpcUrl, catalogFailure); }
+  await picker.getByRole('button', { name: 'Retry model catalog' }).click();
+  await expect(modelButtons).toHaveCount(entries.length);
+  await expect(picker.getByRole('alert')).toHaveCount(0);
+
   expect(errors).toEqual([]);
-  console.log('UI model checks passed: phone geometry, runtime-grouped searchable list, checked current model, Escape focus restoration, pending duplicate lock, inline failure/retry, success closes, runtime effort options where available, selection survives reload.');
+  console.log('UI model checks passed: mobile sidebar inert/open-close focus and desktop availability, catalog loading/initial failure/stale failure/retry, delayed selection preserves composer focus, long default wrapping,  phone geometry, runtime-grouped searchable list, checked current model, Escape focus restoration, pending duplicate lock, inline failure/retry, success closes, runtime effort options where available, selection survives reload.');
 } catch (error) {
-  console.error(await page.locator('main').innerText());
+  console.error('Page errors:', errors);
+  console.error(await page.locator('body').innerText());
   throw error;
 } finally { await browser.close(); }

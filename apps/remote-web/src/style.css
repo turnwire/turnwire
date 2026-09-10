@@ -128,6 +128,9 @@
 /* Background agents sit above the queue: a delegation returns at once, so a running child has no
    other surface until it reports back. */
 .agent-strip { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 0 2px 8px; padding: 8px 11px; border: 1px solid #e2e9f3; border-radius: 10px; background: #f5f8fd; }
+.composer-attachments { min-width: 0; max-height: 35dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.composer-attachments .approval-panel { min-width: 0; overflow-wrap: anywhere; }
+.agent-list { display: grid; gap: 4px; min-width: 0; max-height: 26dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .agent-heading { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: #7d8ca3; }
 .agent-row { display: grid; grid-template-columns: minmax(0, 1fr); }
 /* The row is the control that opens the child's own plan, so it keeps the strip's flat look while
@@ -161,6 +164,9 @@
 /* Collapsed by default: the composer keeps its height, and the chip carries the runtime name. */
 .model-chip { display: flex; align-items: center; max-width: 44vw; border: 0; border-radius: 8px; padding: 7px 9px; background: #f2f4f8; color: #66768c; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-loading { font-size: 12px; color: var(--muted, #647184); }
+.model-picker .model-default, .model-picker .model-loading, .model-picker .model-error, .model-picker .model-list h3 { white-space: normal; overflow-wrap: anywhere; }
+.model-catalog-failure { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.model-catalog-failure button { white-space: normal; overflow-wrap: anywhere; }
 @media(max-width:700px) { .model-picker { width: min(300px, calc(100vw - 26px)); padding: 11px; } .model-picker select { font-size: 16px; } }
 
 
