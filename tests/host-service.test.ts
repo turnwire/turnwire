@@ -17,7 +17,10 @@ process.on('SIGTERM',()=>{writeFileSync('dsh-stopped','yes');process.exit(0)});s
   await writeFile(join(root, 'daemon.mjs'), `import {writeFileSync} from 'node:fs';
 writeFileSync('daemon.json',JSON.stringify({hasKey:!!process.env.NOVE_HARNESS_DEEPSEEK_API_KEY,url:process.env.TURNWIRE_DSH_URL,runtime:process.env.TURNWIRE_RUNTIME}));
 process.on('SIGTERM',()=>{writeFileSync('daemon-stopped','yes');process.exit(0)});setInterval(()=>{},1000);`);
-  const child = spawn(process.execPath, ['--import', 'tsx', resolve('apps/daemon/src/host-service.ts')], { env: { ...process.env, NOVE_HARNESS_DEEPSEEK_API_KEY: '', TURNWIRE_RELAY_TOKEN: 'fixture-relay', TURNWIRE_INSTALL_DIR: root, TURNWIRE_DSH_ENTRY: join(root, 'dsh.mjs'), TURNWIRE_DAEMON_ENTRY: join(root, 'daemon.mjs') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Pin every location and port the supervisor reads: an exported development environment must
+  // not point the fixture at the developer's state, DSH home, env file or DSH port.
+  const environment = { ...process.env, NOVE_HARNESS_DEEPSEEK_API_KEY: '', TURNWIRE_RELAY_TOKEN: 'fixture-relay', TURNWIRE_INSTALL_DIR: root, TURNWIRE_HOME: join(root, 'state'), TURNWIRE_DSH_HOME: join(root, 'dsh-state'), TURNWIRE_DSH_ENV_FILE: join(root, 'config/dsh.env.json'), TURNWIRE_DSH_PORT: '3080', TURNWIRE_DSH_ENTRY: join(root, 'dsh.mjs'), TURNWIRE_DAEMON_ENTRY: join(root, 'daemon.mjs') };
+  const child = spawn(process.execPath, ['--import', 'tsx', resolve('apps/daemon/src/host-service.ts')], { env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stdout.on('data', chunk => { logs += String(chunk); }); child.stderr.on('data', chunk => { logs += String(chunk); });
   const stopped = new Promise(resolve => child.once('exit', resolve));
   try {
@@ -31,7 +34,7 @@ process.on('SIGTERM',()=>{writeFileSync('daemon-stopped','yes');process.exit(0)}
 
 it('fails promptly when DSH exits before readiness, without starting the daemon', async () => {
   const root = await mkdtemp(join(tmpdir(), 'turnwire-host-failure-')); await writeFile(join(root, 'dsh.mjs'), 'process.exit(2)');
-  const child = spawn(process.execPath, ['--import', 'tsx', resolve('apps/daemon/src/host-service.ts')], { env: { ...process.env, NOVE_HARNESS_DEEPSEEK_API_KEY: 'fixture', TURNWIRE_INSTALL_DIR: root, TURNWIRE_DSH_ENTRY: join(root, 'dsh.mjs'), TURNWIRE_DAEMON_ENTRY: join(root, 'does-not-exist.mjs') }, stdio: 'ignore' });
+  const child = spawn(process.execPath, ['--import', 'tsx', resolve('apps/daemon/src/host-service.ts')], { env: { ...process.env, NOVE_HARNESS_DEEPSEEK_API_KEY: 'fixture', TURNWIRE_INSTALL_DIR: root, TURNWIRE_HOME: join(root, 'state'), TURNWIRE_DSH_HOME: join(root, 'dsh-state'), TURNWIRE_DSH_ENTRY: join(root, 'dsh.mjs'), TURNWIRE_DAEMON_ENTRY: join(root, 'does-not-exist.mjs') }, stdio: 'ignore' });
   try { expect(await new Promise(resolve => child.once('exit', resolve))).toBe(1); }
   finally { child.kill('SIGTERM'); await rm(root, { recursive: true, force: true }); }
 });
