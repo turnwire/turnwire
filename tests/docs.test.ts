@@ -33,7 +33,7 @@ it('only documents npm scripts that exist', () => {
 it('only references repository files that exist', () => {
   const missing = new Set<string>();
   for (const document of documents) {
-    for (const [, path] of read(document).matchAll(/`((?:apps|packages|docs|config|scripts)\/[\w./-]+)`/g)) {
+    for (const [, path] of read(document).matchAll(/`((?:apps|packages|docs|config|scripts|deploy)\/[\w./-]+)`/g)) {
       // Build output is absent from a fresh clone, and `npm run check` builds after the tests.
       if (path!.includes('dist/') || privatePaths.has(path!)) continue;
       if (!existsSync(resolve(root, path!))) missing.add(`${document}: ${path}`);
@@ -55,27 +55,38 @@ it('only documents CLI commands the program defines', () => {
   expect([...unknown]).toEqual([]);
 });
 
-it('documents every top-level CLI command in the README', () => {
-  const readme = read('README.md');
-  const undocumented = createProgram().commands.map(command => command.name()).filter(name => !readme.includes(`\`turnwire ${name}`));
+it('documents every top-level CLI command', () => {
+  const documented = documents.map(document => read(document)).join('\n');
+  const undocumented = createProgram().commands.map(command => command.name()).filter(name => !documented.includes(`\`turnwire ${name}`));
   expect(undocumented).toEqual([]);
 });
 
 it('pins the DSH build the adapter was written against', () => {
-  const readme = read('README.md');
-  expect(readme).toContain(DSH_SOURCE_REVISION);
+  const contract = read('docs/DSH.md');
+  expect(contract).toContain(DSH_SOURCE_REVISION);
   const version = /@deepseek-ai\/dsh@([0-9][^\s"']*)/.exec(manifest.scripts['dev:dsh'] ?? '')?.[1];
   expect(version).toBeTruthy();
-  expect(readme).toContain(version!);
-  expect(read('docs/DSH.md')).toContain(version!);
+  expect(contract).toContain(version!);
+  expect(read('docs/DEVELOPING.md')).toContain(version!);
 });
 
 it('names the DSH credential variable the same way everywhere', () => {
   const name = /apiKeyEnv:\s*([A-Z][A-Z0-9_]*)/.exec(read('config/dsh-deepseek.patch.yml'))?.[1];
   expect(name).toBeTruthy();
-  for (const file of ['README.md', 'AGENTS.md', '.env.example', 'docs/DEPLOYMENT.md', 'docs/DSH.md', 'apps/daemon/src/host-service.ts']) {
+  for (const file of ['docs/DEVELOPING.md', 'AGENTS.md', '.env.example', 'docs/DEPLOYMENT.md', 'docs/DSH.md', 'apps/daemon/src/host-service.ts']) {
     expect(read(file), file).toContain(name!);
   }
+});
+
+it('links to files that exist', () => {
+  const broken = new Set<string>();
+  for (const document of documents) {
+    for (const [, target] of read(document).matchAll(/\]\(([^)#\s]+\.md)(?:#[^)]*)?\)/g)) {
+      if (target!.includes('://')) continue;  // external links are not repository files
+      if (!existsSync(resolve(root, document, '..', target!))) broken.add(`${document} -> ${target}`);
+    }
+  }
+  expect([...broken]).toEqual([]);
 });
 
 it('links to headings that exist', () => {
