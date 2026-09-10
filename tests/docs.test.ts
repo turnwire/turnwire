@@ -15,6 +15,12 @@ const root = process.cwd();
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const manifest = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
 const documents = ['README.md', ...readdirSync(resolve(root, 'docs')).filter(name => name.endsWith('.md')).map(name => `docs/${name}`)];
+/**
+ * Documented paths that are deliberately absent from the repository: the operator creates these
+ * with mode 0600 (see docs/DEPLOYMENT.md), so a fresh clone never has them. Everything else a
+ * document points at must exist, which is what catches a renamed or moved file.
+ */
+const privatePaths = new Set(['config/dsh.env.json']);
 
 it('only documents npm scripts that exist', () => {
   const missing = new Set<string>();
@@ -29,7 +35,7 @@ it('only references repository files that exist', () => {
   for (const document of documents) {
     for (const [, path] of read(document).matchAll(/`((?:apps|packages|docs|config|scripts)\/[\w./-]+)`/g)) {
       // Build output is absent from a fresh clone, and `npm run check` builds after the tests.
-      if (path!.includes('dist/')) continue;
+      if (path!.includes('dist/') || privatePaths.has(path!)) continue;
       if (!existsSync(resolve(root, path!))) missing.add(`${document}: ${path}`);
     }
   }
