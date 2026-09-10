@@ -60,7 +60,9 @@ export const eventDataSchema = z.discriminatedUnion('type', [
 export type EventData = z.infer<typeof eventDataSchema>;
 export const eventSchema = z.object({ seq: z.number().int().nonnegative(), time: z.string(), originSeq: z.number().int().nonnegative().optional(), data: eventDataSchema });
 export type TurnwireEvent = z.infer<typeof eventSchema>;
-export interface RuntimeInfo { id: string; name: string; online: boolean; message: string; capabilities: RuntimeCapabilities }
+export interface RuntimeInfo { id: string; name: string; online: boolean; message: string; capabilities: RuntimeCapabilities;
+  /** Background agents the runtime still owns; restarting the host would kill them. */
+  busy?: number }
 export interface Snapshot { device: { id: string; name: string }; sessions: Session[]; approvals: Approval[]; runtimes: RuntimeInfo[]; cursor: number }
 
 export const methodSchemas = {

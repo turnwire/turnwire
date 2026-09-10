@@ -21,6 +21,11 @@ export interface AgentRuntime {
   /** Present when `capabilities().modelSelection` is true. */
   modelCatalog?(): Promise<ModelCatalog>;
   /**
+   * Background agents this runtime still owns. A non-zero count means a restart is not a safe
+   * point: those agents live inside the runtime process and would be killed with it.
+   */
+  busy?(): number;
+  /**
    * Apply a selection and return what the runtime accepted. A runtime resolves defaults
    * (for example a reasoning effort) and may reject an unknown route, so callers render
    * the returned selection rather than assuming the requested one.

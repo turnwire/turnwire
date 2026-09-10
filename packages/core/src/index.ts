@@ -29,7 +29,7 @@ export class TurnwireCore {
     }
   }
   async snapshot(): Promise<Snapshot> {
-    const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
+    const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? { busy: runtime.busy() } : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
     return { device: this.device, sessions: this.store.sessions(), approvals: this.store.approvals().filter(a => a.status === 'pending'), runtimes, cursor: this.store.cursor() };
   }

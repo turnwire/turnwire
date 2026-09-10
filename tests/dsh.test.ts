@@ -17,6 +17,8 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   const streams = new Map<WebSocket, string>(); const events = new Set<WebSocket>();
   const item = (socket: WebSocket, streamId: string, value: unknown) => socket.send(JSON.stringify({ type: 'item', streamId, value }));
   const emit = (type: string, data: Record<string, unknown>) => { const entry = { type: 'event', event: { seq: seq++, time: Date.now(), type, data } }; records.push(entry); for (const [socket, stream] of streams) item(socket, stream, entry); };
+  /** Host-plane push, the channel api-session/status and approval requests already use. */
+  const publish = (name: string, args: unknown[]) => { for (const socket of events) item(socket, 'events', { type: 'emit', event: name, args }); };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, 'http://localhost');
     if (url.pathname === '/' && url.searchParams.get('token') === 'launch-secret') { res.writeHead(303, { 'set-cookie': 'dsh_auth=valid; HttpOnly', location: '/' }); res.end(); return; }
@@ -70,7 +72,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -90,6 +92,15 @@ it('uses the official cookie, exact named RPC arguments and mux, and resolves ap
   // Steering is a different wire value, not a client-side label.
   await runtime.sendMessage('s', { id: 'steer', text: '还要看日志', steer: true });
   expect(promptCalls().at(-1)?.args).toMatchObject({ request: { requestId: 'steer', mode: 'steer' } });
+});
+it('counts live background agents so a restart is not mistaken for a safe point', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
+  expect(runtime.busy()).toBe(0);
+  host.publish('subagent/start', [{ id: 'child-1' }]); host.publish('subagent/start', [{ id: 'child-2' }]);
+  await until(() => runtime.busy() === 2);
+  host.publish('subagent/end', [{ id: 'child-1' }]); await until(() => runtime.busy() === 1);
+  host.publish('subagent/end', [{ id: 'child-2' }]); await until(() => runtime.busy() === 0);
 });
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());

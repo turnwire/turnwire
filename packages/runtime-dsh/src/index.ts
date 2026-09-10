@@ -30,6 +30,8 @@ export class DshRuntime implements AgentRuntime {
   private live = new Map<string, { id: string; nextIndex: number; text: string }>();
   private pending = new Map<string, { sessionId: string; clientId: string; resolving?: boolean; cancelled?: boolean }>();
   private clientId?: string;
+  /** Live background agents, counted from the host's subagent lifecycle events. */
+  private children = 0;
   private lastError = 'DSH 尚未连接';
   constructor(private options: DshOptions) {
     this.url = new URL(options.url); this.token = options.token ?? this.url.searchParams.get('token') ?? undefined;
@@ -38,6 +40,7 @@ export class DshRuntime implements AgentRuntime {
     if (this.url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(this.url.hostname)) throw new Error('Non-loopback DSH connections require HTTPS');
   }
   capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true }; }
+  busy() { return this.children; }
   async health() { try { await this.connect(); return { online: true, message: 'DSH Host 已连接' }; } catch { return { online: false, message: this.lastError }; } }
   async createSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {
     await this.connect();
@@ -146,7 +149,7 @@ export class DshRuntime implements AgentRuntime {
             if (frame.type !== 'item') throw new Error(frame.error?.message ?? `DSH stream ${frame.streamId} ended`);
             const value = record(frame.value);
             if (frame.streamId === 'events' && value.type === 'ready') {
-              this.clientId = z.string().parse(value.clientId); clearTimeout(timer); resolve();
+              this.clientId = z.string().parse(value.clientId); clearTimeout(timer); resolve(); this.children = 0;
               for (const id of this.listeners.keys()) this.follow(id);
             } else if (frame.streamId === 'events') { void this.remoteEvent(value).catch(error => this.fail(error)); }
             else {
@@ -212,6 +215,8 @@ export class DshRuntime implements AgentRuntime {
       const args = Array.isArray(frame.args) ? frame.args : [];
       if (frame.event === 'api-session/status' && typeof args[0] === 'string' && this.listeners.has(args[0])) this.emit(args[0], { type: 'status', status: args[1] === true ? 'running' : 'idle' });
       if (frame.event === 'api-session/error' && typeof args[0] === 'string') this.emit(args[0], { type: 'error', message: String(args[1]) });
+      if (frame.event === 'subagent/start') this.children += 1;
+      if (frame.event === 'subagent/end') this.children = Math.max(0, this.children - 1);
     }
     if (frame.type !== 'waterfall' || !this.clientId) return;
     const sessionId = z.string().parse(frame.agentId); const eventId = z.string().parse(frame.eventId);

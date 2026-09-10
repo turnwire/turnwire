@@ -56,7 +56,7 @@ Three properties make repeat runs harmless:
   that check: a delegation tool returns as soon as it hands work to a child, so the session can read
   as idle while the child is still working, and the restart kills it. Before fan-out work, stop the
   timer (`systemctl --user stop turnwire-dev-reload.timer`) and start it again when the children are
-  done. Making the safe point cover children needs the host to report them, which it does not yet.
+  done. The runtime reports its live children (`busy` in the snapshot), so the wait covers them too. A child the runtime can no longer see — after a manual restart, for example — is outside the check, and stopping the timer by hand is the fallback.
 - **Restart is survivable.** A turn runs inside DSH, which persists its session log, and
   Turnwire reconnects by following the session and replaying from its stored cursor. After a
   reload, re-attach and continue.

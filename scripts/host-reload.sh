@@ -42,12 +42,18 @@ echo "waiting for a safe point (up to ${wait_seconds}s): no running session"
 while :; do
   running=$(npm run --silent turnwire -- status --json 2>/dev/null | node -e '
     let text = ""; process.stdin.on("data", part => { text += part; }).on("end", () => {
-      try { const snapshot = JSON.parse(text); process.stdout.write(String((snapshot.sessions ?? []).filter(s => s.status === "running" || s.status === "waiting_approval").length)); }
+      try {
+        const snapshot = JSON.parse(text);
+        const sessions = (snapshot.sessions ?? []).filter(s => s.status === "running" || s.status === "waiting_approval").length;
+        // Background subagents outlive an idle parent session, so they count too.
+        const children = (snapshot.runtimes ?? []).reduce((total, runtime) => total + (runtime.busy ?? 0), 0);
+        process.stdout.write(String(sessions + children));
+      }
       catch { process.stdout.write("unknown"); }
     });' || echo unknown)
   # An unreachable daemon is not a running session; the reload is still safe.
   if [ "$running" = "0" ] || [ "$running" = "unknown" ]; then break; fi
-  if [ "$(date +%s)" -ge "$deadline" ]; then echo "a session is still running; leaving the host alone" >&2; exit 1; fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then echo "a session or a background agent is still running; leaving the host alone" >&2; exit 1; fi
   sleep 5
 done
 
