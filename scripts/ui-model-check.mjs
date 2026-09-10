@@ -51,8 +51,13 @@ try {
   await expect(picker).toBeInViewport();
   // A deployment may register more routes than this one (a local bridge, for example), and those
   // belong in the picker too, so the check names the catalog it is about instead of counting
-  // everything the Host happens to offer.
-  await expect(picker.locator('option[value^="deepseek-official/"]')).toHaveCount(3);
+  // everything the Host happens to offer. The number of models on that route belongs to the runtime
+  // and changes with it, so what is pinned is the model this check selects and that nothing repeats.
+  const deepseek = picker.locator('option[value^="deepseek-official/"]');
+  expect(await deepseek.count()).toBeGreaterThan(0);
+  await expect(picker.locator('option[value="deepseek-official/deepseek-v4-pro"]')).toHaveCount(1);
+  const values = await picker.locator('option').evaluateAll(options => options.map(option => option.value));
+  expect(new Set(values).size).toBe(values.length);
   await expect(page.getByLabel('Reasoning effort', { exact: true })).toHaveCount(0);
 
   await picker.selectOption('deepseek-official/deepseek-v4-pro');

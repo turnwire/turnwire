@@ -21,7 +21,7 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm test && npm run build",
     "dev": "tsx apps/daemon/src/main.ts",
-    "dev:dsh": "npx --yes @deepseek-ai/dsh@0.1.5-alpha.1 web --patch config/dsh-deepseek.patch.yml --no-open",
+    "dev:dsh": "npx --yes @deepseek-ai/dsh@0.1.5-rc.1 --patch config/dsh-deepseek.patch.yml --profile web --no-open",
     "dev:web": "npm run dev -w @turnwire/remote-web",
     "dev:relay": "tsx apps/relay/src/main.ts",
     "turnwire": "tsx apps/cli/src/main.ts",

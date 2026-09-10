@@ -68,7 +68,7 @@ try {
   console.log(`  port     = ${port}`);
   console.log(`  bin      = ${dshBin}`);
 
-  child = spawn(dshBin, ['web', '--patch', patch, '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
+  child = spawn(dshBin, ['--patch', patch, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
     env: { ...process.env, DSH_HOME: dshHome, DO_NOT_TRACK: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

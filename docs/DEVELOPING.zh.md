@@ -29,7 +29,7 @@ npm run turnwire -- ls
 
 ## 接真实 DSH
 
-适配器依据官方源码版本 **0.1.5-alpha.1** 实现，使用官方 API Gateway 和 Remote mux，不解析终端输出。固定的源码修订写在 [DSH 接口说明](DSH.zh.md) —— 换版本前先读那份契约，alpha 与稳定标签的接口可能不同。
+适配器依据官方源码版本 **0.1.5-rc.1** 实现，使用官方 API Gateway 和 Remote mux，不解析终端输出。固定的源码修订写在 [DSH 接口说明](DSH.zh.md) —— 换版本前先读那份契约，alpha 与稳定标签的接口可能不同。
 
 ```bash
 # 终端 1：确保已 export TURNWIRE_HARNESS_DEEPSEEK_API_KEY（只检查是否存在，不输出密钥）
@@ -60,6 +60,9 @@ npm run check   # strict TypeScript + integration tests + production build
 ```bash
 # 模型选择器（隔离的 DSH 主机；需要 Chrome 和 `npm ci --prefix config/dsh-runtime`）：
 bash scripts/ui-model-check.sh
+
+# 真实 DSH 回合、审批、排队提示与派发记录（需要模型凭据）：
+node --import tsx scripts/dsh-live-check.mjs
 
 # 历史分页与切标签页，各自带隔离的 Relay、daemon 和 Chrome：
 node --import tsx scripts/history-ui-check.mjs

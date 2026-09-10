@@ -29,7 +29,7 @@ npm run turnwire -- ls
 
 ## Connecting a real DSH
 
-The adapter is implemented against official source version **0.1.5-alpha.1**, using the official API Gateway and Remote mux without parsing terminal output. The pinned source revision is written in the [DSH runtime adapter](DSH.md) — read that contract before changing versions, since the interfaces of alpha and stable tags can differ.
+The adapter is implemented against official source version **0.1.5-rc.1**, using the official API Gateway and Remote mux without parsing terminal output. The pinned source revision is written in the [DSH runtime adapter](DSH.md) — read that contract before changing versions, since the interfaces of alpha and stable tags can differ.
 
 ```bash
 # Terminal 1: make sure TURNWIRE_HARNESS_DEEPSEEK_API_KEY is exported (presence check only, no secret printed)
@@ -60,6 +60,9 @@ A push runs exactly that. The browser scenarios below each boot a real Relay, da
 ```bash
 # Model picker against an isolated DSH host (needs Chrome and `npm ci --prefix config/dsh-runtime`):
 bash scripts/ui-model-check.sh
+
+# A real DSH turn, approval, queued prompt and dispatch record (needs the model credential):
+node --import tsx scripts/dsh-live-check.mjs
 
 # History paging and tab switching, each with its own isolated Relay, daemon and Chrome:
 node --import tsx scripts/history-ui-check.mjs

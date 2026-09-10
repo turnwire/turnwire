@@ -7,7 +7,7 @@ import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runti
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
 
-export const DSH_SOURCE_REVISION = '5dda764ed3aa172535a7967b06ff95d9cbfe536a';
+export const DSH_SOURCE_REVISION = '183f08e9c6dde7e36cd2318eaee70b0da08fb35e';
 /** Bounds on one progress read: a run of delegations should be visible, not unbounded. */
 const MAX_SUBAGENTS = 50; const MAX_SUBAGENT_DEPTH = 3;
 const resultSchema = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), value: z.unknown() }), z.object({ ok: z.literal(false), error: z.object({ code: z.string(), message: z.string() }).passthrough() })]);

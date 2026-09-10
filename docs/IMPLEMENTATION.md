@@ -31,7 +31,7 @@ Build the Turnwire scaffold described in the original design conversation, using
 
 ## Research
 
-DSH source reference: `deepseek-ai/deepseek-harness` at `5dda764ed3aa172535a7967b06ff95d9cbfe536a` (2026-09-09), version `0.1.5-alpha.1`. Its API Gateway uses `POST /api/<namespace>/<method>` with a Connection `client-request` envelope containing `payload: { args }`. See `docs/DSH.md` for exact signatures and live verification.
+DSH source reference: `deepseek-ai/deepseek-harness` at `183f08e9c6dde7e36cd2318eaee70b0da08fb35e` (2026-09-09), version `0.1.5-rc.1`. Its API Gateway uses `POST /api/<namespace>/<method>` with a Connection `client-request` envelope containing `payload: { args }`. See `docs/DSH.md` for exact signatures and live verification.
 
 ## Progress
 

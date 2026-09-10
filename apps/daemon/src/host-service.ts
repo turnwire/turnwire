@@ -63,7 +63,7 @@ export async function runManagedHost() {
     return child;
   };
   // Process environment first, then the file: an operator's exported value wins over the stored one.
-  const dsh = launch(dshEntry, ['web', '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--no-open', '--host', '127.0.0.1', '--port', port], { ...forwarded, ...base, DSH_HOME: dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
+  const dsh = launch(dshEntry, ['--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', port], { ...forwarded, ...base, DSH_HOME: dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
   for (const stream of [dsh.stdout!, dsh.stderr!]) createInterface({ input: stream }).on('line', line => {
     if (!launchURL && !stopping) {
       const found = line.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/)?.[1];

@@ -45,7 +45,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Starting an isolated DSH host on 127.0.0.1:$dsh_port"
-DSH_HOME="$dsh_home" DO_NOT_TRACK=1 "$dsh_bin" web --patch config/dsh-deepseek.patch.yml --no-open --host 127.0.0.1 --port "$dsh_port" > "$logs/dsh.log" 2>&1 &
+DSH_HOME="$dsh_home" DO_NOT_TRACK=1 "$dsh_bin" --patch config/dsh-deepseek.patch.yml --profile web --no-open --host 127.0.0.1 --port "$dsh_port" > "$logs/dsh.log" 2>&1 &
 pids+=($!)
 
 # The Host prints its authenticated launch URL once it is listening.
