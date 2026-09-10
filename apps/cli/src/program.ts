@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
 import { tunnelProviderSchema } from '@turnwire/protocol';
-import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView } from '@turnwire/protocol';
+import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { safe, printRemote, printPairing, remoteMenu, runTui, deploymentMenu, watchDeployment, directMenu, notificationsMenu } from './terminal.js';
 import { detectLocale, isLocale, localeFromArgv, localizedError, padEnd, setLocale, t, textIn } from './i18n.js';
 import type { Locale } from './i18n.js';
@@ -57,6 +57,12 @@ program.command('new [prompt]').description(t('command.new')).option('--cwd <pat
   const s = await c.request<Session>('session.create', { cwd: resolve(options.cwd), title: options.title, runtimeId: options.runtime, ...(options.model ? { model: modelSelection(options.model, options.effort) } : {}) });
   if (prompt) await c.request('session.message', { sessionId: s.id, text: prompt });
   if (program.opts().json) print(s); else console.log(t('new.success', { id: s.id, model: showModel(s) }));
+}));
+/** The terminal's half of the phone's folder picker: list one level of the host, then `new --cwd`. */
+program.command('dirs [path]').description(t('command.dirs')).action((path: string | undefined) => withClient(async c => {
+  const listing = await c.request<WorkspaceListing>('workspace.list', path ? { path: resolve(path) } : {});
+  if (program.opts().json) print(listing);
+  else { console.log(safe(listing.path)); if (!listing.entries.length) console.log(t('dirs.empty')); else for (const entry of listing.entries) console.log(`  ${safe(entry.name)}`); }
 }));
 program.command('models').description(t('command.models')).action(() => withClient(async c => {
   const catalog = await c.request<ModelCatalog>('model.catalog', {});

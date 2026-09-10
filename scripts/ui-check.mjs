@@ -24,6 +24,24 @@ try {
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: /New session/ }).first().click();
   await page.getByLabel('Session name').fill('验证 Turnwire 的多端接续');
+  // The working directory is chosen from the host rather than typed: the picker opens at the host's
+  // home (or the folder the dialog already offered), walks up and back, and hands the folder it
+  // landed on to the field. The path depends on the machine running this daemon, so the check
+  // follows what the host reports instead of predicting it, and the field is what proves it arrived.
+  await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+  const picker = page.locator('.folder-picker'); const shown = picker.locator('code');
+  await expect(shown).toHaveText(/^\//);
+  const opening = (await shown.textContent()) ?? '';
+  await picker.getByRole('button', { name: 'Up', exact: true }).click();
+  await expect(shown).not.toHaveText(opening);
+  const parentPath = (await shown.textContent()) ?? '';
+  await picker.getByRole('button', { name: 'Home', exact: true }).click();
+  await expect(shown).not.toHaveText(parentPath);
+  const chosenFolder = (await shown.textContent()) ?? '';
+  await picker.getByRole('button', { name: 'Use this folder', exact: true }).click();
+  await expect(picker).toHaveCount(0);
+  await expect(page.getByLabel('Working directory')).toHaveValue(chosenFolder);
+  // Typing a path stays available for a folder the picker would take many taps to reach.
   await page.getByLabel('Working directory').fill(process.cwd());
   await page.getByRole('button', { name: 'Create session', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -116,6 +134,7 @@ try {
   const delegate = page.locator('.session-actions [data-auto-approve]');
   await expect(delegate).toHaveAttribute('data-auto-approve', 'off');
   await expect(delegate).toHaveText('Approve for me');
+  await expect(delegate).toBeEnabled();
   await delegate.dispatchEvent('click');
   await page.locator('.session-actions summary').click();
   await expect(page.locator('.auto-approve-chip')).toHaveText('Approving for you');
@@ -126,7 +145,11 @@ try {
   await page.locator('.session-actions summary').click();
   await expect(delegate).toHaveAttribute('data-auto-approve', 'on');
   await expect(delegate).toHaveText('Ask me again');
+  // The switch is a command to the host, so the next prompt may only be sent once the host has
+  // confirmed the new state; the attribute is that confirmation, the chip is only what it looks like.
+  await expect(delegate).toBeEnabled();
   await delegate.dispatchEvent('click');
+  await expect(delegate).toHaveAttribute('data-auto-approve', 'off');
   await page.locator('.session-actions summary').click();
   await expect(page.locator('.auto-approve-chip')).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('第四条需要审批');

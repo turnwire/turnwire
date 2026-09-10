@@ -66,8 +66,34 @@ try {
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(200);
   const second = await context.newPage(); await second.goto(origin); await expect(second.locator('.connection-health')).toHaveAttribute('data-phase', 'connected'); await second.close();
+  // The backgrounded tab lost the identity to the new one and stayed quiet, so coming back is what
+  // has to rebuild it: the tab that was hidden reconnects when it is shown again.
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  // A phone is where typing an absolute path hurts most, so the picker is walked at 390px: it must
+  // offer the host's own folders, stay inside the screen, scroll in its own box rather than growing
+  // the dialog, and hand the folder it landed on back to the field.
+  await page.getByRole('button', { name: 'Open session list' }).click();
+  await page.getByRole('button', { name: /New session/ }).first().click();
+  await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+  const picker = page.locator('.folder-picker');
+  await expect(picker.locator('code')).toHaveText(/^\//);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const bounded = await picker.locator('.folder-list').evaluate(element => element.getBoundingClientRect().bottom <= innerHeight);
+  expect(bounded, 'the folder list grew past the screen').toBe(true);
+  await page.screenshot({ path: join(output, 'mobile-folder-picker.png'), fullPage: true, animations: 'disabled' });
+  const useFolder = picker.getByRole('button', { name: 'Use this folder', exact: true });
+  const onScreen = await useFolder.evaluate(element => { const box = element.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight; });
+  expect(onScreen, 'the picker action was pushed off the phone screen').toBe(true);
+  const chosen = (await picker.locator('code').textContent()) ?? '';
+  await useFolder.click();
+  await expect(page.getByLabel('Working directory')).toHaveValue(chosen);
+  const create = page.getByRole('button', { name: 'Create session', exact: true });
+  await create.scrollIntoViewIfNeeded(); await expect(create).toBeEnabled();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(errors).toEqual([]);
-  console.log('Remote browser checks passed: one-time pairing, reload, offline recovery, tab-switch socket reuse, inbox approval, persistent credentials, responsive layout.');
+  console.log('Remote browser checks passed: one-time pairing, reload, offline recovery, tab-switch socket reuse, inbox approval, remembered credentials, host folder picker, responsive layout.');
   console.log(`Screenshots: ${output}`);
 } catch (error) { await page.screenshot({ path: join(output, 'failure.png'), fullPage: true }); console.error(await page.locator('main').innerText()); throw error; }
 finally { await browser.close(); local.close(); await remote.close(); await server.close(); await relay.close(); await core.dispose(); await rm(directory, { recursive: true, force: true }); }

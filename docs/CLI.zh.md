@@ -16,6 +16,7 @@
 | `turnwire questions` | 列出正在运行的 Agent 在等回答的问题，以及每个问题给出的选项 |
 | `turnwire answer QUESTION_ID '标签' [--text '文字回答']` | 回答一个待处理的问题 |
 | `turnwire export SESSION_ID --output 会话.md` | 导出 Markdown 记录 |
+| `turnwire dirs [path]` | 逐层列出主机上可以作为会话目录的文件夹；与手机端选择器读的是同一份列表 |
 | `turnwire new [prompt] --cwd /absolute/path --title 标题` | 创建会话，默认 DSH |
 | `turnwire models` | 列出当前 runtime 注册的模型、默认模型与可选思考强度 |
 | `turnwire model SESSION_ID provider/model [--effort EFFORT]` | 选择会话运行的模型与思考强度；只接受 runtime 目录里的模型 |

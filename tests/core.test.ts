@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { TurnwireCore, Store } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import type { RpcResponse, Session } from '@turnwire/protocol';
+import type { RpcResponse, Session, WorkspaceListing } from '@turnwire/protocol';
 import { conversation } from '@turnwire/sdk';
 
 function value<T>(response: RpcResponse): T { if (!response.ok) throw new Error(response.error.message); return response.result as T; }
@@ -179,6 +179,44 @@ describe('durable daemon ownership', () => {
     expect((await call(core, 'x', 'shell.execute', {})).ok).toBe(false);
     expect((await call(core, 'y', 'session.message', { sessionId: s.id, text: '  ' })).ok).toBe(false);
     expect((await call(core, 'z', 'session.create', { runtimeId: 'demo', cwd: 'relative/path' })).ok).toBe(false);
+  });
+});
+describe('workspace browsing', () => {
+  it('offers the folders a session could start in, without files or dotfolders', async () => {
+    const { core } = setup();
+    const root = await mkdtemp(join(tmpdir(), 'turnwire-browse-')); cleanup.push(() => rm(root, { recursive: true, force: true }));
+    await mkdir(join(root, 'zeta')); await mkdir(join(root, 'Alpha')); await mkdir(join(root, '.hidden')); await writeFile(join(root, 'notes.txt'), 'not a folder');
+    await symlink(join(root, 'zeta'), join(root, 'link'));
+    const listing = value<WorkspaceListing>(await call(core, 'browse', 'workspace.list', { path: root }));
+    expect(listing.path).toBe(await realpath(root));
+    // Folders only, hidden ones left out, names in one stable order, and the link followed because
+    // it leads to a folder the session could actually use.
+    expect(listing.entries.map(entry => entry.name)).toEqual(['Alpha', 'link', 'zeta']);
+    expect(listing.entries.map(entry => entry.path)).toEqual(['Alpha', 'link', 'zeta'].map(name => join(listing.path, name)));
+    expect(listing.total).toBe(3);
+    expect(listing.parent).toBe(dirname(listing.path));
+    expect(listing.home).toBe(homedir());
+  });
+  it('starts at the host home and refuses paths that cannot host a session', async () => {
+    const { core } = setup();
+    const home = value<WorkspaceListing>(await call(core, 'home', 'workspace.list'));
+    expect(home.path).toBe(await realpath(homedir()));
+    const root = value<WorkspaceListing>(await call(core, 'filesystem-root', 'workspace.list', { path: '/' }));
+    expect(root.parent).toBeUndefined();
+    const file = fileURLToPath(new URL('./core.test.ts', import.meta.url));
+    for (const path of ['relative/dir', join(tmpdir(), `turnwire-missing-${process.pid}`), file]) {
+      const response = await call(core, `bad-${path}`, 'workspace.list', { path });
+      expect(response.ok).toBe(false); if (!response.ok) expect(response.error.code).toBe('INVALID_WORKSPACE');
+    }
+  });
+  it('reports a folder it cannot read instead of calling it empty', async () => {
+    if (process.getuid?.() === 0) return;
+    const { core } = setup();
+    const root = await mkdtemp(join(tmpdir(), 'turnwire-closed-')); const closed = join(root, 'closed');
+    await mkdir(closed, { mode: 0o000 });
+    cleanup.push(async () => { await chmod(closed, 0o700); await rm(root, { recursive: true, force: true }); });
+    const response = await call(core, 'closed', 'workspace.list', { path: closed });
+    expect(response.ok).toBe(false); if (!response.ok) expect(response.error.code).toBe('WORKSPACE_UNREADABLE');
   });
 });
 /** Text passed through `error.message` or a status field is the host's English fallback, not UI copy. */

@@ -4,7 +4,8 @@ import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView } from '@turnwire/protocol';
+import { TurnwireError } from '@turnwire/protocol';
+import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
@@ -323,7 +324,7 @@ export function App() {
           </div></footer>
         </>}
     </main>
-    {create && snapshot && <CreateSession snapshot={snapshot} busy={busy} close={() => setCreate(false)} onCreate={(cwd, title, runtimeId) => void perform(async c => { const s = await c.request<Session>('session.create', { cwd, title, runtimeId }); setSnapshot(previous => previous ? { ...previous, sessions: [s, ...previous.sessions.filter(p => p.id !== s.id)] } : previous); setSelected(s.id); setShowConnection(false); setCreate(false); })} />}
+    {create && snapshot && <CreateSession snapshot={snapshot} busy={busy} close={() => setCreate(false)} onBrowse={async path => { const c = clientRef.current; if (!c) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return c.request<WorkspaceListing>('workspace.list', path ? { path } : {}); }} onCreate={(cwd, title, runtimeId) => void perform(async c => { const s = await c.request<Session>('session.create', { cwd, title, runtimeId }); setSnapshot(previous => previous ? { ...previous, sessions: [s, ...previous.sessions.filter(p => p.id !== s.id)] } : previous); setSelected(s.id); setShowConnection(false); setCreate(false); })} />}
   </div>;
 }
 
@@ -363,9 +364,40 @@ function ToolRun({ items, running }: { items: ConversationMessage[]; running: bo
   return <details className="tool-group"><summary><TerminalWindow size={13} /><span>{label}</span><span className="tool-status">{status}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{items.map(item => <ToolCall key={item.id} message={item} />)}</div></details>;
 }
 
-function CreateSession({ snapshot, busy, close, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
+function CreateSession({ snapshot, busy, close, onBrowse, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onBrowse: (path?: string) => Promise<WorkspaceListing>; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
   const t = useLocale();
   const ref = useRef<HTMLDialogElement>(null); const [cwd, setCwd] = useState(snapshot.sessions[0]?.cwd ?? ''); const [title, setTitle] = useState(''); const [runtimeId, setRuntime] = useState(snapshot.runtimes[0]?.id ?? 'dsh');
+  const [listing, setListing] = useState<WorkspaceListing>(); const [failure, setFailure] = useState(''); const [reading, setReading] = useState(false);
   useEffect(() => { ref.current?.showModal(); }, []);
-  return <dialog ref={ref} onCancel={close} aria-labelledby="new-title"><form onSubmit={e => { e.preventDefault(); onCreate(cwd, title, runtimeId); }}><div className="dialog-heading"><h2 id="new-title">{t('common.newSession')}</h2><button type="button" className="icon-button" onClick={close} aria-label={t('common.close')}><X size={20} /></button></div><p>{t('create.intro')}</p><label>{t('create.name')}<input autoFocus required maxLength={200} value={title} onChange={e => setTitle(e.target.value)} placeholder={t('create.namePlaceholder')} /></label><label>{t('create.cwd')}<input required value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/absolute/path/to/project" /></label><label>{t('create.runtime')}<select value={runtimeId} onChange={e => setRuntime(e.target.value)}>{snapshot.runtimes.map(runtime => <option key={runtime.id} value={runtime.id} disabled={!runtime.online}>{runtime.name}{!runtime.online ? t('create.runtimeOffline') : ''}</option>)}</select></label>{!snapshot.runtimes.some(r => r.online) && <p role="status">{t('create.noRuntime')}</p>}<div className="dialog-actions"><button type="button" onClick={close}>{t('common.cancel')}</button><button className="primary" disabled={busy || !snapshot.runtimes.some(r => r.id === runtimeId && r.online)}>{busy ? t('create.creating') : t('create.create')}<ArrowRight size={16} /></button></div></form></dialog>;
+  /** Opens the picker at `path`, falling back to the host home so a stale path is not a dead end. */
+  async function browse(path?: string) {
+    setReading(true); setFailure('');
+    try { setListing(await onBrowse(path)); }
+    catch (error) {
+      if (!path) { setFailure(errorText(error)); setReading(false); return; }
+      try { setListing(await onBrowse()); setFailure(errorText(error)); }
+      catch (homeError) { setFailure(errorText(homeError)); }
+    }
+    setReading(false);
+  }
+  return <dialog ref={ref} onCancel={close} aria-labelledby="new-title"><form onSubmit={e => { e.preventDefault(); onCreate(cwd, title, runtimeId); }}>
+    <div className="dialog-heading"><h2 id="new-title">{t('common.newSession')}</h2><button type="button" className="icon-button" onClick={close} aria-label={t('common.close')}><X size={20} /></button></div>
+    <p>{t('create.intro')}</p>
+    <label>{t('create.name')}<input autoFocus required maxLength={200} value={title} onChange={e => setTitle(e.target.value)} placeholder={t('create.namePlaceholder')} /></label>
+    <label>{t('create.cwd')}<span className="field-row"><input required value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/absolute/path/to/project" /><button type="button" className="choose-folder" onClick={() => void browse(cwd || undefined)}><FolderSimple size={16} />{t('create.choose')}</button></span></label>
+    {listing && <section className="folder-picker" aria-label={t('create.folderPicker')}>
+      <header><code title={listing.path}>{listing.path}</code><span><button type="button" disabled={reading} onClick={() => void browse(listing.home)}>{t('create.home')}</button><button type="button" disabled={reading || !listing.parent} onClick={() => listing.parent && void browse(listing.parent)}>{t('create.up')}</button></span></header>
+      <div className="folder-list">
+        {listing.entries.map(entry => <button type="button" key={entry.path} onClick={() => void browse(entry.path)}><FolderSimple size={15} /><span>{entry.name}</span><CaretRight size={12} /></button>)}
+        {!listing.entries.length && !reading && <p role="status">{t('create.noFolders')}</p>}
+        {reading && <p role="status" className="folder-reading"><CircleNotch size={14} className="spin" />{t('create.reading')}</p>}
+      </div>
+      {listing.entries.length < listing.total && <p className="folder-note">{t('create.truncated', { shown: listing.entries.length, total: listing.total })}</p>}
+      <footer><button type="button" className="primary" onClick={() => { setCwd(listing.path); setListing(undefined); setFailure(''); }}>{t('create.useFolder')}</button><button type="button" onClick={() => { setListing(undefined); setFailure(''); }}>{t('common.cancel')}</button></footer>
+    </section>}
+    {failure && <p className="folder-error" role="alert">{failure}</p>}
+    <label>{t('create.runtime')}<select value={runtimeId} onChange={e => setRuntime(e.target.value)}>{snapshot.runtimes.map(runtime => <option key={runtime.id} value={runtime.id} disabled={!runtime.online}>{runtime.name}{!runtime.online ? t('create.runtimeOffline') : ''}</option>)}</select></label>
+    {!snapshot.runtimes.some(r => r.online) && <p role="status">{t('create.noRuntime')}</p>}
+    <div className="dialog-actions"><button type="button" onClick={close}>{t('common.cancel')}</button><button className="primary" disabled={busy || !snapshot.runtimes.some(r => r.id === runtimeId && r.online)}>{busy ? t('create.creating') : t('create.create')}<ArrowRight size={16} /></button></div>
+  </form></dialog>;
 }

@@ -150,6 +150,12 @@ export const queueActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('edit'), text: z.string().trim().min(1).max(100_000) }).strict(),
 ]);
 export type QueueAction = z.infer<typeof queueActionSchema>;
+/** One place a session could start: a directory on the host the client may choose. */
+export const workspaceEntrySchema = z.object({ name: z.string(), path: z.string() });
+/** Where a browse landed, where it came from, and what is inside it. Only folders are listed. */
+export const workspaceListingSchema = z.object({ path: z.string(), home: z.string(), parent: z.string().optional(), total: z.number().int().nonnegative(), entries: z.array(workspaceEntrySchema) });
+export type WorkspaceEntry = z.infer<typeof workspaceEntrySchema>;
+export type WorkspaceListing = z.infer<typeof workspaceListingSchema>;
 export interface Snapshot { device: { id: string; name: string }; sessions: Session[]; approvals: Approval[]; questions: Question[]; runtimes: RuntimeInfo[]; cursor: number }
 
 export const methodSchemas = {
@@ -160,6 +166,8 @@ export const methodSchemas = {
   'notifications.subscribe': pushSubscriptionSchema,
   'notifications.unsubscribe': z.object({}).strict(),
   'session.create': z.object({ cwd: z.string().min(1).max(4096), title: z.string().trim().min(1).max(200).default('New session'), runtimeId: idSchema.default('dsh'), model: modelSelectionSchema.optional() }).strict(),
+  /** Browse host folders so a client can choose a session's working directory instead of typing it. */
+  'workspace.list': z.object({ path: z.string().trim().min(1).max(4096).optional() }).strict(),
   'session.resume': z.object({ sessionId: idSchema }).strict(),
   'session.rename': z.object({ sessionId: idSchema, title: z.string().trim().min(1).max(200) }).strict(),
   'session.archive': z.object({ sessionId: idSchema, archived: z.boolean() }).strict(),
@@ -229,6 +237,7 @@ export const turnwireErrorCodes = [
   'SESSION_BUSY',
   'SESSION_NOT_FOUND',
   'STAGE_TIMEOUT',
+  'WORKSPACE_UNREADABLE',
 ] as const;
 export type TurnwireErrorCode = typeof turnwireErrorCodes[number];
 export class TurnwireError extends Error {

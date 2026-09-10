@@ -27,7 +27,7 @@ The TUI currently provides a line-oriented interactive command interface, includ
 | Capability | CLI | Interactive terminal | Native desktop |
 | --- | --- | --- | --- |
 | Host/runtime state and shared sessions | `status`, `ls` | Same commands | Sidebar and status |
-| Create a session in a workspace | `new --cwd --runtime` | Same command | New session / folder picker |
+| Create a session in a workspace | `dirs`, then `new --cwd --runtime` | Same commands | New session / folder picker |
 | Steer the running turn or queue behind it | `send --steer` (queue is the default) | Same command | Composer toggle while a turn runs |
 | Send messages and follow history/events/tools | `send`, `attach` (recent 40 records) | Same commands | Conversation (recent 40 records) |
 | Search / view archived sessions | `ls --search`, `--archived`, `--all` | Same commands | Workspace groups, search and archive filter |
@@ -58,6 +58,8 @@ The TUI currently provides a line-oriented interactive command interface, includ
 Host administration uses authenticated local `/remote` and `/devices`. A paired phone or remote CLI can operate sessions and approvals, but cannot change host settings or pair additional devices. This is a connection-permission boundary enforced by the daemon, not a missing UI feature. PWA currently serves this paired-phone role.
 
 The background-agent view (`subagent.list`), the three controls a waiting prompt owns, delegated approvals (`session.autoApprove`) and answering the agent's questions (`question.answer`) are in the PWA and the CLI/TUI. The desktop equivalents are still to come, so those cells are real gaps rather than platform differences. A delegated session is also the one place where no person reads an approval before it is granted — and a question is never delegated, because it has no safe default.
+
+The two folder pickers are not the same thing. The phone walks the host's own folders through `workspace.list`, which is the only picker that means anything over a remote connection, and `turnwire dirs` gives the terminal the same list. The desktop's panel chooses a folder on the Mac, so it matches the host only when the desktop is talking to a local daemon; a remote desktop connection still needs a typed path.
 
 Deployment uses the same local permission boundary through `/deployment`. Clients submit runtime configuration and display shared asynchronous status; they never run SSH or install services themselves. The daemon owns the job, persists private configuration, strips model credentials from child processes, and connects to the installed Relay through `RemoteController`. Server addresses, login accounts and key paths are required runtime input. Optional advanced settings are available through the shared JSON configuration in every client and native advanced fields. Closing a client leaves the job running; daemon interruption is explicitly reported for recovery.
 

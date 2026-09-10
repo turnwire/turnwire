@@ -16,6 +16,7 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | `turnwire questions` | List the questions a running agent is waiting on, with the choices each one offers |
 | `turnwire answer QUESTION_ID 'label' [--text 'written answer']` | Answer a pending question |
 | `turnwire export SESSION_ID --output session.md` | Export a Markdown record |
+| `turnwire dirs [path]` | List the host folders a session could start in, one level at a time; the same list the phone's picker walks |
 | `turnwire new [prompt] --cwd /absolute/path --title TITLE` | Create a session; DSH by default |
 | `turnwire models` | List the models registered by the current runtime, the default model and available thinking efforts |
 | `turnwire model SESSION_ID provider/model [--effort EFFORT]` | Choose the model and thinking effort a session runs with; only accepts models in the runtime catalog |

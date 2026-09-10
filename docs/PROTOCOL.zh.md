@@ -16,7 +16,7 @@
 
 成功：`{ "v": 1, "id": "...", "ok": true, "result": ... }`。失败：`{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`。
 
-方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
+方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`workspace.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
 
 会话命令按会话串行化；cancel 保持独立，因此 Stop 不会排在慢 prompt 之后等待。审批命令按审批串行化。每个成功的决定只应用一次。Runtime 断开和 daemon 重启会取消未完成的审批。
 
@@ -93,6 +93,10 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 `session.autoApprove {sessionId, enabled}` 把一个会话的审批委托出去：打开期间，每个 `approval.requested` 一到就直接批准，而不是等人回答；打开时也会先处理已经等着的那些。runtime 的词汇是封闭的 —— `allowed-once` 是它唯一的授权 —— 所以这是 Turnwire 在同一个 `approval.decide` 路径之上做的决定，不是 runtime 的策略。
 
 有两点让它保持诚实。会话字段 `autoApprove` 是主机状态而不是存储字段：它出现在快照里，重启即忘 —— 委托针对的是当下正在做的事，重启后应该有人再看一眼。这样产生的批准会在 `approval.resolved` 上带 `approval.auto: true`，记录因此说明没人被问过；只写 `approved` 是看不出来的。
+
+## 选择工作目录
+
+`workspace.list {path?}` 返回主机上某一个文件夹的 `{path, home, parent?, total, entries}`，让客户端可以选择会话的 `cwd`，而不是要求人手动输入一个绝对路径——在手机上这正是问题所在。它只列文件夹、跳过点开头目录，并在符号链接指向文件夹时跟随它；`total` 是该层文件夹的总数，因此当某个扁平目录（比如 `node_modules`）超过上限时，客户端可以说明自己只显示了一页。文件系统根目录没有 `parent`，不传 `path` 时默认从主机主目录开始。主机读不了的文件夹返回 `WORKSPACE_UNREADABLE`，而不是看起来空着；路径校验与 `session.create` 相同，所以这里列出的目录都能真正承载会话。它是读取：不预留请求 ID，客户端按轮询 `system.snapshot` 的方式调用它。
 
 ## 还没跑的那条提示
 

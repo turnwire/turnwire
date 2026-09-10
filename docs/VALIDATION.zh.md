@@ -133,6 +133,7 @@ Linux 用户服务重启恢复了其原主机身份、会话和 Relay 配置。�
 - 既有的一键部署更新了公网 Relay，并添加了其私有的持久推送数据库。在确认空闲状态后，更新了 Mac daemon 和 Linux 主机服务；主机 ID、会话和 DSH 配置得到保留。Linux 模型配置仍为 0600。一个私有应用归档支持在 Linux 主机上回滚。
 - 临时公网 v2 配对验证了两台真实主机、加密快照/历史、反复重连和 Web Push 可用性，且未发送模型 prompt。在这些运行中观察到的验证 RTT 为 Mac 1302 ms、Linux 1358 ms；它们是开发机观察值，不是速度保证。一次 Linux 验证尝试触达 5 秒传输阶段截止时间；随后一次尝试成功。没有证据表明所有 WAN 重试都已被消除。
 - Chrome 在 390×844 下通过公网 HTTPS PWA 加载了真实 Linux 主机，验证 v2，启用输入框和推送订阅入口，并在重新加载后重连，无页面错误/溢出。所有临时验证配对都被撤销。真实 Linux TUI 还运行了 `remote status`、`notifications status`、`remote direct status` 和 `inbox`，随后分离，而服务保持活动。
+- 选择会话的工作目录不再需要手动输入绝对路径。`workspace.list` 读取主机上的一层目录（只列文件夹、跳过点开头目录、符号链接指向文件夹时跟随，并用 `total` 说明该层被截断时的总数），PWA 新建会话对话框据此逐层选择，`turnwire dirs` 为终端打印同一份列表。主机读不了的文件夹返回 `WORKSPACE_UNREADABLE`，而不是看起来空着。三项 Core 测试覆盖列表、默认主目录、文件系统根目录与拒绝场景；`scripts/ui-check.mjs` 在 Chrome 里走一遍选择器（打开、上一级、主目录、使用该目录并写回输入框），`scripts/remote-resilience-check.mjs` 再在 390px 的加密连接上走一遍，要求操作按钮始终在屏幕内、列表只在自己的框里滚动。三个浏览器场景与 138 项测试全部通过。
 - 切标签页改为复用 socket，而不是重连。隐藏 PWA 会保留已验证的加密 socket，只暂停重试计时；网络断开仍会立即丢弃 socket 并报告离线，"立即重连"也仍会有意重建会话。`scripts/remote-resilience-check.mjs` 现在断言隐藏再显示页面后健康栏仍为 `connected`，且不会打开第二个 WebSocket（此前该脚本断言的是相反行为）；`tests/connection-health.test.ts` 用可计数的对端 socket 钉住同一契约，并单独覆盖在隐藏期间真正断开的 socket。`npm run check` 通过 27 个文件中的 135 项测试，随后是该项 Chrome 检查和历史 Chrome 检查。
 
 实际 iPhone/Safari 权限、锁屏 Web Push 投递、Wi-Fi/蜂窝切换、局域网 DNS/证书接受以及区域性推送 provider 可达性仍未验证。在用户提供合适的 WSS URL 和受信任证书之前，生产局域网 listener 保持关闭。当前通知 `queued` 统计的是等待 Relay 接受的 daemon outbox；Relay 接受并不证明 OS 通知已投递。

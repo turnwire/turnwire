@@ -1,8 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { readdir, realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
 import { TurnwireError, errorResponse, methodSchemas, requestSchema } from '@turnwire/protocol';
-import type { EventData, TurnwireEvent, Question, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData } from '@turnwire/protocol';
+import type { EventData, TurnwireEvent, Question, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData, WorkspaceEntry } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent } from '@turnwire/runtime';
 import { Store } from './store.js';
 export { Store } from './store.js';
@@ -50,7 +51,7 @@ export class TurnwireCore {
     if (!parsed.success) return errorResponse('invalid', parsed.error);
     const request = parsed.data;
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
-    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'session.queue' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
+    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'session.queue' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
       try { return { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; } catch (error) { return errorResponse(request.id, error); }
     }
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: request.method, params: request.params, ...(request.method.startsWith('notifications.') ? { clientId: context?.clientId } : {}) })).digest('hex');
@@ -92,6 +93,7 @@ export class TurnwireCore {
         return { subagents: runtime.listSubagents ? await runtime.listSubagents(session.runtimeSessionId) : [] };
       }
       case 'events.list': { const p = methodSchemas['events.list'].parse(request.params); return { events: this.store.events(p.after, p.limit, p.sessionId), cursor: this.store.cursor() }; }
+      case 'workspace.list': return this.listWorkspace(methodSchemas['workspace.list'].parse(request.params));
       case 'session.create': {
         const p = methodSchemas['session.create'].parse(request.params);
         if (!isAbsolute(p.cwd)) throw new TurnwireError('INVALID_WORKSPACE', 'Working directory must be an absolute path');
@@ -267,6 +269,32 @@ export class TurnwireCore {
     if (!listed) throw new TurnwireError('MODEL_UNAVAILABLE', 'The selected model is currently unavailable; choose another from the model catalog');
   }
   private requireActive(session: Session) { if (session.archived) throw new TurnwireError('SESSION_ARCHIVED', 'Unarchive this session before continuing'); }
+  /**
+   * Browsing exists so a client can choose a working directory instead of typing an absolute path,
+   * which is the point on a phone. It reads folders only, one level at a time, and reports the home
+   * directory so a client has somewhere to start; the same validation as `session.create` applies,
+   * so a folder offered here is a folder that can actually host a session.
+   */
+  private async listWorkspace(p: { path?: string }) {
+    const home = homedir(); const requested = p.path ?? home;
+    if (!isAbsolute(requested)) throw new TurnwireError('INVALID_WORKSPACE', 'Working directory must be an absolute path');
+    const path = await realpath(requested).catch(() => { throw new TurnwireError('INVALID_WORKSPACE', 'Working directory does not exist'); });
+    if (!(await stat(path)).isDirectory()) throw new TurnwireError('INVALID_WORKSPACE', 'Working directory must be a folder');
+    const found = await readdir(path, { withFileTypes: true }).catch(error => { throw new TurnwireError('WORKSPACE_UNREADABLE', `The host cannot read ${path} (${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`); });
+    const folders: WorkspaceEntry[] = [];
+    for (const entry of found) {
+      // Dotfolders are configuration and cache noise here; a typed path still reaches them.
+      if (entry.name.startsWith('.')) continue;
+      const child = join(path, entry.name);
+      const directory = entry.isDirectory() || (entry.isSymbolicLink() && await stat(child).then(value => value.isDirectory()).catch(() => false));
+      if (directory) folders.push({ name: entry.name, path: child });
+    }
+    folders.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+    const parent = dirname(path);
+    // One level of a huge tree is still unbounded (a flat `node_modules`), so the client is told how
+    // many folders exist even when it only receives the first page.
+    return { path, home, ...(parent === path ? {} : { parent }), total: folders.length, entries: folders.slice(0, 1000) };
+  }
   private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', 'Session not found'); return session; }
   private bind(session: Session) {
     if (this.subscriptions.has(session.id)) return;

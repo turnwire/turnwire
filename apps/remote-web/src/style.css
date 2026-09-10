@@ -96,3 +96,27 @@
 .composer-caption .locale-switch { display: flex; align-items: center; gap: 2px; }
 .locale-switch button { border: 1px solid transparent; border-radius: 5px; background: #f2f4f8; color: #8190a4; font-size: 9px; line-height: 1; padding: 3px 5px; }
 .locale-switch button.active { background: white; border-color: #d0d9e6; color: #26374f; }
+
+/* Choosing a working directory: the field takes a typed path, the picker walks the host one level at
+   a time. The list scrolls inside the dialog so a deep folder or a tall phone screen cannot push the
+   Create button out of reach. */
+dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
+.field-row { display: flex; gap: 7px; align-items: stretch; }
+.field-row input { flex: 1; min-width: 0; }
+.choose-folder { white-space: nowrap; font-size: 11px; }
+.folder-picker { margin-top: 9px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfe; padding: 9px 10px; }
+.folder-picker header { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.folder-picker header code { font-size: 10.5px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.folder-picker header span { display: flex; gap: 6px; flex-shrink: 0; }
+.folder-picker header button { font-size: 10.5px; padding: 5px 8px; }
+.folder-list { max-height: 34vh; overflow-y: auto; margin: 8px 0; }
+.folder-list button { display: flex; width: 100%; gap: 8px; align-items: center; border: 0; border-radius: 7px; background: transparent; padding: 7px 8px; font-size: 12.5px; text-align: left; }
+.folder-list button:hover { background: #eef2f8; }
+.folder-list button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-list button svg:last-child { opacity: .4; flex-shrink: 0; }
+.folder-list p { margin: 4px 2px; font-size: 11.5px; color: var(--muted); }
+.folder-reading { display: flex; gap: 7px; align-items: center; }
+.folder-note { font-size: 10.5px; color: var(--muted); margin: 0 0 8px; }
+.folder-error { margin: 9px 0 0; font-size: 11.5px; color: #a34545; }
+.folder-picker footer { display: flex; gap: 8px; justify-content: flex-end; }
+.folder-picker footer button { font-size: 11.5px; }
