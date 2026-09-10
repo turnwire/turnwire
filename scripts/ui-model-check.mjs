@@ -12,6 +12,9 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 900 
 await context.addInitScript(() => { try { localStorage.setItem('turnwire.locale', 'en'); } catch { /* the app still defaults to English */ } });
 const page = await context.newPage(); const errors = [];
 page.on('pageerror', error => errors.push(error.message));
+// The catalog is the runtime's and changes with it, so opening the picker has to ask for it again.
+const catalogCalls = [];
+page.on('request', request => { const body = request.postDataJSON?.(); if (body?.method === 'model.catalog') catalogCalls.push(Date.now()); });
 try {
   await page.goto(config.url);
   await page.getByRole('button', { name: 'Local connection', exact: true }).click();
@@ -46,7 +49,11 @@ try {
 
   // The catalog needs no credential, so every registered model is listed before a selection exists.
   const composerBefore = await page.locator('.composer').boundingBox();
+  // The list on screen was fetched when the session was selected; a route can gain or lose a model in
+  // between, so the tap refreshes it rather than offering an id the host has already dropped.
+  const catalogCallsBefore = catalogCalls.length;
   await chip.click();
+  await expect.poll(() => catalogCalls.length).toBeGreaterThan(catalogCallsBefore);
   const picker = page.getByLabel('Model', { exact: true });
   await expect(picker).toBeVisible();
   await expect(picker).toBeInViewport();
