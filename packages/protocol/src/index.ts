@@ -6,13 +6,32 @@ export const PROTOCOL_VERSION = 1 as const;
 export const idSchema = z.string().min(1).max(200);
 export const statusSchema = z.enum(['idle', 'running', 'waiting_approval', 'interrupted', 'error']);
 export type SessionStatus = z.infer<typeof statusSchema>;
-export const capabilitiesSchema = z.object({ approvals: z.boolean(), streaming: z.boolean(), resume: z.boolean(), shell: z.boolean(), diff: z.boolean(), fileEdits: z.boolean(), toolCalls: z.boolean(), backgroundTasks: z.boolean() });
+export const capabilitiesSchema = z.object({ approvals: z.boolean(), streaming: z.boolean(), resume: z.boolean(), shell: z.boolean(), diff: z.boolean(), fileEdits: z.boolean(), toolCalls: z.boolean(), backgroundTasks: z.boolean(), modelSelection: z.boolean() });
 export type RuntimeCapabilities = z.infer<typeof capabilitiesSchema>;
+/** The model a session runs on. `reasoningEffort` is adapter-owned; absent means adapter default. */
+export const modelSelectionSchema = z.object({ provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict();
+export type ModelSelection = z.infer<typeof modelSelectionSchema>;
+export const modelReasoningEffortSchema = z.object({ id: idSchema, name: z.string(), description: z.string().optional() }).strict();
+export type ModelReasoningEffort = z.infer<typeof modelReasoningEffortSchema>;
+export const modelReasoningSchema = z.object({ efforts: z.array(modelReasoningEffortSchema), defaultEffort: idSchema.optional() }).strict();
+export const modelCatalogModelSchema = z.object({ id: idSchema, name: z.string(), description: z.string().optional(), reasoning: modelReasoningSchema.optional() }).strict();
+export type ModelCatalogModel = z.infer<typeof modelCatalogModelSchema>;
+export const modelProviderGroupSchema = z.object({ id: idSchema, name: z.string(), models: z.array(modelCatalogModelSchema) }).strict();
+export const modelCatalogFailureSchema = z.object({ id: idSchema, name: z.string(), message: z.string() }).strict();
+/**
+ * Selectable models for one runtime generation, plus the selection used by sessions that
+ * have not chosen one. `routableProviders` distinguishes "serves requests" from "listed";
+ * `failures` isolates providers whose lookup failed so one broken provider cannot hide the rest.
+ */
+export const modelCatalogSchema = z.object({ default: modelSelectionSchema, routableProviders: z.array(idSchema), groups: z.array(modelProviderGroupSchema), failures: z.array(modelCatalogFailureSchema) }).strict();
+export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
 export const sessionSchema = z.object({
   id: idSchema, runtimeId: idSchema, runtimeSessionId: idSchema,
   title: z.string(), cwd: z.string(), status: statusSchema,
   createdAt: z.string(), updatedAt: z.string(),
   archived: z.boolean().optional(),
+  /** Absent until the runtime reports a selection for this session. */
+  model: modelSelectionSchema.optional(),
 });
 export type Session = z.infer<typeof sessionSchema>;
 export const approvalSchema = z.object({
@@ -47,12 +66,14 @@ export const methodSchemas = {
   'notifications.status': z.object({}).strict(),
   'notifications.subscribe': pushSubscriptionSchema,
   'notifications.unsubscribe': z.object({}).strict(),
-  'session.create': z.object({ cwd: z.string().min(1).max(4096), title: z.string().trim().min(1).max(200).default('新会话'), runtimeId: idSchema.default('dsh') }).strict(),
+  'session.create': z.object({ cwd: z.string().min(1).max(4096), title: z.string().trim().min(1).max(200).default('新会话'), runtimeId: idSchema.default('dsh'), model: modelSelectionSchema.optional() }).strict(),
   'session.resume': z.object({ sessionId: idSchema }).strict(),
   'session.rename': z.object({ sessionId: idSchema, title: z.string().trim().min(1).max(200) }).strict(),
   'session.archive': z.object({ sessionId: idSchema, archived: z.boolean() }).strict(),
   'session.message': z.object({ sessionId: idSchema, text: z.string().trim().min(1).max(100_000) }).strict(),
   'session.cancel': z.object({ sessionId: idSchema }).strict(),
+  'session.setModel': z.object({ sessionId: idSchema, provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict(),
+  'model.catalog': z.object({ runtimeId: idSchema.optional() }).strict(),
   'approval.decide': z.object({ approvalId: idSchema, decision: z.enum(['approved', 'rejected']) }).strict(),
   'history.page': z.object({ sessionId: idSchema, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(40) }).strict(),
   'events.list': z.object({ after: z.number().int().nonnegative().default(0), sessionId: idSchema.optional(), limit: z.number().int().min(1).max(1000).default(500) }).strict(),

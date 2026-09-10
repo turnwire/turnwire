@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { modelSelectionSchema } from '@turnwire/protocol';
 import type { RuntimeEvent } from '@turnwire/runtime';
 
 export const wireEventSchema = z.object({ type: z.string(), seq: z.number().int().nonnegative(), time: z.number(), data: z.record(z.unknown()) }).passthrough();
@@ -44,6 +45,10 @@ export function mapEvent(sessionId: string, event: WireEvent): RuntimeEvent[] {
         return [{ type: 'tool.finished' as const, callId: String(callId), tool: String(b.name ?? '工具结果'), detail: typeof b.content === 'string' ? b.content : textContent(b.content) || JSON.stringify(b.content ?? ''), ...(typeof b.isError === 'boolean' ? { isError: b.isError } : {}) }];
       });
     }
+    // The Host records the durable selection, so a change made anywhere (including the
+    // DSH Web UI) reaches Turnwire through the same stream. Only the known fields are
+    // read, so an additive Host change cannot drop the update or break the stream.
+    case 'model/selection': return [{ type: 'model.selected', selection: modelSelectionSchema.parse({ provider: d.provider, model: d.model, ...(d.reasoningEffort === undefined ? {} : { reasoningEffort: d.reasoningEffort }) }) }];
     default: return [];
   }
 }

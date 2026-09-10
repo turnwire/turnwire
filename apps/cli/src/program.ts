@@ -6,10 +6,19 @@ import { createInterface } from 'node:readline';
 import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
 import { tunnelProviderSchema } from '@turnwire/protocol';
-import type { TurnwireEvent, Session, Snapshot } from '@turnwire/protocol';
+import type { TurnwireEvent, Session, Snapshot, ModelCatalog } from '@turnwire/protocol';
 import { safe, printRemote, printPairing, remoteMenu, runTui, deploymentMenu, watchDeployment, directMenu, notificationsMenu } from './terminal.js';
 
 export interface CliOptions { url?: string; token?: string; pairing?: string; json?: boolean }
+/** Parse the `provider/model` form the model catalog prints, so ids are never hand-built. */
+function modelSelection(spec: string, reasoningEffort?: string) {
+  const index = spec.indexOf('/');
+  if (index < 1 || index === spec.length - 1) throw new Error('模型请用 provider/model 形式，例如 deepseek-official/deepseek-v4-flash');
+  return { provider: spec.slice(0, index), model: spec.slice(index + 1), ...(reasoningEffort ? { reasoningEffort } : {}) };
+}
+function showModel(session: Session) {
+  return session.model ? `${session.model.provider}/${session.model.model}${session.model.reasoningEffort ? ' · ' + session.model.reasoningEffort : ''}` : '未指定（使用运行时默认）';
+}
 export function createProgram(defaults: CliOptions = {}) {
 const program = new Command().name('turnwire').description('Turnwire: one local agent session, every device.').version('0.1.0').exitOverride();
 program.option('--url <url>', 'daemon URL', defaults.url).option('--token <token>', 'local daemon token', defaults.token).option('--pairing <file>', 'remote pairing file', defaults.pairing).option('--json', 'machine-readable output', defaults.json);
@@ -33,10 +42,29 @@ program.command('ls').description('List shared sessions').option('--archived', '
 }));
 program.command('rename <session> <title>').description('Rename a shared session').action((sessionId: string, title: string) => withClient(async c => print(await c.request('session.rename', { sessionId, title }))));
 for (const archived of [true, false]) program.command(`${archived ? 'archive' : 'unarchive'} <session>`).description(archived ? 'Archive an inactive session without deleting history' : 'Return an archived session to the workspace').action((sessionId: string) => withClient(async c => print(await c.request('session.archive', { sessionId, archived }))));
-program.command('new [prompt]').description('Create a session in a workspace').option('--cwd <path>', 'workspace directory', process.cwd()).option('--title <title>', 'session title', '新会话').option('--runtime <id>', 'runtime id (dsh or demo)', 'dsh').action((prompt: string | undefined, options: { cwd: string; title: string; runtime: string }) => withClient(async c => {
-  const s = await c.request<Session>('session.create', { cwd: resolve(options.cwd), title: options.title, runtimeId: options.runtime });
+program.command('new [prompt]').description('Create a session in a workspace').option('--cwd <path>', 'workspace directory', process.cwd()).option('--title <title>', 'session title', '新会话').option('--runtime <id>', 'runtime id (dsh or demo)', 'dsh').option('--model <provider/model>', 'model to run the session on; see: turnwire models').option('--effort <id>', 'reasoning effort id for the chosen model').action((prompt: string | undefined, options: { cwd: string; title: string; runtime: string; model?: string; effort?: string }) => withClient(async c => {
+  const s = await c.request<Session>('session.create', { cwd: resolve(options.cwd), title: options.title, runtimeId: options.runtime, ...(options.model ? { model: modelSelection(options.model, options.effort) } : {}) });
   if (prompt) await c.request('session.message', { sessionId: s.id, text: prompt });
-  if (program.opts().json) print(s); else console.log(`Session ${s.id}\nAttach: turnwire attach ${s.id}`);
+  if (program.opts().json) print(s); else console.log(`Session ${s.id}\nModel: ${showModel(s)}\nAttach: turnwire attach ${s.id}`);
+}));
+program.command('models').description('List the models this host can run and the default for new sessions').action(() => withClient(async c => {
+  const catalog = await c.request<ModelCatalog>('model.catalog', {});
+  if (program.opts().json) { print(catalog); return; }
+  console.log(`默认：${catalog.default.provider}/${catalog.default.model}${catalog.default.reasoningEffort ? ' · ' + catalog.default.reasoningEffort : ''}`);
+  for (const group of catalog.groups) {
+    if (!catalog.routableProviders.includes(group.id)) console.log(`\n${group.name} (${group.id}) · 当前不可服务`);
+    else console.log(`\n${group.name} (${group.id})`);
+    for (const model of group.models) {
+      const efforts = model.reasoning?.efforts.length ? `  effort: ${model.reasoning.efforts.map(e => e.id).join('/')}${model.reasoning.defaultEffort ? ` (默认 ${model.reasoning.defaultEffort})` : ''}` : '';
+      console.log(`  ${group.id}/${model.id}  ${model.name}${efforts}`);
+    }
+  }
+  for (const failure of catalog.failures) console.log(`\n不可用：${failure.name} (${failure.id}) — ${failure.message}`);
+}));
+program.command('model <session> <spec>').description('Choose the model a session runs on (provider/model; see: turnwire models)').option('--effort <id>', 'reasoning effort id for the chosen model').action((sessionId: string, spec: string, options: { effort?: string }) => withClient(async c => {
+  // The daemon returns what the runtime resolved, which can differ from the request.
+  const updated = await c.request<Session>('session.setModel', { sessionId, ...modelSelection(spec, options.effort) });
+  if (program.opts().json) print(updated); else console.log(`${updated.id} · ${showModel(updated)}`);
 }));
 program.command('history <session>').description('Read recent complete records; load earlier records with --before')
   .option('--before <cursor>', 'load the page before this cursor', Number).option('--limit <count>', 'records per page (1–100)', Number, 40)

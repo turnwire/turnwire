@@ -77,8 +77,11 @@ export class TurnwireCore {
         const runtime = this.runtime(p.runtimeId);
         const id = randomUUID();
         const created = await runtime.createSession({ id, cwd });
+        // A model chosen at creation time goes through the same path as a later change, so
+        // the session records what the runtime resolved rather than what was requested.
+        const model = p.model && runtime.setModel ? await runtime.setModel(created.id, p.model) : undefined;
         const now = new Date().toISOString();
-        const session: Session = { id, runtimeId: runtime.id, runtimeSessionId: created.id, title: p.title, cwd, status: created.status, createdAt: now, updatedAt: now };
+        const session: Session = { id, runtimeId: runtime.id, runtimeSessionId: created.id, title: p.title, cwd, status: created.status, createdAt: now, updatedAt: now, ...(model ? { model } : {}) };
         this.publish({ type: 'session.created', session }); this.bind(session); return session;
       }
       case 'session.resume': {
@@ -113,6 +116,27 @@ export class TurnwireCore {
         // Cancellation is independent of the command lock, so a slow prompt cannot block Stop.
         const session = this.session(p.sessionId); await this.runtime(session.runtimeId).cancel(session.runtimeSessionId); return { accepted: true };
       }
+      case 'session.setModel': {
+        const p = methodSchemas['session.setModel'].parse(request.params);
+        return this.lock(p.sessionId, async () => {
+          const session = this.session(p.sessionId); this.requireActive(session);
+          const runtime = this.runtime(session.runtimeId);
+          if (!runtime.setModel) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '此运行时不支持选择模型');
+          const selection = await runtime.setModel(session.runtimeSessionId, { provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) }).catch(error => {
+            // A rejected route is a rejected choice, not a session failure. Report it in the
+            // client's language instead of leaking the runtime's adapter-internal wording.
+            if (error instanceof TurnwireError && error.code === 'session/model-unavailable') throw new TurnwireError('MODEL_UNAVAILABLE', '所选模型当前不可用，请从模型目录中重新选择');
+            throw error;
+          });
+          return this.update(session.id, { model: selection });
+        });
+      }
+      case 'model.catalog': {
+        const p = methodSchemas['model.catalog'].parse(request.params);
+        const runtime = p.runtimeId ? this.runtime(p.runtimeId) : this.selectableRuntime();
+        if (!runtime.modelCatalog) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '此运行时不支持选择模型');
+        return runtime.modelCatalog();
+      }
       case 'approval.decide': {
         const p = methodSchemas['approval.decide'].parse(request.params);
         return this.lock(`approval:${p.approvalId}`, async () => {
@@ -128,6 +152,8 @@ export class TurnwireCore {
     }
   }
   private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `运行时 ${id} 未配置`); return runtime; }
+  /** The runtime a client sees a model catalog for when it does not name one. */
+  private selectableRuntime() { const runtime = [...this.runtimes.values()].find(candidate => candidate.capabilities().modelSelection && candidate.modelCatalog); if (!runtime) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', '当前没有支持选择模型的运行时'); return runtime; }
   private requireActive(session: Session) { if (session.archived) throw new TurnwireError('SESSION_ARCHIVED', '请先取消归档，再继续会话'); }
   private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', '会话不存在'); return session; }
   private bind(session: Session) {
@@ -148,6 +174,9 @@ export class TurnwireCore {
       if (!this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending')) this.update(sessionId, { status: 'running' });
       return;
     }
+    // A selection made anywhere in the Host (including its own Web UI) arrives here and
+    // becomes the session's recorded model.
+    if (event.type === 'model.selected') { this.update(sessionId, { model: event.selection }); return; }
     const source = event.type === 'message.user' ? `${sessionId}:user:${event.messageId}` : undefined;
     this.publish({ ...event, sessionId }, source);
   }

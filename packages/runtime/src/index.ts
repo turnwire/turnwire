@@ -1,6 +1,6 @@
-import type { ApprovalDecision, RuntimeCapabilities, SessionStatus } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities, SessionStatus } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
-export interface RuntimeSession { id: string; cwd: string; status: SessionStatus }
+export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
   | { type: 'status'; status: SessionStatus }
   | { type: 'message.delta' | 'message.completed'; messageId: string; text: string }
@@ -8,6 +8,7 @@ export type RuntimeEvent =
   | { type: 'tool.started' | 'tool.finished'; callId: string; tool: string; detail: string; isError?: boolean }
   | { type: 'approval.requested'; requestId: string; tool: string; reason: string }
   | { type: 'approval.resolved'; requestId: string; decision: ApprovalDecision | 'cancelled' }
+  | { type: 'model.selected'; selection: ModelSelection }
   | { type: 'error'; message: string };
 export interface AgentRuntime {
   readonly id: string;
@@ -17,6 +18,14 @@ export interface AgentRuntime {
   createSession(options: { id: string; cwd: string }): Promise<RuntimeSession>;
   resumeSession(session: { id: string; cwd: string }): Promise<RuntimeSession>;
   listSessions(): Promise<RuntimeSession[]>;
+  /** Present when `capabilities().modelSelection` is true. */
+  modelCatalog?(): Promise<ModelCatalog>;
+  /**
+   * Apply a selection and return what the runtime accepted. A runtime resolves defaults
+   * (for example a reasoning effort) and may reject an unknown route, so callers render
+   * the returned selection rather than assuming the requested one.
+   */
+  setModel?(sessionId: string, selection: ModelSelection): Promise<ModelSelection>;
   sendMessage(sessionId: string, input: { id: string; text: string }): Promise<void>;
   cancel(sessionId: string): Promise<void>;
   approve(sessionId: string, requestId: string, decision: ApprovalDecision): Promise<void>;

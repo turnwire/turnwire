@@ -1,8 +1,8 @@
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { TurnwireError } from '@turnwire/protocol';
-import type { ApprovalDecision, RuntimeCapabilities } from '@turnwire/protocol';
+import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, RuntimeCapabilities } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
@@ -37,7 +37,7 @@ export class DshRuntime implements AgentRuntime {
     if (!['http:', 'https:'].includes(this.url.protocol)) throw new Error('DSH URL must use HTTP or HTTPS');
     if (this.url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(this.url.hostname)) throw new Error('Non-loopback DSH connections require HTTPS');
   }
-  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false }; }
+  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true }; }
   async health() { try { await this.connect(); return { online: true, message: 'DSH Host 已连接' }; } catch { return { online: false, message: this.lastError }; } }
   async createSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {
     await this.connect();
@@ -61,6 +61,27 @@ export class DshRuntime implements AgentRuntime {
     await this.connect();
     const value = z.object({ items: z.array(summarySchema) }).parse(await this.rpc('session/list', { _request: {} }));
     return value.items.map(s => ({ id: s.sessionId, cwd: s.cwd ?? '', status: s.running ? 'running' : 'idle' }));
+  }
+  /**
+   * `session/modelCatalog` takes no arguments. The Host lists every registered provider
+   * route without needing a resolved credential, so an empty `failures` list does not
+   * mean a prompt will succeed — a missing key surfaces when a turn runs.
+   */
+  async modelCatalog(): Promise<ModelCatalog> {
+    await this.connect();
+    return modelCatalogSchema.parse(await this.rpc('session/modelCatalog', {}));
+  }
+  /**
+   * `session/selectModel` returns the selection the Host resolved, which can differ from
+   * the request: an absent `reasoningEffort` comes back filled with the model default.
+   * An unknown route fails per-request with `session/model-unavailable` and leaves the
+   * session intact, so callers should surface it as a rejected choice.
+   */
+  async setModel(sessionId: string, selection: ModelSelection): Promise<ModelSelection> {
+    await this.connect();
+    const value = z.object({ selected: modelSelectionSchema }).parse(await this.rpc('session/selectModel', { request: { sessionId, ...selection } }));
+    const session = this.sessions.get(sessionId); if (session) session.model = value.selected;
+    return value.selected;
   }
   async sendMessage(sessionId: string, input: { id: string; text: string }) {
     await this.connect(); this.follow(sessionId);
@@ -197,7 +218,7 @@ export class DshRuntime implements AgentRuntime {
     this.pending.set(eventId, { sessionId, clientId: this.clientId });
     this.emit(sessionId, { type: 'approval.requested', requestId: eventId, tool: String(request.toolName ?? '工具操作'), reason: String(request.reason ?? 'DSH 请求执行此操作的授权') });
   }
-  private emit(id: string, event: RuntimeEvent) { for (const listener of this.listeners.get(id) ?? []) listener(event); }
+  private emit(id: string, event: RuntimeEvent) { if (event.type === 'model.selected') { const session = this.sessions.get(id); if (session) session.model = event.selection; } for (const listener of this.listeners.get(id) ?? []) listener(event); }
   private send(value: unknown) { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(value)); }
   private cancelPending() { for (const [id, pending] of this.pending) this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); this.pending.clear(); }
   private fail(error: unknown) { this.lastError = error instanceof Error ? error.message : 'DSH protocol error'; for (const id of this.listeners.keys()) this.emit(id, { type: 'error', message: this.lastError }); this.socket?.terminate(); }

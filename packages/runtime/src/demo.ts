@@ -10,7 +10,7 @@ export class DemoRuntime implements AgentRuntime {
   private sessions = new Map<string, RuntimeSession>();
   private listeners = new Map<string, Set<(event: RuntimeEvent) => void>>();
   private pending = new Map<string, { sessionId: string; messageId: string }>();
-  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: false, backgroundTasks: false }; }
+  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: false, backgroundTasks: false, modelSelection: false }; }
   async health() { return { online: true, message: '离线演示，不会执行代码或调用模型' }; }
   async createSession(options: { id: string; cwd: string }) { const session: RuntimeSession = { ...options, status: 'idle' }; this.sessions.set(session.id, session); return session; }
   async resumeSession(options: { id: string; cwd: string }) { return this.sessions.get(options.id) ?? this.createSession(options); }
