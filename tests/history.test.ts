@@ -120,3 +120,21 @@ it('bounds multi-record page size without cutting a tool input away from its res
   expect(conversation(page.events, 's')[0]).toMatchObject({ id: 'tool-2', complete: true, input: 'input' });
   expect(conversation(store.history('s', 40, page.nextBefore!).events, 's')[0]?.id).toBe('tool-1');
 });
+it('moves a queued prompt to where it started, out of the middle of the answer it waited behind', () => {
+  const store = new Store(':memory:'); cleanup.push(() => store.close());
+  store.append({ type: 'session.created', session });
+  // The shape a real runtime produces: the answer is still streaming when the reader queues a prompt,
+  // so the prompt is journaled inside that answer and only starts once the turn is over.
+  store.append({ type: 'message.user', sessionId: session.id, messageId: 'asked', text: 'Do the long thing' });
+  store.append({ type: 'message.delta', sessionId: session.id, messageId: 'answer', text: 'Working on it' });
+  store.append({ type: 'message.user', sessionId: session.id, messageId: 'queued', text: 'And then this', queued: true });
+  store.append({ type: 'message.delta', sessionId: session.id, messageId: 'answer', text: ' — done' });
+  store.append({ type: 'message.completed', sessionId: session.id, messageId: 'answer', text: 'Working on it — done' });
+  store.append({ type: 'message.updated', sessionId: session.id, messageId: 'queued', queued: false });
+  store.append({ type: 'message.delta', sessionId: session.id, messageId: 'second', text: 'On it' });
+  store.append({ type: 'message.completed', sessionId: session.id, messageId: 'second', text: 'On it' });
+  const messages = conversation(store.events(0, 50), session.id);
+  expect(messages.map(message => message.id)).toEqual(['asked', 'answer', 'queued', 'second']);
+  // The row is no longer waiting, so no client labels it as queued once it has run.
+  expect(messages.find(message => message.id === 'queued')?.queued).toBe(false);
+});

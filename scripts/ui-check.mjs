@@ -150,6 +150,11 @@ try {
   await expect(page.locator('.approval-panel')).toHaveCount(1);
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect(page.locator('.queued-item')).toHaveCount(0);
+  // The host says when the waiting prompt actually started, and that is what puts it into the flow as
+  // a message that has run rather than one still waiting behind the composer.
+  const ranQueued = page.locator('.message.user').filter({ hasText: '需要批准这条日志' });
+  await expect(ranQueued).toHaveCount(1);
+  await expect(ranQueued.locator('.queued-chip')).toHaveCount(0);
   await expect(page.locator('.approval-panel')).toHaveCount(1);
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect(page.locator('.approval-panel')).toHaveCount(0);

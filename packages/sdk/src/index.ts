@@ -105,7 +105,14 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
     // projection follows, so no client has to know what the queue did beyond these two events.
     if (d.type === 'message.updated') {
       const existing = messages.get(d.messageId);
-      if (existing) messages.set(d.messageId, { ...existing, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) });
+      if (existing) {
+        // A prompt is journaled where it was written, which is in the middle of the answer it was
+        // waiting behind. Starting to run is where it belongs in the conversation, so that update
+        // moves the row: a Map keeps insertion order, and re-inserting it puts it at this event.
+        if (existing.queued && d.queued === false) messages.delete(d.messageId);
+        const current = messages.get(d.messageId) ?? existing;
+        messages.set(d.messageId, { ...current, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) });
+      }
     }
     if (d.type === 'message.removed') messages.delete(d.messageId);
     if (d.type === 'tool.started' || d.type === 'tool.finished') {

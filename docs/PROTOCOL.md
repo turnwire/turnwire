@@ -104,7 +104,7 @@ Two things keep it honest. The session field `autoApprove` is host state rather 
 
 `session.queueAction {sessionId, messageId, action}` changes a prompt that is still waiting behind a running turn. `messageId` is the id the client was given for that prompt; the runtime translates it to its own queue entry, so a stale row fails instead of changing a different prompt. The action is `{kind:"edit", text}`, `{kind:"remove"}` or `{kind:"steer"}` — rewrite it, take it back, or move it into the turn that is already running. A prompt that has left the queue answers `QUEUE_ITEM_GONE`.
 
-The journal recorded the prompt as it was first sent, so the outcome is written back: an edit emits `message.updated` with the new `text`, a steer emits `message.updated` with `steer: true`, and a removal emits `message.removed`, which drops the message from every projection. Without that, a transcript would describe a prompt that is not the one that ran, or one that never ran at all.
+The journal recorded the prompt as it was first sent, so the outcome is written back: an edit emits `message.updated` with the new `text`, a steer emits `message.updated` with `steer: true`, and a removal emits `message.removed`, which drops the message from every projection. A prompt that waited is journaled where it was written, which is in the middle of the answer it was waiting behind; when the runtime starts it, the host emits `message.updated` with `queued: false` at that moment, so a client puts the row where it actually ran instead of where it was typed. Without that, a transcript would describe a prompt that is not the one that ran, or one that never ran at all.
 
 ## Background agents
 

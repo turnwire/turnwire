@@ -36,6 +36,25 @@ describe('durable daemon ownership', () => {
     expect(sent[0]?.data).not.toHaveProperty('queued');
     expect(sent.at(-1)?.data).toMatchObject({ text: '排队的那一条', queued: true });
   });
+  it('marks where a queued prompt actually started, not where it was written', async () => {
+    const { core, store } = setup(); const s = await session(core);
+    await call(core, 'turn', 'session.message', { sessionId: s.id, text: 'approval' });
+    await call(core, 'queued', 'session.message', { sessionId: s.id, text: '排队的那一条' });
+    // While it waits it is the queue that owns it, and the flow is not the place for it.
+    expect(value<{ items: unknown[] }>(await call(core, 'q', 'session.queue', { sessionId: s.id })).items).toHaveLength(1);
+    await call(core, 'decide', 'approval.decide', { approvalId: value<{ approvals: Array<{ id: string }> }>(await call(core, 'snap', 'system.snapshot')).approvals[0]!.id, decision: 'approved' });
+    // Settling the turn starts the prompt. The host says so at that moment, which is what moves the row
+    // out of the middle of the answer it was waiting behind and into the turn that actually ran it.
+    const started = store.events(0, 1000).filter(e => e.data.type === 'message.updated' && (e.data as { messageId?: string }).messageId === 'queued');
+    expect(started).toHaveLength(1);
+    expect(started[0]?.data).toMatchObject({ queued: false });
+    const messages = conversation(store.events(0, 1000), s.id);
+    const queued = messages.findIndex(message => message.id === 'queued');
+    const firstAnswer = messages.findIndex(message => message.role === 'assistant');
+    expect(queued).toBeGreaterThan(firstAnswer);
+    expect(queued).toBeLessThan(messages.length - 1);
+    expect(messages[queued]?.queued).toBeFalsy();
+  });
   it('steers a running turn when asked instead of queueing behind it', async () => {
     const { core, store } = setup(); const s = await session(core);
     await call(core, 'first', 'session.message', { sessionId: s.id, text: 'approval' });

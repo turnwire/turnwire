@@ -18,6 +18,13 @@ export class TurnwireCore {
   /** How prompts accepted while a turn was running were sent, until the runtime echoes them back. */
   private promptModes = new Map<string, 'queue' | 'steer'>();
   /**
+   * Prompts waiting behind a running turn, by message id. The journal records a prompt when the host
+   * accepts it, which is where it was *written*; this is what lets the host say when the runtime
+   * actually started it, so a client can put it where it ran instead of in the middle of the answer
+   * it was waiting behind.
+   */
+  private waiting = new Map<string, string>();
+  /**
    * Sessions whose approvals are granted on arrival. Deliberately in memory only: delegating a
    * session's approvals is a decision about the work happening right now, and a host that restarts
    * should make someone look again rather than keep granting in the background.
@@ -146,6 +153,7 @@ export class TurnwireCore {
           // Recorded before the send: the runtime echoes the prompt back as an event while this call is
           // still in flight, and that echo is the message the journal keeps.
           if (running) this.promptModes.set(request.id, mode);
+          if (running && mode === 'queue') this.waiting.set(request.id, session.id);
           await this.runtime(session.runtimeId).sendMessage(session.runtimeSessionId, { id: request.id, text: p.text, ...(p.steer ? { steer: true } : {}) });
           this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(running ? (mode === 'steer' ? { steer: true } : { queued: true }) : {}) }, `${session.id}:user:${request.id}`);
           // The client is told which of the two happened, so it can put the prompt where it belongs
@@ -157,7 +165,10 @@ export class TurnwireCore {
       case 'session.cancel': {
         const p = methodSchemas['session.cancel'].parse(request.params);
         // Cancellation is independent of the command lock, so a slow prompt cannot block Stop.
-        const session = this.session(p.sessionId); await this.runtime(session.runtimeId).cancel(session.runtimeSessionId); return { accepted: true };
+        const session = this.session(p.sessionId); await this.runtime(session.runtimeId).cancel(session.runtimeSessionId);
+        // The runtime drops whatever was waiting with the turn, so none of it will be dispatched.
+        for (const [messageId, owner] of this.waiting) if (owner === session.id) this.waiting.delete(messageId);
+        return { accepted: true };
       }
       case 'session.queueAction': {
         const p = methodSchemas['session.queueAction'].parse(request.params);
@@ -172,6 +183,9 @@ export class TurnwireCore {
           // would leave one that never did, so each outcome is written back under the command's own
           // id — a retry stays a no-op because the daemon replays the receipt instead of re-running.
           const source = `${p.sessionId}:queue:${p.action.kind}:${request.id}`;
+          // Taking a prompt back or steering it means it will never be dispatched from the queue, so
+          // the host stops waiting to announce a start that cannot happen.
+          if (p.action.kind !== 'edit') this.waiting.delete(p.messageId);
           if (p.action.kind === 'remove') this.publish({ type: 'message.removed', sessionId: p.sessionId, messageId: p.messageId }, source);
           else if (p.action.kind === 'edit') this.publish({ type: 'message.updated', sessionId: p.sessionId, messageId: p.messageId, text: p.action.text }, source);
           else this.publish({ type: 'message.updated', sessionId: p.sessionId, messageId: p.messageId, queued: false, steer: true }, source);
@@ -299,13 +313,35 @@ export class TurnwireCore {
     return { path, home, ...(parent === path ? {} : { parent }), total: folders.length, entries: folders.slice(0, 1000) };
   }
   private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', 'Session not found'); return session; }
+  /**
+   * Records that a queued prompt has started running. The journal keeps a prompt where it was written,
+   * which is in the middle of the answer it waited behind, so this is the event that says where it
+   * really belongs and that it is no longer waiting. A runtime starts one turn at a time, so the
+   * prompt that has been waiting longest is the one a new turn begins with.
+   */
+  private startWaiting(sessionId: string) {
+    for (const [messageId, owner] of this.waiting) {
+      if (owner !== sessionId) continue;
+      this.waiting.delete(messageId);
+      this.publish({ type: 'message.updated', sessionId, messageId, queued: false }, `${sessionId}:queue:started:${messageId}`);
+      return;
+    }
+  }
   private bind(session: Session) {
     if (this.subscriptions.has(session.id)) return;
     const runtime = this.runtimes.get(session.runtimeId); if (!runtime) return;
     this.subscriptions.set(session.id, runtime.subscribe(session.runtimeSessionId, event => this.accept(session.id, event)));
   }
   private accept(sessionId: string, event: RuntimeEvent) {
-    if (event.type === 'status') { const status = event.status === 'running' && this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending') ? 'waiting_approval' : event.status; this.update(sessionId, { status }); return; }
+    if (event.type === 'status') {
+      const previous = this.store.session(sessionId)?.status;
+      const status = event.status === 'running' && this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending') ? 'waiting_approval' : event.status;
+      this.update(sessionId, { status });
+      // A new turn starting is when the runtime picks up the prompt that has been waiting longest; the
+      // journal recorded that prompt where it was written, inside the answer it was waiting behind.
+      if (event.status === 'running' && previous === 'idle') this.startWaiting(sessionId);
+      return;
+    }
     if (event.type === 'error') { this.update(sessionId, { status: 'error' }); this.publish({ type: 'session.error', sessionId, message: event.message }); return; }
     if (event.type === 'approval.requested') {
       this.publish({ type: 'approval.requested', approval: { id: `${sessionId}:${event.requestId}`, sessionId, tool: event.tool, reason: event.reason, status: 'pending', createdAt: new Date().toISOString() } });
@@ -351,5 +387,5 @@ export class TurnwireCore {
     const result = previous.catch(() => {}).then(operation); this.locks.set(key, result);
     try { return await result; } finally { if (this.locks.get(key) === result) this.locks.delete(key); }
   }
-  async dispose() { this.delegated.clear(); this.questions.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
+  async dispose() { this.delegated.clear(); this.questions.clear(); this.waiting.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
 }
