@@ -49,7 +49,10 @@ try {
   const picker = page.getByLabel('Model', { exact: true });
   await expect(picker).toBeVisible();
   await expect(picker).toBeInViewport();
-  await expect(picker.locator('option')).toHaveCount(4);
+  // A deployment may register more routes than this one (a local bridge, for example), and those
+  // belong in the picker too, so the check names the catalog it is about instead of counting
+  // everything the Host happens to offer.
+  await expect(picker.locator('option[value^="deepseek-official/"]')).toHaveCount(3);
   await expect(page.getByLabel('Reasoning effort', { exact: true })).toHaveCount(0);
 
   await picker.selectOption('deepseek-official/deepseek-v4-pro');
