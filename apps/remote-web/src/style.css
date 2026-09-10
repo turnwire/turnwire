@@ -41,12 +41,13 @@
 .tool-message .tool-caret{opacity:.55;transition:transform .15s}
 .tool-message[open] .tool-caret{transform:rotate(90deg)}.tool-message pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:0 10px 9px;font-size:10.5px;line-height:1.55;max-height:150px;overflow-y:auto}.conversation-empty{padding:45px 0 80px;color:#a2adbc;text-align:center;display:grid;justify-items:center;gap:14px;font-size:13px;line-height:1.8}.loading{display:flex;align-items:center;gap:9px;color:#77869b;font-size:12px;padding:20px 0}.composer-area{padding:0 35px 18px;flex-shrink:0}.composer-width{max-width:720px;margin:auto}.composer{background:white;border:1px solid #d0d9e6;border-radius:12px;box-shadow:0 4px 15px #25385204}.composer:focus-within{border-color:#a1b5d7}.composer textarea{border:0;outline:none;resize:none;border-radius:0;padding:18px 18px 12px;font-size:13px;max-height:150px;background:transparent}.composer textarea:focus-visible{outline:0}.composer-bottom{display:flex;justify-content:space-between;align-items:center;padding:0 11px 11px 18px}.composer-bottom>span{display:flex;align-items:center;gap:6px;font-size:10px;color:#8190a4;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.composer-bottom>div{display:flex;gap:9px;align-items:center}.send-button{width:32px;height:32px;padding:0;background:var(--accent);color:white;border-color:var(--accent);border-radius:8px}.send-button:hover{background:#254fae}.stop-button{border:0;font-size:11px;padding:7px;background:#f2f4f8;color:#66768c}.composer-caption{display:flex;justify-content:space-between;color:#95a1b1;font-size:9px;padding:11px 4px 0}.composer-caption>span{display:flex;align-items:center;gap:5px}/* A question is part of the conversation: it is answered where the agent asked it, and it stays
    there afterwards as the record of what was chosen. */
-.question-card{border:1px solid #c9d8ee;border-radius:10px;background:#f6f9ff;padding:14px 16px;margin:0 0 22px}
+.question-card{border:1px solid #c9d8ee;border-radius:10px;background:#f6f9ff;padding:14px 16px;margin:0 0 22px;min-width:0}
 .question-card[data-status="answered"],.question-card[data-status="cancelled"]{border-color:#e3e8f0;background:#fafbfd}
-.question-given{margin:7px 0 0;font-size:12.5px;color:#2f5b9c}
+.question-given{margin:7px 0 0;font-size:12.5px;color:#2f5b9c;overflow-wrap:anywhere}
 .question-card[data-status="cancelled"] .question-given{color:#8e9cb0}
 .question-other-row{display:flex;gap:8px;align-items:center}
-.question-other-row button{flex-shrink:0;font-size:11px}.question-title{display:flex;align-items:center;gap:9px;color:#2f5b9c;font-size:12px}.question-item{margin-top:12px}.question-header{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:#7d8ca3}.question-text{margin:4px 0 6px;font-size:12.5px;line-height:1.7;color:#3d4a5c}.question-detail{margin:0 0 8px;font-size:11.5px;line-height:1.7;color:#75849a;white-space:pre-wrap}.question-options{display:grid;gap:6px;margin:8px 0}.question-options button{display:grid;gap:2px;text-align:left;font-size:11.5px;padding:9px 11px}.question-options button.chosen{border-color:#2f5b9c;background:#e9f0fb;color:#2f5b9c}.question-options button small{color:#8190a4;font-size:10px}.question-other{width:100%;border:1px solid #d0d9e6;border-radius:8px;padding:8px 10px;font:inherit;font-size:11.5px;background:white}.question-actions{display:flex;justify-content:flex-end;margin-top:10px}.question-actions button{font-size:11px}
+.question-other-row button{flex-shrink:0;font-size:11px}.question-title{display:flex;align-items:center;gap:9px;color:#2f5b9c;font-size:12px}.question-item{margin-top:12px}.question-header{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:#7d8ca3;overflow-wrap:anywhere}.question-text{margin:4px 0 6px;font-size:12.5px;line-height:1.7;color:#3d4a5c;overflow-wrap:anywhere}.question-detail{margin:0 0 8px;font-size:11.5px;line-height:1.7;color:#75849a;white-space:pre-wrap;overflow-wrap:anywhere}/* One option per row, and every row starts at the same left edge: the shared button rule centres its content, which would centre each option's own tracks and leave the rows ragged. */
+.question-options{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin:8px 0}.question-options button{display:grid;grid-template-columns:minmax(0,1fr);justify-content:start;justify-items:stretch;align-content:start;gap:2px;text-align:left;font-size:11.5px;padding:9px 11px;white-space:normal;overflow-wrap:anywhere}.question-options button.chosen{border-color:#2f5b9c;background:#e9f0fb;color:#2f5b9c}.question-options button small{color:#8190a4;font-size:10px;overflow-wrap:anywhere}.question-other{width:100%;border:1px solid #d0d9e6;border-radius:8px;padding:8px 10px;font:inherit;font-size:11.5px;background:white}.question-actions{display:flex;justify-content:flex-end;margin-top:10px}.question-actions button{font-size:11px}
 .approval-panel{border:1px solid #e3d6b9;border-radius:10px;background:#fffdf7;padding:17px 19px;margin-bottom:13px}.approval-title{display:flex;align-items:center;gap:9px;color:#8e6a24;font-size:12px}.approval-title>span{font-size:10px;margin-left:auto;color:#9b865b}.approval-panel>code{display:block;margin:16px 0 9px;color:#584e3d;overflow-wrap:anywhere;font-size:12px}.approval-panel p{font-size:12px;line-height:1.7;color:#877962;overflow-wrap:anywhere}.approval-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:16px}.approval-actions button{font-size:11px}.resume-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#78869b;padding:8px 0 14px}.resume-row button{font-size:11px}.mobile-only{display:none!important}dialog{border:1px solid var(--line);border-radius:15px;padding:28px;width:min(460px,calc(100vw - 32px));color:var(--ink);box-shadow:0 20px 90px #16243e25}dialog::backdrop{background:#2337513d;backdrop-filter:blur(3px)}.dialog-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}dialog p{font-size:12px;color:var(--muted);line-height:1.8;margin-bottom:24px}dialog label{margin-top:19px}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:27px}.spin{animation:rotate 1.2s linear infinite}@keyframes rotate{to{transform:rotate(360deg)}}.scrim{display:none}
 @media(min-width:1500px){.connection-view{gap:90px;max-width:1050px}.conversation-inner{padding-top:60px}}
 @media(max-width:1150px){.app{grid-template-columns:225px minmax(0,1fr)}.connection-view{gap:30px;padding:45px 35px;grid-template-columns:minmax(0,1fr) 320px}.connection-intro h1{font-size:28px}.connection-form{padding:23px}.connection-intro p{font-size:12px}.breadcrumb>span{max-width:140px}}
@@ -91,7 +92,20 @@
 /* The model switch opens against the chip it belongs to. It used to be a block above the composer,
    which pushed the input around every time the reader looked at the catalog. */
 .model-switch { position: relative; display: inline-flex; }
-.model-picker { position: absolute; right: 0; bottom: calc(100% + 9px); z-index: 6; display: grid; gap: 11px; width: min(330px, calc(100vw - 34px)); padding: 13px; background: #fff; border: 1px solid #dbe2ec; border-radius: 12px; box-shadow: 0 16px 44px #16243e26; }
+.model-picker { position: fixed; z-index: 6; display: flex; flex-direction: column; gap: 11px; padding: 13px; overflow-y: auto; overscroll-behavior: contain; background: #fff; border: 1px solid #dbe2ec; border-radius: 12px; box-shadow: 0 16px 44px #16243e26; white-space: normal; }
+.model-picker > * { flex-shrink: 0; min-width: 0; }
+.model-picker input { width: 100%; font-size: 16px; }
+.model-picker .model-list { flex: 0 1 auto; min-height: 80px; max-height: 280px; overflow-y: auto; overscroll-behavior: contain; }
+.model-list h3 { margin: 10px 4px 5px; font-size: 11px; color: var(--muted); }
+.model-list .model-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; color: var(--ink); font-size: 13px; }
+.model-option span { min-width: 0; overflow-wrap: anywhere; }
+.model-option small { display: block; color: var(--muted); font-size: 10px; }
+.model-option svg { flex-shrink: 0; }
+.model-option[aria-pressed="true"] { background: #edf3ff; }
+.model-option:hover:not(:disabled) { background: #f2f4f8; }
+.model-picker :focus-visible { outline: 2px solid #557bdc; outline-offset: -2px; }
+.model-option:disabled { opacity: .5; cursor: not-allowed; }
+.model-error { color: #b42318; font-size: 12px; overflow-wrap: anywhere; }
 .model-picker label { flex-direction: column; align-items: stretch; gap: 6px; font-size: 11px; color: var(--muted, #647184); }
 .model-picker select { width: 100%; max-width: none; padding: 9px 10px; font-size: 13px; }
 .model-default { font-size: 10.5px; color: #8190a4; }
@@ -115,12 +129,34 @@
    other surface until it reports back. */
 .agent-strip { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 0 2px 8px; padding: 8px 11px; border: 1px solid #e2e9f3; border-radius: 10px; background: #f5f8fd; }
 .agent-heading { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: #7d8ca3; }
-.agent-item { display: flex; align-items: baseline; gap: 7px; font-size: 11px; color: #55647a; }
+.agent-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+/* The row is the control that opens the child's own plan, so it keeps the strip's flat look while
+   being a button: full width, left aligned, and never wider than the strip it lives in. */
+.agent-item { display: flex; align-items: baseline; gap: 7px; font-size: 11px; color: #55647a; width: 100%; min-width: 0; border: 0; background: transparent; padding: 3px 2px; text-align: left; justify-content: flex-start; border-radius: 6px; }
+.agent-item:hover { background: #e9eef7; border-color: transparent; }
 .agent-dot { flex-shrink: 0; align-self: center; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: agent-pulse 1.6s ease-in-out infinite; }
 .agent-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-time { flex-shrink: 0; color: #8e9cb0; font-variant-numeric: tabular-nums; }
 .agent-steps { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8e9cb0; }
-.agent-more { font-size: 10px; color: #8e9cb0; }
+.agent-caret { flex-shrink: 0; margin-left: 2px; color: #98a5b8; transition: transform .15s; }
+.agent-item[aria-expanded="true"] .agent-caret { transform: rotate(90deg); }
+/* A long plan scrolls inside the strip instead of eating the conversation above it. */
+.agent-detail { padding: 6px 2px 8px 13px; border-left: 1px solid #dbe4f0; margin: 2px 0 4px; display: grid; gap: 7px; min-width: 0; max-height: 34vh; overflow-y: auto; }
+.agent-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; font-size: 10px; color: #8593a7; }
+.agent-plan-title { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: #7d8ca3; }
+.agent-plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+/* One plan row reads as a table: mark, state and the step itself line up down the list rather than
+   drifting with each line's length. */
+.agent-plan>li { display: grid; grid-template-columns: 12px minmax(58px, auto) minmax(0, 1fr); gap: 7px; align-items: baseline; font-size: 11px; color: #55647a; }
+.agent-plan-mark { color: #98a5b8; text-align: center; }
+.agent-plan>li[data-status="completed"] .agent-plan-mark { color: #3f8a63; }
+.agent-plan>li[data-status="in_progress"] .agent-plan-mark { color: var(--accent); }
+.agent-plan>li[data-status="completed"] .agent-plan-text { color: #8b98a9; }
+.agent-plan-status { font-size: 9.5px; color: #8593a7; }
+.agent-plan-text { overflow-wrap: anywhere; }
+.agent-noplan { margin: 0; font-size: 10.5px; line-height: 1.7; color: #8593a7; }
+.agent-more { justify-self: start; border: 0; background: transparent; padding: 2px 0; font-size: 10px; color: #6f7f96; }
+.agent-more:hover { background: transparent; text-decoration: underline; }
 @keyframes agent-pulse { 50% { opacity: .3; } }
 /* Collapsed by default: the composer keeps its height, and the chip carries the runtime name. */
 .model-chip { display: flex; align-items: center; max-width: 44vw; border: 0; border-radius: 8px; padding: 7px 9px; background: #f2f4f8; color: #66768c; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -68,6 +68,9 @@ node --import tsx scripts/dsh-live-check.mjs
 node --import tsx scripts/history-ui-check.mjs
 node --import tsx scripts/remote-resilience-check.mjs
 
+# Questions and background agents in the phone PWA, at 390 px and 320 px:
+node --import tsx scripts/question-ui-check.mjs
+
 # A full UI pass needs an isolated Demo to talk to:
 TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev   # another terminal
 TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs

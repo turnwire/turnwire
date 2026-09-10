@@ -14,7 +14,24 @@ const page = await context.newPage(); const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 // The catalog is the runtime's and changes with it, so opening the picker has to ask for it again.
 const catalogCalls = [];
-page.on('request', request => { const body = request.postDataJSON?.(); if (body?.method === 'model.catalog') catalogCalls.push(Date.now()); });
+// LocalClient uses POST /rpc (events use a separate WebSocket). Restrict interception to that
+// transport; never parse unrelated requests or synthesize a successful model/catalog response.
+const rpcUrl = new URL('/rpc', config.url).href;
+const rpcBody = request => request.url() === rpcUrl && request.method() === 'POST' ? request.postDataJSON() : undefined;
+page.on('request', request => { if (rpcBody(request)?.method === 'model.catalog') catalogCalls.push(Date.now()); });
+const picker = page.getByRole('dialog', { name: 'Model', exact: true });
+const modelButtons = picker.locator('.model-list').getByRole('button');
+const modelButton = (provider, model) => modelButtons.and(picker.locator(`[data-provider=${JSON.stringify(provider)}][data-model=${JSON.stringify(model)}]`));
+async function openPicker() {
+  const responsePromise = page.waitForResponse(response => rpcBody(response.request())?.method === 'model.catalog');
+  await page.getByLabel('Choose model', { exact: true }).click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
+  const envelope = await response.json();
+  expect(envelope.ok).toBe(true);
+  await expect(picker).toBeVisible();
+  return envelope.result;
+}
 try {
   await page.goto(config.url);
   await page.getByRole('button', { name: 'Local connection', exact: true }).click();
@@ -52,9 +69,8 @@ try {
   // The list on screen was fetched when the session was selected; a route can gain or lose a model in
   // between, so the tap refreshes it rather than offering an id the host has already dropped.
   const catalogCallsBefore = catalogCalls.length;
-  await chip.click();
+  const catalog = await openPicker();
   await expect.poll(() => catalogCalls.length).toBeGreaterThan(catalogCallsBefore);
-  const picker = page.getByLabel('Model', { exact: true });
   await expect(picker).toBeVisible();
   await expect(picker).toBeInViewport();
   // The options belong to the chip, not to the composer: opening them must not move the input the
@@ -69,10 +85,10 @@ try {
   // covers anything near the left edge.
   await expect.poll(() => page.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
   const covered = await page.evaluate(() => {
-    const panel = document.querySelector('.model-picker'); const select = panel?.querySelector('select');
-    if (!panel || !select) return ['the panel is not rendered'];
-    const rect = panel.getBoundingClientRect(); const selectRect = select.getBoundingClientRect();
-    const points = [[rect.left + 14, rect.top + 14], [rect.right - 14, rect.top + 14], [rect.left + 14, rect.bottom - 14], [rect.right - 14, rect.bottom - 14], [selectRect.left + selectRect.width / 2, selectRect.top + selectRect.height / 2]];
+    const panel = document.querySelector('.model-picker'); const list = panel?.querySelector('.model-list');
+    if (!panel || !list) return ['the panel/list is not rendered'];
+    const rect = panel.getBoundingClientRect(); const listRect = list.getBoundingClientRect();
+    const points = [[rect.left + 14, rect.top + 14], [rect.right - 14, rect.top + 14], [rect.left + 14, rect.bottom - 14], [rect.right - 14, rect.bottom - 14], [listRect.left + listRect.width / 2, listRect.top + listRect.height / 2]];
     const name = (x, y) => { const at = document.elementFromPoint(x, y); return at ? `${at.tagName.toLowerCase()}.${String(at.className).split(' ')[0]}` : 'nothing'; };
     return points.filter(([x, y]) => { const at = document.elementFromPoint(x, y); return !at || !panel.contains(at); }).map(([x, y]) => `${name(x, y)} at ${Math.round(x)},${Math.round(y)}`);
   });
@@ -83,39 +99,155 @@ try {
   expect(gap).toBeLessThan(40);
   expect(Math.abs((panelBox.x + panelBox.width) - (chipBox.x + chipBox.width)), 'the model panel is not aligned with its chip').toBeLessThan(24);
   expect(Math.abs((panelBox.x + panelBox.width) - (chipBox.x + chipBox.width))).toBeLessThan(24);
-  // A deployment may register more routes than this one (a local bridge, for example), and those
-  // belong in the picker too, so the check names the catalog it is about instead of counting
-  // everything the Host happens to offer. The number of models on that route belongs to the runtime
-  // and changes with it, so what is pinned is the model this check selects and that nothing repeats.
-  const deepseek = picker.locator('option[value^="deepseek-official/"]');
-  expect(await deepseek.count()).toBeGreaterThan(0);
-  await expect(picker.locator('option[value="deepseek-official/deepseek-v4-pro"]')).toHaveCount(1);
-  const values = await picker.locator('option').evaluateAll(options => options.map(option => option.value));
+  await page.setViewportSize({ width: 320, height: 480 });
+  await expect.poll(() => picker.evaluate(panel => {
+    const rect = panel.getBoundingClientRect();
+    return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1;
+  })).toBe(true);
+  expect(await picker.locator('.model-list').evaluate(list => getComputedStyle(list).overflowY)).toBe('auto');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(picker).toBeInViewport();
+  // Compare every provider/model tuple with the runtime response, including listed but unroutable
+  // providers. No route, model or effort ID belongs in this scenario's source.
+  const entries = catalog.groups.flatMap(group => group.models.map(model => ({ provider: group.id, group, model })));
+  await expect(modelButtons).toHaveCount(entries.length);
+  const values = await modelButtons.evaluateAll(buttons => buttons.map(button => JSON.stringify([button.dataset.provider, button.dataset.model])));
   expect(new Set(values).size).toBe(values.length);
-  await expect(page.getByLabel('Reasoning effort', { exact: true })).toHaveCount(0);
+  expect(values.sort()).toEqual(entries.map(entry => JSON.stringify([entry.provider, entry.model.id])).sort());
+  for (const group of catalog.groups.filter(group => group.models.length)) {
+    await expect(picker.locator('.model-list').getByRole('heading', { name: group.name, exact: true })).toBeVisible();
+    for (const model of group.models) {
+      if (!catalog.routableProviders.includes(group.id)) await expect(modelButton(group.id, model.id)).toBeDisabled();
+    }
+  }
+  const current = modelButtons.and(picker.locator('[aria-pressed="true"]'));
+  await expect(current).toHaveCount(1);
+  const initialSelection = await current.evaluate(button => ({ provider: button.dataset.provider, model: button.dataset.model }));
+  const routable = entries.filter(entry => catalog.routableProviders.includes(entry.provider));
+  expect(routable.length, 'the runtime must advertise at least one routable model').toBeGreaterThan(0);
+  const candidates = routable.filter(entry => entry.provider !== initialSelection.provider || entry.model.id !== initialSelection.model);
+  const available = candidates.length ? candidates : routable;
+  const target = available.find(entry => entry.model.reasoning?.efforts.length) ?? available[0];
+  const targetButton = modelButton(target.provider, target.model.id);
+  const search = picker.getByRole('searchbox', { name: 'Search models', exact: true });
+  await expect(search).toBeFocused();
+  await search.fill(target.model.id);
+  await expect(targetButton).toBeVisible();
+  const query = target.model.id.toLowerCase();
+  const matches = entries.filter(entry => [entry.provider, entry.group.name, entry.model.id, entry.model.name].some(value => value.toLowerCase().includes(query)));
+  await expect(modelButtons).toHaveCount(matches.length);
+  // Generate a query absent from this catalog, rather than assuming a particular name is absent.
+  let absent = 'no-matching-runtime-model';
+  while (entries.some(entry => [entry.provider, entry.group.name, entry.model.id, entry.model.name].some(value => value.toLowerCase().includes(absent)))) absent += '-x';
+  await search.fill(absent);
+  await expect(modelButtons).toHaveCount(0);
+  await expect(picker.getByRole('status')).toHaveText('No matching models');
+  await search.fill('');
+  await expect(modelButtons).toHaveCount(entries.length);
+  await search.press('Escape');
+  await expect(picker).toHaveCount(0);
+  await expect(chip).toBeFocused();
+  await openPicker();
 
-  await picker.selectOption('deepseek-official/deepseek-v4-pro');
-  await expect(picker).toHaveValue('deepseek-official/deepseek-v4-pro');
+  // Hold a real local-RPC attempt at the transport boundary. A second DOM click while disabled
+  // must not emit another request. Reject without forwarding, so the host selection cannot change.
+  let setModelCalls = 0;
+  let releaseFailure;
+  const failureGate = new Promise(resolve => { releaseFailure = resolve; });
+  const failureRoute = async route => {
+    const body = rpcBody(route.request());
+    if (body?.method !== 'session.setModel') return route.continue();
+    setModelCalls++;
+    await failureGate;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ v: 1, id: body.id, ok: false, error: { code: 'MODEL_UNAVAILABLE', message: 'Model selection rejected by UI scenario' } }) });
+  };
+  await page.route(rpcUrl, failureRoute);
+  try {
+    await search.fill(target.model.id);
+    await search.press('Enter');
+    await expect(search).toBeFocused();
+    await expect(picker).toBeVisible();
+    expect(setModelCalls).toBe(0);
+    await search.fill('');
+    await targetButton.click();
+    await expect.poll(() => setModelCalls).toBe(1);
+    await expect(picker).toBeVisible();
+    await expect(picker.getByRole('status')).toHaveText('Switching model…');
+    for (const button of await modelButtons.all()) await expect(button).toBeDisabled();
+    const pendingEffort = picker.getByLabel('Reasoning effort', { exact: true });
+    if (await pendingEffort.count()) await expect(pendingEffort).toBeDisabled();
+    await targetButton.evaluate(button => { button.click(); button.click(); });
+    expect(setModelCalls).toBe(1);
+    const beforeFailureRefresh = catalogCalls.length;
+    releaseFailure();
+    await expect(picker.getByRole('alert')).toBeVisible();
+    await expect(picker).toBeVisible();
+    await expect.poll(() => catalogCalls.length).toBeGreaterThan(beforeFailureRefresh);
+    await expect(targetButton).toBeEnabled();
+    await expect(modelButton(initialSelection.provider, initialSelection.model)).toHaveAttribute('aria-pressed', 'true');
+    expect(setModelCalls).toBe(1);
+  } finally {
+    releaseFailure();
+    await page.unroute(rpcUrl, failureRoute);
+  }
 
-  // The Host resolves defaults, so the effort picker appears with the model default rather
-  // than the value that was sent.
-  const effort = page.getByLabel('Reasoning effort', { exact: true });
-  await expect(effort).toBeVisible();
-  await expect(effort).toHaveValue('high');
-  await effort.selectOption('low');
-  await expect(effort).toHaveValue('low');
+  await search.fill(target.model.id);
+  await search.press('ArrowDown');
+  await expect(modelButtons.and(page.locator(':focus'))).toHaveCount(1);
+  // A runtime may reuse model IDs across providers: walk the enabled matches to the chosen tuple.
+  for (let index = 0; index < await modelButtons.count(); index++) {
+    if (await targetButton.evaluate(button => button === document.activeElement)) break;
+    await page.keyboard.press('ArrowDown');
+  }
+  await expect(targetButton).toBeFocused();
+  const selectionResponse = page.waitForResponse(response => rpcBody(response.request())?.method === 'session.setModel');
+  await page.keyboard.press('Enter');
+  const selected = await (await selectionResponse).json();
+  expect(selected.ok).toBe(true);
+  expect(selected.result.model.provider).toBe(target.provider);
+  expect(selected.result.model.model).toBe(target.model.id);
+  await expect(picker).toHaveCount(0);
+  await openPicker();
+  await expect(targetButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(current).toHaveCount(1);
+
+  // The host resolves the value; the runtime alone defines the effort options and default.
+  const effort = picker.getByLabel('Reasoning effort', { exact: true });
+  const efforts = target.model.reasoning?.efforts ?? [];
+  let storedEffort = selected.result.model.reasoningEffort ?? '';
+  if (efforts.length) {
+    await expect(effort).toBeVisible();
+    await expect(effort).toHaveValue(storedEffort);
+    expect(await effort.locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean))).toEqual(efforts.map(option => option.id));
+    const alternative = efforts.find(option => option.id !== storedEffort);
+    if (alternative) {
+      const effortResponse = page.waitForResponse(response => rpcBody(response.request())?.method === 'session.setModel');
+      await effort.selectOption(alternative.id);
+      const updated = await (await effortResponse).json();
+      expect(updated.ok).toBe(true);
+      storedEffort = updated.result.model.reasoningEffort;
+      expect(storedEffort).toBe(alternative.id);
+      await expect(picker).toHaveCount(0);
+      await openPicker();
+      await expect(effort).toHaveValue(storedEffort);
+    }
+  } else {
+    await expect(effort).toHaveCount(0);
+    console.log('Runtime catalog has no reasoning efforts for the selected routable model; effort change not exercised.');
+  }
 
   // The selection lives on the host, so a reload must not lose it.
   await page.reload();
   await expect(page.getByRole('heading', { name: '模型选择验证' })).toBeVisible();
-  // Collapsed again after a reload, so reopen the picker before reading back the stored values.
-  await expect(page.getByLabel('Model', { exact: true })).toHaveCount(0);
-  await page.getByLabel('Choose model', { exact: true }).click();
-  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('deepseek-official/deepseek-v4-pro');
-  await expect(page.getByLabel('Reasoning effort', { exact: true })).toHaveValue('low');
+  await expect(picker).toHaveCount(0);
+  await openPicker();
+  await expect(targetButton).toHaveAttribute('aria-pressed', 'true');
+  if (efforts.length) await expect(effort).toHaveValue(storedEffort);
+  else await expect(effort).toHaveCount(0);
 
   expect(errors).toEqual([]);
-  console.log('UI model checks passed: chip reachable on a phone, catalog listed, selection applied, effort resolved by the Host, selection survives reload.');
+  console.log('UI model checks passed: phone geometry, runtime-grouped searchable list, checked current model, Escape focus restoration, pending duplicate lock, inline failure/retry, success closes, runtime effort options where available, selection survives reload.');
 } catch (error) {
   console.error(await page.locator('main').innerText());
   throw error;

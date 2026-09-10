@@ -87,12 +87,27 @@ program.command('agents <session>').description(t('command.agents')).action((ses
   const { subagents } = await c.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId });
   if (program.opts().json) { print(subagents); return; }
   if (!subagents.length) { console.log(t('agents.empty')); return; }
+  const byId = new Map(subagents.map(agent => [agent.id, agent]));
   for (const agent of subagents) {
     const current = agent.todos.find(todo => todo.status === 'in_progress');
     const done = agent.todos.filter(todo => todo.status === 'completed').length;
     // The running child leads with the tool it is on; a finished one keeps the state it ended in.
     const steps = current ? t('agents.current', { done, total: agent.todos.length, content: current.content }) : agent.todos.length ? t('agents.steps', { done, total: agent.todos.length }) : '';
-    console.log(`${agent.activity === 'running' ? '●' : '○'} ${'  '.repeat(agent.depth - 1)}${safe(agent.label)}${agent.elapsedMs === undefined ? '' : '  ' + duration(agent.elapsedMs)}${steps ? '  ' + steps : ''}`);
+    const indent = '  '.repeat(agent.depth - 1);
+    const parent = byId.get(agent.parentId);
+    const where = parent ? t('agents.under', { label: safe(parent.label) }) : t('agents.depth', { depth: agent.depth });
+    console.log(`${agent.activity === 'running' ? '●' : '○'} ${indent}${safe(agent.label)}${agent.elapsedMs === undefined ? '' : '  ' + duration(agent.elapsedMs)}${steps ? '  ' + steps : ''}`);
+    // The same detail the phone shows when a row is opened: what this child is, and its own plan.
+    console.log(`${indent}  ${agent.mode === 'continuable' ? t('agents.modeContinuable') : t('agents.modeOneShot')} · ${where}`);
+    if (!agent.todos.length) console.log(`${indent}  ${t('agents.noPlan')}`);
+    else {
+      console.log(`${indent}  ${t('agents.plan')}`);
+      for (const todo of agent.todos) {
+        const mark = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '●' : '○';
+        const state = t(todo.status === 'completed' ? 'agents.todoCompleted' : todo.status === 'in_progress' ? 'agents.todoInProgress' : 'agents.todoPending');
+        console.log(`${indent}    ${mark} ${state.padEnd(12)}${safe(todo.content)}`);
+      }
+    }
   }
 }));
 program.command('history <session>').description(t('command.history'))

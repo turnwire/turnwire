@@ -7,13 +7,12 @@ import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireCl
 import { TurnwireError, eventSessionId } from '@turnwire/protocol';
 import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
-import { carriedEffort } from './modelChoice';
+import { AgentStrip } from './AgentStrip';
+import { ModelPicker } from './ModelPicker';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
 
 type Connection = { kind: 'local'; url: string; token: string } | { kind: 'remote'; code: string };
-/** The agent strip stays a glanceable few lines even when a fan-out runs a dozen children. */
-const MAX_AGENT_ROWS = 4;
 /** Failures a verified connection has answered: they stop being true, so they stop being shown. */
 const STALE_CONNECTION_FAILURES = new Set(['DISCONNECTED', 'OUTCOME_UNKNOWN', 'HOST_OFFLINE', 'STAGE_TIMEOUT', 'PROBE_TIMEOUT', 'CONNECTION_FAILED', 'REMOTE_ERROR']);
 const statusKeys: Record<SessionStatus, MessageKey> = { idle: 'status.idle', running: 'status.running', waiting_approval: 'status.waiting_approval', interrupted: 'status.interrupted', error: 'status.error' };
@@ -66,7 +65,7 @@ function QuestionCard({ question, pending, disabled, onAnswer }: { question: Que
         else { const next = { ...picks, [item.id]: [option.label] }; setPicks(next); if (asked) answer(next); }
       }}>{option.label}{option.description ? <small>{option.description}</small> : null}</button>)}</div>}
       {answerable && <span className="question-other-row"><input className="question-other" aria-label={t('question.other')} placeholder={t('question.other')} value={texts[item.id] ?? ''} disabled={disabled} onChange={event => setTexts(current => ({ ...current, [item.id]: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter' && ready) { event.preventDefault(); answer(); } }} />{item.multiSelect === true || !item.options?.length ? <button className="primary" type="button" disabled={disabled || !((picks[item.id]?.length ?? 0) > 0 || (texts[item.id] ?? '').trim() !== '')} onClick={() => answer()}>{t('question.send')}</button> : null}</span>}
-      {!pending && <p className="question-given">{item.options?.find(option => (question.answers?.find(entry => entry.id === item.id)?.selected ?? []).includes(option.label)) ? null : null}{answerText(question, item.id) || t('question.noAnswer')}</p>}
+      {!pending && <p className="question-given">{answerText(question, item.id) || t('question.noAnswer')}</p>}
     </div>)}
     {answerable && asked?.multiSelect === true && <div className="question-actions"><button className="primary" type="button" disabled={disabled || !ready} onClick={() => answer()}>{t('question.send')}</button></div>}
   </section>;
@@ -80,14 +79,6 @@ function answerText(question: Question, id: string) {
 }
 
 function Status({ status }: { status: SessionStatus }) { const t = useLocale(); return <span className={`status ${status}`}><span />{t(statusKeys[status])}</span>; }
-/** How long an agent has been working, rounded the way a person reads a stopwatch. */
-function agentDuration(ms: number) { const seconds = Math.round(ms / 1000); return seconds < 60 ? t('agents.seconds', { value: seconds }) : t('agents.minutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 }); }
-/** The step an agent is on, or how far its plan got; the plan is the progress it reports. */
-function agentStep(agent: SubagentView) {
-  const current = agent.todos.find(todo => todo.status === 'in_progress');
-  const done = agent.todos.filter(todo => todo.status === 'completed').length;
-  return current ? t('agents.current', { done, total: agent.todos.length, content: current.content }) : t('agents.steps', { done, total: agent.todos.length });
-}
 /** A compact EN/ZH switch; the manual choice is persisted so it survives a reload. */
 function LocaleSwitch() {
   const t = useLocale();
@@ -125,6 +116,12 @@ export function App() {
   // The picker stays collapsed behind a chip in the composer: a phone needs that space for the
   // conversation and the keyboard, so the control appears only when it is wanted.
   const [showModel, setShowModel] = useState(false); const modelSwitch = useRef<HTMLSpanElement | null>(null);
+  const modelRequest = useRef(false);
+  const [modelPending, setModelPending] = useState(false);
+  const [modelError, setModelError] = useState('');
+  const modelContext = useRef(selected); modelContext.current = selected;
+  const closeModel = () => { setShowModel(false); modelSwitch.current?.querySelector('button')?.focus(); };
+  useEffect(() => { setShowModel(false); setModelError(''); }, [selected, connection]);
   // Queued prompts are shown as their own list above the composer instead of inside the running
   // turn's flow. The list is the runtime's own queue, not this tab's memory of what it saw arrive:
   // a page that has just loaded, or one that was asleep while another client queued something, must
@@ -219,7 +216,7 @@ export function App() {
   useEffect(() => {
     if (!showModel) return;
     const away = (event: MouseEvent) => { if (!modelSwitch.current?.contains(event.target as Node)) setShowModel(false); };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowModel(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); closeModel(); } };
     document.addEventListener('mousedown', away); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', escape); };
   }, [showModel]);
@@ -263,15 +260,22 @@ export function App() {
   /** Each state sends its own constant, so what the reader sees is what the host is told. */
   function setDelegated(sessionId: string, enabled: boolean) { void perform(async c => { await c.request('session.autoApprove', { sessionId, enabled }); }); }
   function chooseModel(provider: string, model: string, reasoningEffort?: string) {
-    void perform(async c => {
-      try { await c.request('session.setModel', { sessionId: session!.id, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) }); }
-      catch (error) {
-        // A model this host no longer offers means the list on screen is stale: fetch it again so the
-        // next look shows what can actually be chosen.
+    const client = clientRef.current;
+    if (!client || !session || state !== 'connected' || busy || session.archived || modelRequest.current) return;
+    const sessionId = session.id;
+    modelRequest.current = true; setModelPending(true); setModelError('');
+    void client.request<Session>('session.setModel', { sessionId, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) })
+      .then(updated => {
+        if (clientRef.current !== client) return;
+        setSnapshot(previous => previous ? { ...previous, sessions: previous.sessions.map(item => item.id === updated.id ? { ...item, model: updated.model } : item) } : previous);
+        if (modelContext.current === sessionId) closeModel();
+      })
+      .catch(error => {
+        if (clientRef.current !== client || modelContext.current !== sessionId) return;
+        setModelError(errorText(error));
         if ((error as { code?: string }).code === 'MODEL_UNAVAILABLE') void refreshCatalog();
-        throw error;
-      }
-    });
+      })
+      .finally(() => { modelRequest.current = false; setModelPending(false); });
   }
   useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key.toLowerCase() === 'n' && (event.metaKey || event.ctrlKey) && snapshot) { event.preventDefault(); setCreate(true); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [snapshot]);
 
@@ -404,11 +408,11 @@ export function App() {
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
-          {runningAgents.length > 0 && <div className="agent-strip" role="status" aria-label={t('agents.aria')}><div className="agent-heading">{t('agents.running', { count: runningAgents.length })}</div>{runningAgents.slice(0, MAX_AGENT_ROWS).map(agent => <div className="agent-item" key={agent.id}><span className="agent-dot" /><span className="agent-label">{agent.label}</span>{agent.elapsedMs !== undefined && <span className="agent-time">{agentDuration(agent.elapsedMs)}</span>}{agent.todos.length > 0 && <span className="agent-steps">{agentStep(agent)}</span>}</div>)}{runningAgents.length > MAX_AGENT_ROWS && <div className="agent-more">{t('agents.more', { count: runningAgents.length - MAX_AGENT_ROWS })}</div>}</div>}
+          <AgentStrip agents={runningAgents} />
           {pending.length > 0 && <div className="queued-strip" role="status" aria-label={t('queue.aria')}>{pending.map(item => <div className="queued-item" key={item.id}>{editingQueued === item.id ? <input className="queued-edit" aria-label={t('queue.editLabel')} value={queuedDraft} autoFocus onChange={event => setQueuedDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (queuedDraft.trim()) void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() }); } if (event.key === 'Escape') setEditingQueued(undefined); }} /> : <span className="queued-text" title={item.text}>{item.text}</span>}<span className="queued-buttons">{editingQueued === item.id ? <button type="button" disabled={!connected || busy || !queuedDraft.trim()} onClick={() => void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() })}>{t('queue.save')}</button> : <button type="button" disabled={!connected || busy} onClick={() => { setEditingQueued(item.id); setQueuedDraft(item.text); }}>{t('queue.edit')}</button>}<button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'remove' })}>{t('queue.remove')}</button><button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'steer' })}>{t('queue.steer')}</button></span></div>)}</div>}
           <form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim()) return; submit(prompt, false); }}>
               <textarea aria-label={t('composer.messageAria')} placeholder={t('composer.placeholder')} value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} disabled={!connected || session.archived || ['interrupted', 'error'].includes(session.status)} onKeyDown={event => { if (event.key !== 'Enter') return; if (event.altKey) { event.preventDefault(); submit(prompt, true); } else if (event.metaKey || event.ctrlKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-              <div className="composer-bottom"><span><FolderSimple size={14} />{shortPath(session.cwd)}</span><div>{modelSupport && <span className="model-switch" ref={modelSwitch}><button type="button" className="model-chip" aria-label={t('composer.chooseModel')} aria-expanded={showModel} disabled={!connected || session.archived} onClick={() => { if (!showModel) void refreshCatalog(); setShowModel(value => !value); }}>{modelChipLabel(session, catalog)}</button>{showModel && <div className="model-picker">{catalog?.runtimeId === runtime?.id ? <><p className="model-default">{t('model.runtimeDefaultNamed', { provider: catalog.value.default.provider, model: catalog.value.default.model })}</p><label>{t('model.label')}<select aria-label={t('model.label')} value={session.model ? `${session.model.provider}/${session.model.model}` : ''} disabled={!connected || busy || session.archived} onChange={event => { const [provider, model] = event.target.value.split('/'); if (provider && model) chooseModel(provider, model, carriedEffort(catalog?.value, session.model, { provider, model })); }}>{!session.model && <option value="">{t('model.runtimeDefault')}</option>}{catalog.value.groups.map(group => <optgroup key={group.id} label={group.name}>{group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}{catalog.value.routableProviders.includes(group.id) ? '' : t('model.unavailableSuffix')}</option>)}</optgroup>)}</select></label>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</> : <span className="model-loading">{t('model.loadingCatalog')}</span>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</div>}</span>}{['running', 'waiting_approval'].includes(session.status) && <button className="stop-button" type="button" aria-label={t('composer.stopTask')} disabled={!connected} onClick={() => void perform(async c => { await c.request('session.cancel', { sessionId: session.id }); })}><Stop size={13} weight="fill" />{t('composer.stop')}</button>}<button className="send-button" type="submit" aria-label={t('composer.send')} disabled={busy || !connected || session.archived || !prompt.trim() || ['interrupted', 'error'].includes(session.status)}>{busy ? <CircleNotch className="spin" size={18} /> : <ArrowUp size={20} />}</button></div></div>
+              <div className="composer-bottom"><span><FolderSimple size={14} />{shortPath(session.cwd)}</span><div>{modelSupport && <span className="model-switch" ref={modelSwitch}><button type="button" className="model-chip" aria-label={t('composer.chooseModel')} aria-expanded={showModel} aria-haspopup="dialog" disabled={!connected || session.archived} onClick={() => { if (!showModel) void refreshCatalog(); setShowModel(value => !value); }}>{modelPending ? t('model.switching') : modelChipLabel(session, catalog)}</button>{showModel && <ModelPicker anchor={modelSwitch} catalog={catalog?.runtimeId === runtime?.id ? catalog?.value : undefined} current={session.model} disabled={!connected || busy || session.archived === true} pending={modelPending} error={modelError} choose={chooseModel}>{catalog?.runtimeId === runtime?.id && <>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || modelPending || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</ModelPicker>}</span>}{['running', 'waiting_approval'].includes(session.status) && <button className="stop-button" type="button" aria-label={t('composer.stopTask')} disabled={!connected} onClick={() => void perform(async c => { await c.request('session.cancel', { sessionId: session.id }); })}><Stop size={13} weight="fill" />{t('composer.stop')}</button>}<button className="send-button" type="submit" aria-label={t('composer.send')} disabled={busy || !connected || session.archived || !prompt.trim() || ['interrupted', 'error'].includes(session.status)}>{busy ? <CircleNotch className="spin" size={18} /> : <ArrowUp size={20} />}</button></div></div>
             </form><div className="composer-caption"><LocaleSwitch /><span><ShieldCheck size={12} />{connection?.kind === 'remote' ? t('composer.encrypted') : t('composer.local')}</span><span>{connected ? t('composer.shared') : t('composer.disconnected')}</span></div>
           </div></footer>
         </>}

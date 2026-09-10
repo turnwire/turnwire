@@ -18,6 +18,7 @@ on:
           - model-picker
           - history-paging
           - tab-switching
+          - questions-and-agents
 
 permissions:
   contents: read
@@ -45,6 +46,9 @@ jobs:
       - name: History paging in the phone PWA
         if: inputs.scenario == 'all' || inputs.scenario == 'history-paging'
         run: node --import tsx scripts/history-ui-check.mjs
+      - name: Questions and agents in the phone PWA
+        if: inputs.scenario == 'all' || inputs.scenario == 'questions-and-agents'
+        run: node --import tsx scripts/question-ui-check.mjs
       - name: Tab switching in the phone PWA
         if: inputs.scenario == 'all' || inputs.scenario == 'tab-switching'
         run: node --import tsx scripts/remote-resilience-check.mjs

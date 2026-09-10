@@ -68,6 +68,9 @@ node --import tsx scripts/dsh-live-check.mjs
 node --import tsx scripts/history-ui-check.mjs
 node --import tsx scripts/remote-resilience-check.mjs
 
+# 手机 PWA 里的提问卡片与后台子代理，在 390 px 和 320 px 下各测一遍：
+node --import tsx scripts/question-ui-check.mjs
+
 # 完整 UI 走查需要先起一个隔离的 Demo：
 TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev   # 另开终端
 TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs
