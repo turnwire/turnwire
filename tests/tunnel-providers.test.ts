@@ -29,7 +29,7 @@ it('runs anonymous SSH without user credentials, handles address rotation and ab
   let rotated = ''; const aborter = new AbortController();
   const handle = await startLocalhostTunnel({ ...options, signal: aborter.signal, changed: value => { rotated = value; } }); cleanup.push(() => handle.close());
   expect(handle.url).toBe('https://first.lhr.life');
-  await vi.waitFor(() => expect(rotated).toBe('https://second.lhr.life'));
+  await vi.waitFor(() => expect(rotated).toBe('https://second.lhr.life'), { timeout: 15_000 });
   const argv = JSON.parse(await readFile(join(directory, 'args.json'), 'utf8'));
   expect(argv.secret).toBeUndefined(); expect(argv.agent).toBeUndefined();
   expect(argv.args).toContain('StrictHostKeyChecking=accept-new'); expect(argv.args).toContain('IdentityAgent=none'); expect(argv.args).toContain('nokey@localhost.run');

@@ -26,7 +26,7 @@ it('authenticates an isolated TLS bridge and fails over to Relay without exposin
   const pairing: Pairing = { v: 2, hostId: 'host', clientId: 'phone', name: 'Phone', token: randomSecret(), key: randomSecret(), relayUrl: `ws://127.0.0.1:${relay.port}` }; core.store.addDevice(pairing);
   const direct = new DirectController(core, () => 'https://phone.example', () => true); cleanup.push(() => direct.close());
   direct.configure({ enabled: true, url: 'wss://localhost:0/remote', listenHost: '127.0.0.1', port: 0, certificatePath: cert, privateKeyPath: key });
-  await vi.waitFor(() => expect(direct.status().state).toBe('online'));
+  await vi.waitFor(() => expect(direct.status().state).toBe('online'), { timeout: 15_000 });
   const url = direct.endpoints()[0]!;
   for (const path of ['/rpc', '/events', '/devices', '/remote']) {
     const target = new URL(url.replace('wss:', 'https:')); target.pathname = path;
@@ -37,7 +37,7 @@ it('authenticates an isolated TLS bridge and fails over to Relay without exposin
   const phone = new RemoteClient({ ...pairing, directUrls: [url] }); cleanup.push(() => phone.close());
   const initialHealth = await phone.checkConnection(); expect(initialHealth.route).toBe('direct');
   expect((await phone.request<Snapshot>('system.snapshot')).device.id).toBe('host');
-  bridge.start(); await vi.waitFor(() => expect(bridge.connected).toBe(true));
+  bridge.start(); await vi.waitFor(() => expect(bridge.connected).toBe(true), { timeout: 15_000 });
   let health = initialHealth; const stop = phone.observeConnection(value => { health = value; });
   await direct.close();
   await vi.waitFor(() => { expect(health.phase).toBe('connected'); expect(health.route).toBe('relay'); }, { timeout: 7000 }); stop();

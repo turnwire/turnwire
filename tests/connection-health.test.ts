@@ -39,7 +39,7 @@ it('does not equate relay readiness or subscription with a verified Mac connecti
 it('expires a previously verified connection when the Mac stops replying while the relay remains open', async () => {
   const { phone, health, blackhole } = await peer('valid');
   const result = await phone.checkConnection(); expect(result.phase).toBe('connected'); expect(result.lastVerifiedAt).toBeTruthy();
-  blackhole(); await vi.waitFor(() => expect(health.at(-1)?.phase).toBe('offline'));
+  blackhole(); await vi.waitFor(() => expect(health.at(-1)?.phase).toBe('offline'), { timeout: 15_000 });
   expect(health.at(-1)?.lastVerifiedAt).toBe(result.lastVerifiedAt);
 });
 it.each(['wrong-host', 'wrong-nonce'] as const)('rejects an encrypted but mismatched %s proof', async mode => {

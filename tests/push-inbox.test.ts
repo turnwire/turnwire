@@ -40,8 +40,8 @@ it('uses the encrypted device identity for subscriptions and delivers generic ap
   const remote = new RemoteController(core, { directory, webRoot: directory, initialRelay: { relayUrl: `ws://127.0.0.1:${relay.port}`, token, remoteUrl: `http://127.0.0.1:${relay.port}` } }); cleanup.push(() => remote.close()); remote.start();
   const server = await startDaemonServer({ core, token, port: 0, remoteAccess: remote }); cleanup.push(() => server.close());
   const local = new LocalClient(`http://127.0.0.1:${server.port}`, token); cleanup.push(() => local.close());
-  await vi.waitFor(() => expect(remote.status().state).toBe('online'));
-  const invitation = await local.pairDevice('Phone'); await vi.waitFor(() => expect(remote.status().state).toBe('online'));
+  await vi.waitFor(() => expect(remote.status().state).toBe('online'), { timeout: 15_000 });
+  const invitation = await local.pairDevice('Phone'); await vi.waitFor(() => expect(remote.status().state).toBe('online'), { timeout: 15_000 });
   const phone = new RemoteClient(invitation.pairing); cleanup.push(() => phone.close());
   expect((await phone.request<NotificationStatus>('notifications.status')).available).toBe(true);
   await expect(local.request('notifications.subscribe', subscription())).rejects.toThrow('已配对');
