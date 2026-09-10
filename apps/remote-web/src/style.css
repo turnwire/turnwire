@@ -78,11 +78,11 @@
 .agent-strip { display: grid; gap: 4px; margin: 0 2px 8px; padding: 8px 11px; border: 1px solid #e2e9f3; border-radius: 10px; background: #f5f8fd; }
 .agent-heading { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: #7d8ca3; }
 .agent-item { display: flex; align-items: baseline; gap: 7px; font-size: 11px; color: #55647a; }
-.agent-dot { flex-shrink: 0; align-self: center; width: 6px; height: 6px; border-radius: 50%; background: #c3ccda; }
-.agent-item.running .agent-dot { background: var(--accent); animation: agent-pulse 1.6s ease-in-out infinite; }
+.agent-dot { flex-shrink: 0; align-self: center; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: agent-pulse 1.6s ease-in-out infinite; }
 .agent-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-time { flex-shrink: 0; color: #8e9cb0; font-variant-numeric: tabular-nums; }
 .agent-steps { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8e9cb0; }
+.agent-more { font-size: 10px; color: #8e9cb0; }
 @keyframes agent-pulse { 50% { opacity: .3; } }
 .steer-button:disabled { opacity: .5; }
 /* Collapsed by default: the composer keeps its height, and the chip carries the runtime name. */

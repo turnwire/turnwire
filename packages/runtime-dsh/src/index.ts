@@ -16,14 +16,17 @@ const summarySchema = z.object({ sessionId: z.string(), running: z.boolean(), cw
 const subagentEntrySchema = z.object({ kind: z.string(), id: z.string(), activity: z.string().optional(), hasChildren: z.boolean().optional(), mode: z.string().optional(), label: z.string().optional() }).passthrough();
 /**
  * The slice of `session/list` a progress view needs. The Host projects the child's own plan
- * (`todos`), its delegation label and mode, its title, and its timing onto every listed session,
- * so one call describes every child without replaying any transcript.
+ * (`todos`), its delegation identity (`subagent.identity`, which carries the label and mode), its
+ * title and its timing onto every listed session, so one call describes every child without
+ * replaying any transcript. Every field is optional and the object passes unknown keys through:
+ * the Host owns these projections, and a shape this adapter has not seen must cost one child its
+ * detail rather than the whole listing.
  */
 const subagentDetailSchema = z.object({ sessionId: z.string(), projections: z.object({
   title: z.string().nullable().optional(),
   todos: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })).nullable().optional(),
-  subagent: z.object({ mode: z.string(), label: z.string().optional() }).nullable().optional(),
-  subagentTiming: z.object({ settledMs: z.number(), active: z.object({ since: z.number(), through: z.number() }).optional() }).optional(),
+  subagent: z.object({ identity: z.object({ mode: z.string(), label: z.string().optional() }).optional() }).nullable().optional(),
+  subagentTiming: z.object({ settledMs: z.number().optional(), active: z.object({ since: z.number() }).optional() }).optional(),
 }).optional() }).passthrough();
 interface SubagentDetail { label?: string; title?: string; elapsedMs?: number; todos: SubagentView['todos'] }
 export interface DshOptions {
@@ -108,14 +111,19 @@ export class DshRuntime implements AgentRuntime {
     return catalog.entries.filter(entry => entry.kind === 'child');
   }
   private async sessionDetails(): Promise<Map<string, SubagentDetail>> {
-    const value = z.object({ items: z.array(subagentDetailSchema) }).parse(await this.rpc('session/list', { _request: {} }));
+    // Each row is read on its own: one session with a projection this adapter does not understand
+    // loses its own detail and nothing else.
+    const value = z.object({ items: z.array(z.unknown()) }).parse(await this.rpc('session/list', { _request: {} }));
     const details = new Map<string, SubagentDetail>();
-    for (const item of value.items) {
+    for (const row of value.items) {
+      const parsed = subagentDetailSchema.safeParse(row);
+      if (!parsed.success) continue;
+      const item = parsed.data;
       const timing = item.projections?.subagentTiming;
       // A live child is timed from its own start; a settled one keeps the duration it ran for.
-      const elapsedMs = timing === undefined ? undefined : Math.max(0, timing.active ? Date.now() - timing.active.since : timing.settledMs);
+      const elapsedMs = timing === undefined ? undefined : Math.max(0, timing.active ? Date.now() - timing.active.since : timing.settledMs ?? 0);
       details.set(item.sessionId, {
-        ...(item.projections?.subagent?.label === undefined ? {} : { label: item.projections.subagent.label }),
+        ...(item.projections?.subagent?.identity?.label === undefined ? {} : { label: item.projections.subagent.identity.label }),
         ...(item.projections?.title == null ? {} : { title: item.projections.title }),
         ...(elapsedMs === undefined ? {} : { elapsedMs }),
         todos: item.projections?.todos?.map(todo => ({ content: todo.content, status: todo.status })) ?? [],

@@ -16,7 +16,7 @@ interface FixtureChild {
   hasChildren?: boolean; title?: string; elapsedMs?: number; settledMs?: number;
   todos?: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }>;
 }
-async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned'; childrenError?: boolean; omitDetails?: boolean } = {}) {
+async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | 'owned'; childrenError?: boolean; omitDetails?: boolean; oddDetail?: boolean } = {}) {
   let seq = 0; let running = false; const calls: Array<{ path: string; args: Record<string, unknown> }> = [];
   let children: FixtureChild[] = [];
   const records: Array<{ type: string; event: { seq: number; time: number; type: string; data: Record<string, unknown> } }> = [];
@@ -50,11 +50,12 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
         projections: {
           ...(child.title === undefined ? {} : { title: child.title }),
           ...(child.todos === undefined ? {} : { todos: child.todos }),
-          subagent: { mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }) },
-          subagentTiming: child.activity === 'running' ? { settledMs: 0, active: { since: Date.now() - (child.elapsedMs ?? 0), through: seq } } : { settledMs: child.settledMs ?? 0 },
+          // The Host nests the mode and label under `identity`, exactly as its projection cache holds them.
+          subagent: { identity: { mode: child.mode ?? 'one-shot', ...(child.label === undefined ? {} : { label: child.label }) }, seq: 1 },
+          subagentTiming: child.activity === 'running' ? { descriptorSeen: true, settledMs: 0, active: { since: Date.now() - (child.elapsedMs ?? 0), through: seq } } : { descriptorSeen: true, settledMs: child.settledMs ?? 0 },
         },
       }));
-      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running }, ...described] };
+      value = { items: options.list === 'empty' ? [] : [{ sessionId: 's', cwd: process.cwd(), running }, ...described, ...(options.oddDetail ? [{ sessionId: 'odd', running: false, projections: { todos: 'a projection shape this adapter has never seen' } }] : [])] };
     }
     else if (url.pathname === '/api/session/prompt') {
       const input = z.object({ request: z.object({ requestId: z.string(), sessionId: z.literal('s'), mode: z.enum(['queue', 'steer']), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).strict() }).strict().parse(args);
@@ -164,6 +165,17 @@ it('still names an agent whose own detail cannot be read', async () => {
   // The listing route is the authority on which agents exist; a failed detail read may not hide one.
   const agents = await runtime.listSubagents('s');
   expect(agents.map(agent => [agent.id, agent.label, agent.activity, agent.todos.length, agent.elapsedMs])).toEqual([['child-1', 'Translate the root docs', 'running', 0, undefined]]);
+});
+it('reads each session row on its own, so one unknown shape cannot blank the rest', async () => {
+  const host = await dshHost({ oddDetail: true }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
+  host.setChildren([
+    { id: 'child-1', activity: 'running', label: 'Translate the root docs', elapsedMs: 5_000, todos: [{ content: 'Translate README', status: 'in_progress' }] },
+    { id: 'child-2', activity: 'inactive', settledMs: 9_000 },
+  ]);
+  const agents = await runtime.listSubagents('s');
+  // The unparseable row is skipped; both real children keep the detail that described them.
+  expect(agents.map(agent => [agent.id, agent.todos.length, agent.elapsedMs === undefined ? undefined : Math.round(agent.elapsedMs / 1000)])).toEqual([['child-1', 1, 5], ['child-2', 0, 9]]);
 });
 it('reports missing DSH credentials without pretending the runtime is available', async () => {
   const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());

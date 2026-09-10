@@ -125,7 +125,7 @@ const en = {
   // Background agents: a delegation returns at once, so this is where a child's progress shows.
   'agents.aria': 'Background agents',
   'agents.running': '{count} background agents running',
-  'agents.finished': '{count} background agents, none running',
+  'agents.more': '+{count} more running',
   'agents.seconds': '{value}s',
   'agents.minutes': '{minutes}m {seconds}s',
   'agents.steps': '{done}/{total} steps',
@@ -364,7 +364,7 @@ const zh: Catalog = {
 
   'agents.aria': '后台子代理',
   'agents.running': '{count} 个子代理正在运行',
-  'agents.finished': '{count} 个子代理，均已结束',
+  'agents.more': '还有 {count} 个正在运行',
   'agents.seconds': '{value} 秒',
   'agents.minutes': '{minutes} 分 {seconds} 秒',
   'agents.steps': '{done}/{total} 项待办',
