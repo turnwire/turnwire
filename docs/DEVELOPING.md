@@ -29,7 +29,7 @@ npm run turnwire -- ls
 
 ## Connecting a real DSH
 
-The adapter is implemented against official source version **0.1.5-rc.1**, using the official API Gateway and Remote mux without parsing terminal output. The pinned source revision is written in the [DSH runtime adapter](DSH.md) — read that contract before changing versions, since the interfaces of alpha and stable tags can differ.
+The adapter is implemented against official source version **0.1.5-rc.2**, using the official API Gateway and Remote mux without parsing terminal output. The pinned source revision is written in the [DSH runtime adapter](DSH.md) — read that contract before changing versions, since the interfaces of alpha and stable tags can differ.
 
 ```bash
 # Terminal 1: make sure TURNWIRE_HARNESS_DEEPSEEK_API_KEY is exported (presence check only, no secret printed)

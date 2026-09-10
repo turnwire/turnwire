@@ -29,7 +29,7 @@ npm run turnwire -- ls
 
 ## 接真实 DSH
 
-适配器依据官方源码版本 **0.1.5-rc.1** 实现，使用官方 API Gateway 和 Remote mux，不解析终端输出。固定的源码修订写在 [DSH 接口说明](DSH.zh.md) —— 换版本前先读那份契约，alpha 与稳定标签的接口可能不同。
+适配器依据官方源码版本 **0.1.5-rc.2** 实现，使用官方 API Gateway 和 Remote mux，不解析终端输出。固定的源码修订写在 [DSH 接口说明](DSH.zh.md) —— 换版本前先读那份契约，alpha 与稳定标签的接口可能不同。
 
 ```bash
 # 终端 1：确保已 export TURNWIRE_HARNESS_DEEPSEEK_API_KEY（只检查是否存在，不输出密钥）

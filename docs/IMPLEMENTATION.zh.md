@@ -31,7 +31,7 @@
 
 ## 调研
 
-DSH 源码参照：`deepseek-ai/deepseek-harness` 的 `183f08e9c6dde7e36cd2318eaee70b0da08fb35e`（2026-09-09），版本 `0.1.5-rc.1`。其 API Gateway 使用 `POST /api/<namespace>/<method>`，并携带 Connection `client-request` 信封，其中包含 `payload: { args }`。精确签名与实机校验见 `docs/DSH.zh.md`。
+DSH 源码参照：`deepseek-ai/deepseek-harness` 的 `fb2c4b9e698e30edb738bca4cf0618587db7d203`（2026-09-09），版本 `0.1.5-rc.2`。其 API Gateway 使用 `POST /api/<namespace>/<method>`，并携带 Connection `client-request` 信封，其中包含 `payload: { args }`。精确签名与实机校验见 `docs/DSH.zh.md`。
 
 ## 进展
 
