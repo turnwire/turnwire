@@ -2,10 +2,11 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
 import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
+import { historyPageSchema, historySnapshotSchema, historyRecords, liveHistoryRecord, type HistorySnapshot } from './history.js';
 
 export const DSH_SOURCE_REVISION = 'fb2c4b9e698e30edb738bca4cf0618587db7d203';
 /** Bounds on one progress read: a run of delegations should be visible, not unbounded. */
@@ -58,6 +59,8 @@ export class DshRuntime implements AgentRuntime {
   private pending = new Map<string, { sessionId: string; clientId: string; resolving?: boolean; cancelled?: boolean }>();
   /** Question batches the Host is waiting on, keyed by their Remote event id. */
   private questions = new Map<string, { sessionId: string; clientId: string }>();
+  private childReads = new Map<string, { resolve: (snapshot: HistorySnapshot) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
+  private childCuts = new Map<string, number>();
   private clientId?: string;
   private lastError = 'DSH is not connected yet';
   constructor(private options: DshOptions) {
@@ -115,6 +118,72 @@ export class DshRuntime implements AgentRuntime {
       }
     }
     return views;
+  }
+  /** Cold child-address reads only. Core supplies the authoritative descendant identity. */
+  async subagentHistory(_sessionId: string, subagent: SubagentView, options: { before?: number; cursor?: number; limit: number }): Promise<SubagentHistoryPage> {
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100 ||
+      (options.cursor !== undefined && (!Number.isSafeInteger(options.cursor) || options.cursor < -1)) ||
+      (options.before !== undefined && (!Number.isSafeInteger(options.before) || options.before < 0 || options.cursor === undefined))) {
+      throw new TurnwireError('INVALID_REQUEST', 'Invalid child history pagination');
+    }
+    await this.connect();
+    const address = { kind: 'subagent', parentSessionId: subagent.parentId, childSessionId: subagent.id, mode: subagent.mode };
+    const key = JSON.stringify(address);
+    let cut = this.childCuts.get(key);
+    const snapshot = options.before === undefined || cut === undefined ? await this.childSnapshot(address, options.limit) : undefined;
+    const cursor = options.cursor ?? snapshot!.cursor;
+    const readPage = async (before: number | undefined, limit = options.limit) => historyPageSchema.parse(await this.rpc('session/page', { request: { address, throughSeq: cursor, ...(before === undefined ? {} : { beforeSeq: before }), maxMessages: limit } }));
+    const page = options.before === undefined && options.cursor === undefined ? snapshot! : await readPage(options.before);
+    if (cut === undefined) {
+      if (!snapshot!.header.isSeeded) cut = 0;
+      else {
+        // A resumed session adds untagged end-seed events. Only the LAST inherited marker
+        // separates the child's own execution from its forked parent transcript.
+        let boundaryPage = historyPageSchema.parse(snapshot);
+        for (let count = 0; count < 20; count++) {
+          const marker = boundaryPage.records.findLast(row => row.event.type === 'session/end-seed' && row.event.data.inherited === true);
+          if (marker) { cut = marker.event.seq + 1; break; }
+          const first = boundaryPage.records[0]?.event.seq;
+          if (!boundaryPage.hasMore || first === undefined) break;
+          boundaryPage = historyPageSchema.parse(await this.rpc('session/page', { request: { address, throughSeq: snapshot!.cursor, beforeSeq: first, maxMessages: 100 } }));
+          if (boundaryPage.records[0]?.event.seq === first) break;
+        }
+        if (cut === undefined) throw new TurnwireError('RUNTIME_UNAVAILABLE', 'Cannot safely separate inherited child context within the history read bound');
+      }
+      if (this.childCuts.size >= 256) this.childCuts.delete(this.childCuts.keys().next().value!);
+      this.childCuts.set(key, cut);
+    }
+    const own = page.records.map(row => row.event).filter(event => event.seq >= cut! && event.seq <= cursor);
+    // One bounded look-behind supplies arguments when a message-aligned page starts with
+    // a tool result. Stable call ids let clients coalesce the older call row on pagination.
+    const first = page.records[0]?.event.seq;
+    const context = first !== undefined && first > cut && own.some(event => event.type === 'tool/result')
+      ? (await readPage(first, 1)).records.map(row => row.event).filter(event => event.seq >= cut!) : [];
+    const records = historyRecords(subagent.id, own, context);
+    if (snapshot && options.before === undefined && options.cursor === undefined) {
+      const live = liveHistoryRecord(subagent.id, snapshot);
+      if (live) { const index = records.findIndex(row => row.id === live.id); if (index >= 0) records[index] = live; else records.push(live); }
+    }
+    const hasMore = page.hasMore && first !== undefined && first > cut;
+    return { subagent, records, cursor, hasMore, nextBefore: hasMore ? first! : null };
+  }
+  private childSnapshot(address: unknown, limit: number): Promise<HistorySnapshot> {
+    if (this.childReads.size >= 32) return Promise.reject(new TurnwireError('RUNTIME_UNAVAILABLE', 'Too many child history reads'));
+    return new Promise((resolve, reject) => {
+      const streamId = `child-history:${randomUUID()}`;
+      const timer = setTimeout(() => this.finishChildRead(streamId, undefined, new TurnwireError('RUNTIME_UNAVAILABLE', 'Child history read timed out')), 10_000);
+      this.childReads.set(streamId, { resolve, reject, timer });
+      this.send({ type: 'open', streamId, endpoint: 'session/follow', payload: { args: { request: { address, maxMessages: limit, assistantStream: true } } } });
+    });
+  }
+  private finishChildRead(streamId: string, snapshot?: HistorySnapshot, error?: unknown) {
+    const pending = this.childReads.get(streamId); if (!pending) return;
+    this.childReads.delete(streamId); clearTimeout(pending.timer);
+    this.send({ type: 'cancel', streamId });
+    if (snapshot) pending.resolve(snapshot); else pending.reject(error ?? new TurnwireError('RUNTIME_UNAVAILABLE', 'Child history stream ended before its snapshot'));
+  }
+  private cancelChildReads() {
+    for (const id of this.childReads.keys()) this.finishChildRead(id);
   }
   private async childEntries(parentSessionId: string) {
     const catalog = z.object({ entries: z.array(subagentEntrySchema) }).parse(await this.rpc('subagents/list', { parentSessionId }));
@@ -303,7 +372,19 @@ export class DshRuntime implements AgentRuntime {
         socket.on('open', () => this.send({ type: 'open', streamId: 'events', endpoint: '$events', payload: { args: {} } }));
         socket.on('message', raw => {
           try {
-            const frame = z.object({ type: z.enum(['item', 'error', 'end']), streamId: z.string(), value: z.unknown().optional(), error: z.object({ code: z.string(), message: z.string() }).passthrough().optional() }).parse(JSON.parse(raw.toString()));
+            const frame = z.object({ type: z.enum(['item', 'error', 'end', 'cancel']), streamId: z.string(), value: z.unknown().optional(), error: z.object({ code: z.string(), message: z.string() }).passthrough().optional() }).parse(JSON.parse(raw.toString()));
+            // Temporary reads have independent lifecycles. Late cancel/end acknowledgements
+            // remain harmless after the pending entry is removed; never poison root streams.
+            if (frame.streamId.startsWith('child-history:')) {
+              if (this.childReads.has(frame.streamId)) {
+                if (frame.type !== 'item') this.finishChildRead(frame.streamId, undefined, new TurnwireError('RUNTIME_UNAVAILABLE', frame.error?.message ?? 'Child history stream ended'));
+                else {
+                  try { this.finishChildRead(frame.streamId, historySnapshotSchema.parse(frame.value)); }
+                  catch { this.finishChildRead(frame.streamId, undefined, new TurnwireError('RUNTIME_UNAVAILABLE', 'Invalid child history snapshot')); }
+                }
+              }
+              return;
+            }
             if (frame.type !== 'item') throw new Error(frame.error?.message ?? `DSH stream ${frame.streamId} ended`);
             const value = record(frame.value);
             if (frame.streamId === 'events' && value.type === 'ready') {
@@ -318,7 +399,7 @@ export class DshRuntime implements AgentRuntime {
         });
         socket.on('error', error => { clearTimeout(timer); reject(error); this.lastError = 'Cannot reach the DSH host; check that DSH is running and the address and token are correct'; });
         socket.on('unexpected-response', (_request, response) => { if (response.statusCode === 401) this.cookie = ''; response.resume(); clearTimeout(timer); reject(new Error(`DSH WebSocket returned HTTP ${response.statusCode}`)); socket.terminate(); });
-        socket.on('close', () => { clearTimeout(timer); reject(new Error('The DSH connection closed')); if (this.socket !== socket) return; this.socket = undefined; this.clientId = undefined; this.streams.clear(); this.live.clear(); this.cancelPending();
+        socket.on('close', () => { clearTimeout(timer); reject(new Error('The DSH connection closed')); if (this.socket !== socket) return; this.socket = undefined; this.clientId = undefined; this.streams.clear(); this.live.clear(); this.cancelPending(); this.cancelChildReads();
           for (const id of this.listeners.keys()) this.emit(id, { type: 'status', status: 'interrupted' });
           if (!this.closed && this.listeners.size && !this.retry) this.retry = setTimeout(() => { this.retry = undefined; void this.connect().catch(() => {}); }, 2000);
         });
@@ -404,5 +485,5 @@ export class DshRuntime implements AgentRuntime {
     this.questions.clear();
   }
   private fail(error: unknown) { this.lastError = error instanceof Error ? error.message : 'DSH protocol error'; for (const id of this.listeners.keys()) this.emit(id, { type: 'error', message: this.lastError }); this.socket?.terminate(); }
-  async dispose() { this.closed = true; if (this.retry) clearTimeout(this.retry); this.cancelPending(); this.listeners.clear(); this.socket?.terminate(); await Promise.allSettled(this.queues.values()); }
+  async dispose() { this.closed = true; if (this.retry) clearTimeout(this.retry); this.cancelPending(); this.cancelChildReads(); this.childCuts.clear(); this.listeners.clear(); this.socket?.terminate(); await Promise.allSettled(this.queues.values()); }
 }

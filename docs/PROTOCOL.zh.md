@@ -16,13 +16,19 @@
 
 成功：`{ "v": 1, "id": "...", "ok": true, "result": ... }`。失败：`{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`。
 
-方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`workspace.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验；主机无法解析或不知道的请求，只要还能读出 `id`，就会用发起方自己的 `id` 作答——未知方法正是旧主机遇到新客户端的情形，而一个无人认领的回复是远程客户端无法匹配的，调用方只能一直等到自己的超时，而不是看到错误。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
+方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`subagent.history`、`workspace.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验；主机无法解析或不知道的请求，只要还能读出 `id`，就会用发起方自己的 `id` 作答——未知方法正是旧主机遇到新客户端的情形，而一个无人认领的回复是远程客户端无法匹配的，调用方只能一直等到自己的超时，而不是看到错误。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
 
 会话命令按会话串行化；cancel 保持独立，因此 Stop 不会排在慢 prompt 之后等待。审批命令按审批串行化。每个成功的决定只应用一次。Runtime 断开和 daemon 重启会取消未完成的审批。
 
 `session.rename` 接受 `{ sessionId, title }`（去除首尾空白，1–200 个字符）。`session.archive` 接受 `{ sessionId, archived }`。两者都会发出 `session.updated`；归档保留历史，并拒绝运行中的会话或待处理审批。已归档会话必须先恢复才能 send/resume。可选的会话 `archived` 字段对较旧记录默认为 false。
 
 工具事件通过 `callId` 关联：`tool.started.detail` 是输入，`tool.finished.detail` 是输出。可选的 `tool.finished.isError` 保留显式的 runtime 失败标志；标志缺失表示未知，而不是保证成功。客户端在重放时同时保留输入和输出。
+
+### 子代理执行记录
+
+`subagent.history {sessionId, subagentId, before?, cursor?, limit?}` 是只读请求，权限与 `subagent.list` 相同，不增加管理或控制子代理的权限。Core 解析根会话并确认 ID 属于运行时上报的后代目录，由此获得直接父级和模式，不接受客户端声称的父级。DSH 使用子代理地址的 `session/follow` 快照和 `session/page`，不收养或恢复普通会话。
+
+结果为 `{subagent, records, cursor, hasMore, nextBefore}`。记录包含稳定 `id`、`role`（`user`、`assistant`、`tool`、`error`）、`text`、ISO `time`、`complete`，以及可选的 `tool`、`input`、`output`、`isError`。这是规范化的公开执行内容，不是内部原始日志或隐藏推理。首次请求返回最新窗口；`cursor` 是包含边界的运行时游标（空记录为 `-1`）。更早页面传入该游标及排他边界 `before: nextBefore`。`limit` 默认 50，范围 1–100，是运行时消息窗口而非字节上限。实时快照替换同 ID 记录，不重复追加正文。接口不可用时明确报错，不伪装成空记录。目录中的 `inactive` 只表示当前未运行，不保证可继续子代理以后不会再运行。PWA 使用替换式窗口：查看更早页面时暂停实时轮询，返回最新会重置窗口。DSH 每字段文本限制为 32,000 字符并标记截断，不呈现非文本结构化工具块；有界回溯可能无法带上较早的工具输入，需翻到调用所在页。继承的父会话上下文会被排除；有界扫描无法确定继承边界时拒绝读取。
 
 ## 事件
 

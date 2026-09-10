@@ -23,6 +23,15 @@ class Fixture extends DemoRuntime {
   emptySession;
   listGate;
   async answerQuestion() { await this.answerGate; /* the core records the answer itself */ }
+  historyVersion = 1;
+  historyFailure = false;
+  async subagentHistory(_sessionId, subagent, options) {
+    if (this.historyFailure) throw new Error('Fixture child execution unavailable');
+    return { subagent, cursor: options.cursor ?? 60, hasMore: options.before === undefined, nextBefore: options.before === undefined ? 10 : null, records: options.before === undefined ? [
+      { id: 'child-message', role: 'assistant', text: `Real child execution snapshot ${this.historyVersion}`, time: new Date().toISOString(), complete: true },
+      { id: 'child-tool', role: 'tool', tool: 'read', text: 'Read source', input: 'apps/remote-web/src/style.css', output: 'Child tool result body', time: new Date().toISOString(), complete: true },
+    ] : [{ id: 'child-old', role: 'user', text: 'Older child request', time: new Date().toISOString(), complete: true }] };
+  }
   async listSubagents(sessionId) {
     this.listCalls += 1;
     if (sessionId === this.emptySession) { await this.listGate; return []; }
@@ -199,6 +208,22 @@ try {
   await expect(page.locator('.agent-detail')).toHaveCount(0);
   await row.click();
   await expect(row).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 1');
+  await page.locator('[data-record-id="child-tool"] summary').click();
+  await expect(page.getByText('Child tool result body', { exact: true })).toBeVisible();
+  runtime.historyVersion = 2;
+  await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 2');
+  await page.getByRole('button', { name: 'Older page', exact: true }).click();
+  await expect(page.getByText('Older child request', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to latest (reset)', exact: true }).click();
+  await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 2');
+  runtime.historyFailure = true;
+  await page.getByRole('button', { name: 'Refresh latest', exact: true }).click();
+  await expect(page.locator('.child-execution [role="alert"]')).toContainText('Stale execution');
+  runtime.historyFailure = false;
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.locator('.child-execution [role="alert"]')).toHaveCount(0);
+  await page.locator('.agent-secondary-plan>summary').click();
   const plan = page.locator('.agent-plan>li');
   await expect(plan).toHaveCount(3);
   await expect(plan.nth(0)).toHaveAttribute('data-status', 'completed');
@@ -223,6 +248,7 @@ try {
   await expect(page.locator('.agent-detail')).toHaveCount(0);
   const nested = page.locator('.agent-item').nth(1);
   await nested.click();
+  await page.locator('.agent-secondary-plan>summary').click();
   await expect(page.locator('.agent-noplan')).toBeVisible();
   await expect(page.locator('.agent-detail')).toHaveCount(1);
   // A list failure while the parent is idle must retain children and continue retrying.

@@ -128,6 +128,18 @@ export const subagentViewSchema = z.object({
   todos: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })),
 });
 export type SubagentView = z.infer<typeof subagentViewSchema>;
+/** Read-only child execution records; never raw runtime journals or hidden reasoning. */
+export const subagentHistoryRecordSchema = z.object({
+  id: z.string(), role: z.enum(['user', 'assistant', 'tool', 'error']), text: z.string(),
+  time: z.string(), complete: z.boolean(), tool: z.string().optional(), input: z.string().optional(),
+  output: z.string().optional(), isError: z.boolean().optional(),
+});
+export type SubagentHistoryRecord = z.infer<typeof subagentHistoryRecordSchema>;
+export const subagentHistoryPageSchema = z.object({
+  subagent: subagentViewSchema, records: z.array(subagentHistoryRecordSchema),
+  cursor: z.number().int().min(-1), hasMore: z.boolean(), nextBefore: z.number().int().nonnegative().nullable(),
+});
+export type SubagentHistoryPage = z.infer<typeof subagentHistoryPageSchema>;
 /**
  * One prompt that is still waiting behind a running turn, as the runtime holds it. `messageId` is
  * the id this prompt was published under, which is also how a client addresses it for an action;
@@ -190,6 +202,7 @@ export const methodSchemas = {
   'events.list': z.object({ after: z.number().int().nonnegative().default(0), sessionId: idSchema.optional(), limit: z.number().int().min(1).max(1000).default(500) }).strict(),
   /** Live background agents under one session. A read, so clients may poll it like a snapshot. */
   'subagent.list': z.object({ sessionId: idSchema }).strict(),
+  'subagent.history': z.object({ sessionId: idSchema, subagentId: idSchema, before: z.number().int().nonnegative().optional(), cursor: z.number().int().min(-1).optional(), limit: z.number().int().min(1).max(100).default(50) }).strict(),
 } as const;
 export type Method = keyof typeof methodSchemas;
 export const requestSchema = z.object({ v: z.literal(PROTOCOL_VERSION), id: idSchema, method: z.enum(Object.keys(methodSchemas) as [Method, ...Method[]]), params: z.unknown() }).strict();

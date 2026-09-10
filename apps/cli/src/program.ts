@@ -1,9 +1,9 @@
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { readFile, writeFile, chmod, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
+import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
 import { eventSessionId, tunnelProviderSchema } from '@turnwire/protocol';
 import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView, WorkspaceListing } from '@turnwire/protocol';
@@ -83,7 +83,39 @@ program.command('model <session> <spec>').description(t('command.model')).option
   const updated = await c.request<Session>('session.setModel', { sessionId, ...modelSelection(spec, options.effort) });
   if (program.opts().json) print(updated); else console.log(`${updated.id} · ${showModel(updated)}`);
 }));
-program.command('agents <session>').description(t('command.agents')).action((sessionId: string) => withClient(async c => {
+function historyInteger(flag: string, minimum: number, maximum = Number.MAX_SAFE_INTEGER) {
+  return (value: string) => {
+    const number = Number(value);
+    if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(number) || number < minimum || number > maximum) {
+      throw new InvalidArgumentError(t('agents.integerError', { flag, minimum, maximum }));
+    }
+    return number;
+  };
+}
+program.command('agents <session>').description(t('command.agents'))
+  .option('--detail <child>', t('agents.detailOption'))
+  .option('--before <cursor>', t('option.before'), historyInteger('--before', 0))
+  .option('--cursor <cursor>', t('agents.cursorOption'), historyInteger('--cursor', -1))
+  .option('--limit <count>', t('option.limit'), historyInteger('--limit', 1, 100))
+  .action(async (sessionId: string, options: { detail?: string; before?: number; cursor?: number; limit?: number }) => {
+    if (options.detail === undefined && (options.before !== undefined || options.cursor !== undefined || options.limit !== undefined)) {
+      throw new Error(t('agents.detailRequired'));
+    }
+    await withClient(async c => {
+  if (options.detail !== undefined) {
+    const page = await loadSubagentHistoryPage(c, { sessionId, subagentId: options.detail, before: options.before, cursor: options.cursor, limit: options.limit ?? 50 });
+    if (program.opts().json) { print(page); return; }
+    console.log(`${safe(page.subagent.label)}  [${safe(page.subagent.id)}] · ${t(page.subagent.activity === 'running' ? 'agents.activityRunning' : 'agents.activityInactive')}`);
+    for (const record of page.records) {
+      console.log(`\n${safe(record.tool ?? t(({ user: 'agents.roleUser', assistant: 'agents.roleAssistant', tool: 'agents.roleTool', error: 'agents.roleError' } as const)[record.role]))} · ${safe(record.time)}${record.isError ? t('history.failed') : ''}${record.complete ? '' : ' · ' + t('history.pending')}`);
+      if (record.text) console.log(safe(record.text));
+      if (record.input !== undefined) console.log(safe(t('history.io', { input: record.input, output: record.output ?? t('history.pending') })));
+      else if (record.output !== undefined) console.log(safe(record.output));
+    }
+    console.log(`\ncursor=${page.cursor} · nextBefore=${page.nextBefore ?? 'null'} · hasMore=${page.hasMore}`);
+    if (page.hasMore && page.nextBefore !== null) console.log(`turnwire agents ${safe(sessionId)} --detail ${safe(options.detail)} --before ${page.nextBefore} --limit ${options.limit ?? 50}`);
+    return;
+  }
   const { subagents } = await c.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId });
   if (program.opts().json) { print(subagents); return; }
   if (!subagents.length) { console.log(t('agents.empty')); return; }
@@ -96,7 +128,7 @@ program.command('agents <session>').description(t('command.agents')).action((ses
     const indent = '  '.repeat(agent.depth - 1);
     const parent = byId.get(agent.parentId);
     const where = parent ? t('agents.under', { label: safe(parent.label) }) : t('agents.depth', { depth: agent.depth });
-    console.log(`${agent.activity === 'running' ? '●' : '○'} ${indent}${safe(agent.label)}${agent.elapsedMs === undefined ? '' : '  ' + duration(agent.elapsedMs)}${steps ? '  ' + steps : ''}`);
+    console.log(`${agent.activity === 'running' ? '●' : '○'} ${indent}${safe(agent.label)} [${safe(agent.id)}]${agent.elapsedMs === undefined ? '' : '  ' + duration(agent.elapsedMs)}${steps ? '  ' + steps : ''}`);
     // The same detail the phone shows when a row is opened: what this child is, and its own plan.
     console.log(`${indent}  ${agent.mode === 'continuable' ? t('agents.modeContinuable') : t('agents.modeOneShot')} · ${where}`);
     if (!agent.todos.length) console.log(`${indent}  ${t('agents.noPlan')}`);
@@ -109,7 +141,8 @@ program.command('agents <session>').description(t('command.agents')).action((ses
       }
     }
   }
-}));
+  });
+});
 program.command('history <session>').description(t('command.history'))
   .option('--before <cursor>', t('option.before'), Number).option('--limit <count>', t('option.limit'), Number, 40)
   .option('--all', t('option.allTranscript'))

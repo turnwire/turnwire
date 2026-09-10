@@ -1,4 +1,4 @@
-import { directStatusSchema, directConfigurationSchema, notificationStatusSchema } from '@turnwire/protocol';
+import { subagentHistoryPageSchema, directStatusSchema, directConfigurationSchema, notificationStatusSchema } from '@turnwire/protocol';
 import type { DirectStatus, DirectConfiguration, NotificationStatus, Question } from '@turnwire/protocol';
 export { acceptClientHandshake, createClientHandshake, SessionChannel } from './session-crypto.js';
 export { retryDelay } from './retry.js';
@@ -142,6 +142,14 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
 }
 export function loadHistoryPage(client: TurnwireClient, sessionId: string, before?: number, limit = 40): Promise<HistoryPage> {
   return client.request('history.page', { sessionId, limit, ...(before === undefined ? {} : { before }) });
+}
+export interface SubagentHistoryArgs { sessionId: string; subagentId: string; before?: number; cursor?: number; limit?: number }
+/** Child records are snapshots, not parent journal events or text deltas. */
+export async function loadSubagentHistoryPage(client: TurnwireClient, args: SubagentHistoryArgs) {
+  const page = subagentHistoryPageSchema.parse(await client.request('subagent.history', args));
+  if (page.subagent.id !== args.subagentId) throw new Error('Child history response scope mismatch');
+  if (new Set(page.records.map(record => record.id)).size !== page.records.length) throw new Error('Duplicate child history record IDs');
+  return page;
 }
 /** Full transcript export is explicit; interactive clients use loadHistoryPage. */
 export async function loadHistory(client: TurnwireClient, sessionId: string): Promise<TurnwireEvent[]> {

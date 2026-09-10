@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView } from '@turnwire/protocol';
+import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
 export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
@@ -35,6 +35,8 @@ export interface AgentRuntime {
    * cannot enumerate them leaves this out, and clients then render no agents at all.
    */
   listSubagents?(sessionId: string): Promise<SubagentView[]>;
+  /** Core supplies a verified descendant; adapters must use the runtime's child-scoped read API. */
+  subagentHistory?(sessionId: string, subagent: SubagentView, options: { before?: number; cursor?: number; limit: number }): Promise<SubagentHistoryPage>;
   /**
    * Change a prompt that has not run yet. `messageId` is the id the client was given for that
    * prompt; the runtime resolves it against its own queue. Runtimes without a queue leave this out.

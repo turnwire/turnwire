@@ -63,7 +63,7 @@ export class TurnwireCore {
     if (!parsed.success) return errorResponse(typeof (value as { id?: unknown })?.id === 'string' ? (value as { id: string }).id : 'invalid', parsed.error);
     const request = parsed.data;
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
-    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'session.queue' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
+    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'subagent.history' || request.method === 'session.queue' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
       try { return { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; } catch (error) { return errorResponse(request.id, error); }
     }
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: request.method, params: request.params, ...(request.method.startsWith('notifications.') ? { clientId: context?.clientId } : {}) })).digest('hex');
@@ -102,6 +102,15 @@ export class TurnwireCore {
         // host has already announced as started is filtered out here: it belongs to the transcript
         // now, and it is not something a reader can still take back.
         return { items: items.filter(item => !this.waiting.get(item.messageId)?.started) };
+      }
+      case 'subagent.history': {
+        const p = methodSchemas['subagent.history'].parse(request.params);
+        const session = this.session(p.sessionId); const runtime = this.runtime(session.runtimeId);
+        if (!runtime.listSubagents || !runtime.subagentHistory) throw new TurnwireError('RUNTIME_UNAVAILABLE', 'This runtime does not expose child execution history');
+        // Never let a client turn a known root session into an arbitrary runtime-session reader.
+        const child = (await runtime.listSubagents(session.runtimeSessionId)).find(entry => entry.id === p.subagentId);
+        if (!child) throw new TurnwireError('SESSION_NOT_FOUND', 'The subagent does not belong to this session or is no longer available');
+        return runtime.subagentHistory(session.runtimeSessionId, child, { before: p.before, cursor: p.cursor, limit: p.limit });
       }
       case 'subagent.list': {
         const p = methodSchemas['subagent.list'].parse(request.params);
