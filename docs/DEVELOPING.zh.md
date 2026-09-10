@@ -53,9 +53,20 @@ DSH 独立运行并保留自己的数据目录、模型配置和凭据。Turnwir
 
 ```bash
 npm run check   # strict TypeScript + integration tests + production build
+```
 
-# 另开终端启动隔离的 Demo，验证实际浏览器交互（需要 Chrome）：
-TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev
+推送时只跑这一条。下面的浏览器场景每一个都要真实启动 Relay、daemon 或 DSH，并用 Chrome 走完一段完整故事，它们属于改动它们的那次提交，而不是每次提交；按需要跑其中一项，或在 Actions 里手动触发 `Scenarios` 工作流。
+
+```bash
+# 模型选择器（隔离的 DSH 主机；需要 Chrome 和 `npm ci --prefix config/dsh-runtime`）：
+bash scripts/ui-model-check.sh
+
+# 历史分页与切标签页，各自带隔离的 Relay、daemon 和 Chrome：
+node --import tsx scripts/history-ui-check.mjs
+node --import tsx scripts/remote-resilience-check.mjs
+
+# 完整 UI 走查需要先起一个隔离的 Demo：
+TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev   # 另开终端
 TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs
 ```
 

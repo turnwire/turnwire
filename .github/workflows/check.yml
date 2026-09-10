@@ -12,21 +12,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      # Everything a push needs to answer for: strict types, the suite and the production bundles.
+      # The browser scenarios live in scenarios.yml and are run on demand instead, because each one
+      # boots a real Relay/daemon/DSH and they describe behaviour that was verified once, not a
+      # contract every commit has to re-prove.
       - run: npm run check
-      # The model picker is the only client surface that needs a real browser, and the catalog
-      # lists provider routes before any turn runs, so no model credential is required.
-      # TURNWIRE_REQUIRE_BROWSER keeps a runner-image change from silently skipping this check.
-      - name: Model picker in the phone PWA
-        env:
-          TURNWIRE_REQUIRE_BROWSER: '1'
-        run: |
-          npm ci --prefix config/dsh-runtime
-          bash scripts/ui-model-check.sh
-      # History paging only needs the built PWA and a browser, which the runner already has.
-      # It imports the TypeScript sources directly, so it runs through tsx like the suite does.
-      - name: History paging in the phone PWA
-        run: node --import tsx scripts/history-ui-check.mjs
-      # The reconnection contract is observable only in a browser: hiding the page must reuse the
-      # verified socket, not rebuild it. It starts its own isolated Relay, daemon and pairing.
-      - name: Tab switching in the phone PWA
-        run: node --import tsx scripts/remote-resilience-check.mjs

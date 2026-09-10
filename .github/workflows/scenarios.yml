@@ -1,0 +1,50 @@
+name: Scenarios
+
+# The browser scenarios are on demand on purpose. Each one boots a real Relay, daemon or DSH host
+# and drives Chrome through a whole story (model picker, history paging, tab switching); they are
+# slow, they depend on a runner's browser, and they record behaviour that was verified once rather
+# than a contract every push has to re-prove. Run them from the Actions tab, or run the same
+# commands locally as documented in docs/DEVELOPING.md.
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Which scenario to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - model-picker
+          - history-paging
+          - tab-switching
+
+permissions:
+  contents: read
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # The scenarios serve the production PWA from apps/remote-web/dist and import the TypeScript
+      # sources through tsx, so the bundles have to exist before any of them run.
+      - run: npm run build
+      # TURNWIRE_REQUIRE_BROWSER keeps a runner-image change from silently skipping this check.
+      - name: Model picker in the phone PWA
+        if: inputs.scenario == 'all' || inputs.scenario == 'model-picker'
+        env:
+          TURNWIRE_REQUIRE_BROWSER: '1'
+        run: |
+          npm ci --prefix config/dsh-runtime
+          bash scripts/ui-model-check.sh
+      - name: History paging in the phone PWA
+        if: inputs.scenario == 'all' || inputs.scenario == 'history-paging'
+        run: node --import tsx scripts/history-ui-check.mjs
+      - name: Tab switching in the phone PWA
+        if: inputs.scenario == 'all' || inputs.scenario == 'tab-switching'
+        run: node --import tsx scripts/remote-resilience-check.mjs

@@ -53,9 +53,20 @@ For host and daemon deployment, persistent services and automatic updates, see [
 
 ```bash
 npm run check   # strict TypeScript + integration tests + production build
+```
 
-# In another terminal, start an isolated Demo to check the real browser interaction (needs Chrome):
-TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev
+A push runs exactly that. The browser scenarios below each boot a real Relay, daemon or DSH host and drive Chrome through one story, so they belong to the change that touches them rather than to every commit; run the one you need, or dispatch the `Scenarios` workflow from the Actions tab.
+
+```bash
+# Model picker against an isolated DSH host (needs Chrome and `npm ci --prefix config/dsh-runtime`):
+bash scripts/ui-model-check.sh
+
+# History paging and tab switching, each with its own isolated Relay, daemon and Chrome:
+node --import tsx scripts/history-ui-check.mjs
+node --import tsx scripts/remote-resilience-check.mjs
+
+# A full UI pass needs an isolated Demo to talk to:
+TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev   # another terminal
 TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs
 ```
 
