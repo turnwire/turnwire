@@ -32,6 +32,11 @@ try {
   // The catalog needs no credential, so every registered model is listed before a selection exists.
   const picker = page.getByLabel('模型', { exact: true });
   await expect(picker).toBeVisible();
+  // Visibility alone does not prove the phone can reach it: toBeVisible only requires a non-empty
+  // box, while the conversation opens pinned to the newest message. A picker inside that scroller
+  // is off-screen, so it has to live in the always-visible composer area instead.
+  await expect(picker).toBeInViewport();
+  expect(await picker.evaluate(element => element.closest('[aria-label="会话内容"]') === null)).toBe(true);
   await expect(picker.locator('option')).toHaveCount(4);
   await expect(page.getByLabel('思考强度', { exact: true })).toHaveCount(0);
 
