@@ -71,10 +71,14 @@
 /* A prompt sent during a turn waits behind it: it is listed above the composer while it waits,
    and keeps this chip once it reads as history. */
 .queued-chip { margin-left: 8px; padding: 2px 6px; border-radius: 999px; background: #fdf3e2; color: #9a6a1f; font-size: 9.5px; }
-/* Queued prompts carry their own edit/cancel/steer controls. The box scrolls instead of growing,
-   so a queue of long messages can never take the screen away from the conversation. */
-.queued-strip { display: grid; gap: 6px; margin: 0 2px 8px; padding: 9px 11px; border: 1px dashed #e5cf9f; border-radius: 10px; background: #fffaf0; max-height: 32vh; overflow-y: auto; overscroll-behavior: contain; }
-.queued-item { display: flex; gap: 8px; align-items: center; font-size: 11px; color: #7c6a45; }
+/* Queued prompts carry their own edit/cancel/steer controls. The box scrolls down instead of
+   growing, so a queue of long messages can never take the screen away from the conversation, but it
+   never scrolls sideways: its grid track may not be sized by a prompt's own min-content width (a
+   nowrap line is as wide as its whole text), so the track is pinned to the strip and the row inside
+   it is free to shrink. The row is the text plus the three buttons, so the buttons keep their size
+   and the text is what gets cut. */
+.queued-strip { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 0 2px 8px; padding: 9px 11px; border: 1px dashed #e5cf9f; border-radius: 10px; background: #fffaf0; max-height: 32vh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.queued-item { display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 11px; color: #7c6a45; }
 .queued-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queued-edit { flex: 1; min-width: 0; border: 1px solid #e5cf9f; border-radius: 7px; padding: 5px 7px; background: white; color: #5e4d2b; font: inherit; font-size: 11px; }
 .queued-buttons { flex-shrink: 0; display: flex; gap: 5px; }
@@ -82,7 +86,7 @@
 .queued-buttons button:disabled { opacity: .5; }
 /* Background agents sit above the queue: a delegation returns at once, so a running child has no
    other surface until it reports back. */
-.agent-strip { display: grid; gap: 4px; margin: 0 2px 8px; padding: 8px 11px; border: 1px solid #e2e9f3; border-radius: 10px; background: #f5f8fd; }
+.agent-strip { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 0 2px 8px; padding: 8px 11px; border: 1px solid #e2e9f3; border-radius: 10px; background: #f5f8fd; }
 .agent-heading { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: #7d8ca3; }
 .agent-item { display: flex; align-items: baseline; gap: 7px; font-size: 11px; color: #55647a; }
 .agent-dot { flex-shrink: 0; align-self: center; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: agent-pulse 1.6s ease-in-out infinite; }

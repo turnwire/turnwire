@@ -79,6 +79,22 @@ try {
   await expect(text).toHaveCSS('text-overflow', 'ellipsis');
   await expect(text).toHaveAttribute('title', queuedText);
   expect(await text.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+  // The row is the text plus the three buttons, on a phone as much as on a desktop: the buttons keep
+  // their size, the text is what gets cut, and nothing about the strip may be panned sideways. A long
+  // prompt used to widen the whole row past the screen, and that is what a sideways swipe was really
+  // moving, so the measurement is the strip's own overflow rather than the text element's.
+  const queueFits = async () => {
+    const strip = page.locator('.queued-strip');
+    const room = await strip.evaluate(element => ({ client: element.clientWidth, scroll: element.scrollWidth }));
+    expect(room.scroll, `the queue scrolls sideways (${JSON.stringify(room)})`).toBeLessThanOrEqual(room.client);
+    const frame = await strip.boundingBox(); const last = await queuedRow.getByRole('button').last().boundingBox();
+    expect(last.x + last.width, 'the queue buttons were pushed out of their box').toBeLessThanOrEqual(frame.x + frame.width + 1);
+    expect((await queuedRow.boundingBox()).width, 'the queue row grew past its box').toBeLessThanOrEqual(room.client);
+  };
+  await queueFits();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await queueFits();
+  await page.setViewportSize({ width: 1440, height: 900 });
   // Typing does not grow a second set of controls: the row is the only place they exist.
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('另一条草稿');
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(1);
@@ -103,6 +119,18 @@ try {
   expect(bounded.rows).toBe(13);
   expect(bounded.height).toBeLessThanOrEqual(bounded.limit + 1);
   expect(bounded.scrolls).toBe(true);
+  // The agent strip holds a long child label the same way, and it is the same failure: an oversized
+  // track makes the box itself pannable. The offline demo runs no subagents, so the strip is built
+  // here to measure the layout rather than the data.
+  const agentStrip = await page.evaluate(long => {
+    const strip = document.createElement('div'); strip.className = 'agent-strip';
+    strip.innerHTML = '<div class="agent-heading">1 agent running</div><div class="agent-item"><span class="agent-dot"></span><span class="agent-label">' + long + '</span><span class="agent-time">32s</span><span class="agent-steps">3/9 todos</span></div>';
+    document.querySelector('.composer-area').before(strip);
+    const measured = { client: strip.clientWidth, scroll: strip.scrollWidth, label: strip.querySelector('.agent-label').getBoundingClientRect().width };
+    strip.remove(); return measured;
+  }, 'Refactor the entire remote transport layer and every client that speaks it '.repeat(3));
+  expect(agentStrip.scroll, `the agent strip grew past its box (${JSON.stringify(agentStrip)})`).toBeLessThanOrEqual(agentStrip.client);
+  expect(agentStrip.label).toBeLessThan(agentStrip.client);
   // A page that has just loaded has seen no events at all, so the queue has to come from the host.
   // This is the regression: the list used to be this tab's memory of what it watched arrive, so
   // re-entering the page silently dropped everything that was waiting.
