@@ -120,6 +120,21 @@ try {
   assertCard(narrow);
   await page.setViewportSize({ width: 390, height: 844 });
 
+  // Someone who types an answer rather than tapping an option needs something to press: a phone
+  // keyboard offers no Enter, and a single-choice question that has options used to hide the button.
+  const pendingCard = page.locator('.question-card[data-status="pending"]');
+  const items = pendingCard.locator('.question-item');
+  await expect(items).toHaveCount(3);
+  for (let index = 0; index < 3; index += 1) await expect(items.nth(index).locator('.question-other-row button')).toHaveCount(1);
+  const typedRow = items.first().locator('.question-other-row');
+  await expect(typedRow.locator('button')).toBeDisabled();
+  await typedRow.locator('input.question-other').fill('Staging tonight, then production tomorrow');
+  await expect(typedRow.locator('button')).toBeEnabled();
+  await typedRow.locator('button').click();
+  await expect(pendingCard).toHaveCount(0);
+  await expect(page.locator('.question-given').filter({ hasText: 'Staging tonight' })).toHaveCount(1);
+  await expect(page.locator('.question-given').filter({ hasText: 'No answer' })).toHaveCount(2);
+
   // Opening a child shows its own plan, with the status column aligned down the list.
   const row = page.locator('.agent-item').first();
   await expect(row).toHaveAttribute('aria-expanded', 'false');
