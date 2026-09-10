@@ -214,8 +214,18 @@ try {
   await expect(header.locator('.tool-status')).toHaveText('Running');
   await expect(header.locator('.tool-status')).toHaveText('All returned', { timeout: 10_000 });
   await expect(header).toContainText('shell ×3');
-  // Opening it must not stack a box inside a box: the calls indent under a hairline instead, and the
-  // one box left is the call someone actually opened.
+  // The turn then finishes, and a finished turn is its result: the steps that produced it fold into a
+  // single line above the answer, and the calls are one click away rather than in the reader's way.
+  const fold = page.locator('.turn-process').last(); const foldHeader = fold.locator('summary').first();
+  await expect(foldHeader).toContainText('Process');
+  await expect(foldHeader.locator('.tool-status')).toHaveText('1 step');
+  await expect(fold).not.toHaveAttribute('open', /.*/);
+  await expect(fold.locator('.tool-group')).toHaveCount(1);
+  await expect(fold.locator('.tool-group')).not.toBeVisible();
+  await expect(page.locator('.message.assistant').last()).toBeVisible();
+  // Opening the fold shows the run again; opening the run must not then stack a box inside a box, so
+  // the calls indent under a hairline and the one box left is the call someone actually opened.
+  await foldHeader.click();
   await header.click();
   await expect(run).toHaveCSS('border-top-width', '0px');
   await expect(run.locator('.tool-group-items')).toHaveCSS('border-left-width', '1px');

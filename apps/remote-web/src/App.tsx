@@ -1,5 +1,5 @@
 import { Inbox } from './Inbox';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
@@ -174,6 +174,24 @@ export function App() {
     }
     return output;
   }, [visible]);
+  /**
+   * Rows split into turns: a prompt and everything it caused, up to the next prompt. The last
+   * assistant row in a turn is its result; what came before it is how the turn got there.
+   */
+  const turns = useMemo(() => {
+    const output: Array<{ key: string; user?: (typeof rows)[number]; body: Array<(typeof rows)[number]>; resultIndex: number }> = [];
+    for (const row of rows) {
+      const user = row.message?.role === 'user';
+      if (user || !output.length) output.push({ key: row.key, ...(user ? { user: row } : {}), body: user ? [] : [row], resultIndex: user ? 0 : 0 });
+      else output[output.length - 1]!.body.push(row);
+    }
+    for (const turn of output) {
+      let result = -1;
+      turn.body.forEach((row, index) => { if (row.message?.role === 'assistant') result = index; });
+      turn.resultIndex = result < 0 ? turn.body.length : result;
+    }
+    return output;
+  }, [rows]);
   const modelSupport = runtime?.capabilities.modelSelection === true;
   const effortOptions = catalog?.value.groups.find(group => group.id === session?.model?.provider)?.models.find(model => model.id === session?.model?.model)?.reasoning?.efforts ?? [];
   useEffect(() => {
@@ -307,7 +325,22 @@ export function App() {
             {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? t('conversation.loadingEarlier') : historyError ? t('conversation.retryEarlier') : t('conversation.loadEarlier')}</button>}
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />{t('conversation.loading')}</div>}
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
-            {rows.map(row => row.tools ? <ToolRun key={row.key} items={row.tools} running={turnRunning} /> : <article className={`message ${row.message!.role}${row.lead ? '' : ' follow'}`} key={row.key}>{row.lead && <div className="message-author">{row.message!.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon-192.png" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(row.message!.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>}{(row.message!.queued || row.message!.steer) && <div className="message-tags">{row.message!.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{row.message!.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div>}<div className="message-text">{row.message!.role === 'assistant' ? <MarkdownMessage text={row.message!.text} id={row.message!.id} /> : row.message!.text}{!row.message!.complete && <span className="cursor" />}</div></article>)}
+            {turns.map((turn, index) => {
+              // A turn is what one prompt caused, up to the next prompt. While it is the live one it
+              // is shown step by step; once it is finished the steps collapse and the result stands
+              // alone, so a conversation of many turns reads as its answers.
+              const live = index === turns.length - 1 && turnRunning;
+              const steps = turn.body.slice(0, turn.resultIndex);
+              const collapsed = !live && steps.length > 0 && !steps.some(row => row.message?.role === 'error');
+              const result = turn.body.slice(turn.resultIndex);
+              return <Fragment key={turn.key}>
+                {turn.user && <ConversationRow row={turn.user} running={turnRunning} />}
+                {collapsed
+                  ? <details className="turn-process"><summary><TerminalWindow size={13} /><span>{t('turn.process')}</span><span className="tool-status">{t(steps.length === 1 ? 'turn.step' : 'turn.steps', { count: steps.length })}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{steps.map(row => <ConversationRow key={row.key} row={row} running={false} />)}</div></details>
+                  : steps.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} />)}
+                {result.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} />)}
+              </Fragment>;
+            })}
             <div ref={bottom} /></div></section>
           <footer className="composer-area"><div className="composer-width">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
             {questions.map(question => <QuestionPanel key={question.id} question={question} disabled={busy || !connected} onAnswer={answers => void perform(async c => { await c.request('question.answer', { questionId: question.id, answers }); })} />)}
@@ -372,6 +405,14 @@ function ToolHeading({ message }: { message: ConversationMessage }) {
 function ToolCall({ message }: { message: ConversationMessage }) {
   const t = useLocale();
   return <details className="tool-message"><summary><TerminalWindow size={13} /><ToolHeading message={message} /><span className="tool-status">{message.isError ? t('tool.failed') : message.complete ? t('tool.returned') : t('tool.running')}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>{t('tool.input')}</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>{t('tool.output')}</strong><pre>{message.output}</pre></>}</details>;
+}
+
+/** One row of the conversation: a message, or a run of tool calls. */
+function ConversationRow({ row, running }: { row: { key: string; tools?: ConversationMessage[]; message?: ConversationMessage; lead: boolean }; running: boolean }) {
+  const t = useLocale();
+  if (row.tools) return <ToolRun items={row.tools} running={running} />;
+  const message = row.message!;
+  return <article className={`message ${message.role}${row.lead ? '' : ' follow'}`}>{row.lead && <div className="message-author">{message.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon-192.png" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>}{(message.queued || message.steer) && <div className="message-tags">{message.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{message.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div>}<div className="message-text">{message.role === 'assistant' ? <MarkdownMessage text={message.text} id={message.id} /> : message.text}{!message.complete && <span className="cursor" />}</div></article>;
 }
 
 /**

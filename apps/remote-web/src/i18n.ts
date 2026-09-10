@@ -160,6 +160,9 @@ const en = {
 
   // Tool calls.
   'tool.subagentName': 'Subagent',
+  'turn.process': 'Process',
+  'turn.step': '{count} step',
+  'turn.steps': '{count} steps',
   'tool.failed': 'Failed',
   'tool.returned': 'Returned',
   'tool.running': 'Running',
@@ -419,6 +422,9 @@ const zh: Catalog = {
   'composer.disconnected': '连接已断开，正在重连',
 
   'tool.subagentName': '子代理',
+  'turn.process': '过程',
+  'turn.step': '{count} 步',
+  'turn.steps': '{count} 步',
   'tool.failed': '失败',
   'tool.returned': '已返回',
   'tool.running': '执行中',
