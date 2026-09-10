@@ -30,6 +30,12 @@ export const sessionSchema = z.object({
   title: z.string(), cwd: z.string(), status: statusSchema,
   createdAt: z.string(), updatedAt: z.string(),
   archived: z.boolean().optional(),
+  /**
+   * While true, this session's approval requests are granted as they arrive instead of waiting for
+   * someone to answer them. It is a live setting, not a stored one: the host forgets it on restart,
+   * so an approval cannot stay delegated to nobody months later.
+   */
+  autoApprove: z.boolean().optional(),
   /** Absent until the runtime reports a selection for this session. */
   model: modelSelectionSchema.optional(),
 });
@@ -37,6 +43,12 @@ export type Session = z.infer<typeof sessionSchema>;
 export const approvalSchema = z.object({
   id: idSchema, sessionId: idSchema, tool: z.string(), reason: z.string(),
   status: z.enum(['pending', 'approved', 'rejected', 'cancelled']), createdAt: z.string(),
+  /**
+   * True when nobody answered this by hand: the session had approvals delegated, so the host
+   * granted it. The journal keeps the distinction, because "approved" alone would not say whether
+   * a person looked at it.
+   */
+  auto: z.boolean().optional(),
 });
 export type Approval = z.infer<typeof approvalSchema>;
 export type ApprovalDecision = 'approved' | 'rejected';
@@ -61,6 +73,8 @@ export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('tool.finished'), sessionId: idSchema, callId: idSchema, tool: z.string(), detail: z.string(), isError: z.boolean().optional() }),
   z.object({ type: z.literal('approval.requested'), approval: approvalSchema }),
   z.object({ type: z.literal('approval.resolved'), approval: approvalSchema }),
+  /** Whether this session's approvals are currently granted on arrival. Live host state, not stored. */
+  z.object({ type: z.literal('session.autoApprove'), sessionId: idSchema, auto: z.boolean() }),
   z.object({ type: z.literal('runtime.status'), runtimeId: idSchema, online: z.boolean(), message: z.string() }),
   z.object({ type: z.literal('session.error'), sessionId: idSchema, message: z.string() }),
 ]);
@@ -138,6 +152,8 @@ export const methodSchemas = {
   'session.setModel': z.object({ sessionId: idSchema, provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict(),
   'model.catalog': z.object({ runtimeId: idSchema.optional() }).strict(),
   'approval.decide': z.object({ approvalId: idSchema, decision: z.enum(['approved', 'rejected']) }).strict(),
+  /** Delegate or reclaim this session's approvals. Enabling it also settles what is already waiting. */
+  'session.autoApprove': z.object({ sessionId: idSchema, enabled: z.boolean() }).strict(),
   'history.page': z.object({ sessionId: idSchema, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(40) }).strict(),
   'events.list': z.object({ after: z.number().int().nonnegative().default(0), sessionId: idSchema.optional(), limit: z.number().int().min(1).max(1000).default(500) }).strict(),
   /** Live background agents under one session. A read, so clients may poll it like a snapshot. */

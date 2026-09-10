@@ -112,6 +112,10 @@ program.command('result <id>').description(t('command.result')).action((requestI
 program.command('inbox').description(t('command.inbox')).option('--all', t('option.inboxAll')).option('--before <cursor>', t('option.inboxBefore'), Number).action((options: { all?: boolean; before?: number }) => withClient(async c => print(await c.request('inbox.page', { status: options.all ? 'all' : 'pending', before: options.before }))));
 program.command('approvals').description(t('command.approvals')).action(() => withClient(async c => print((await c.request<Snapshot>('system.snapshot')).approvals)));
 for (const decision of ['approve', 'reject'] as const) program.command(`${decision} <approval>`).description(decision === 'approve' ? t('command.approve') : t('command.reject')).action((approvalId: string) => withClient(async c => print(await c.request('approval.decide', { approvalId, decision: decision === 'approve' ? 'approved' : 'rejected' }))));
+program.command('approve-for-me <session>').description(t('command.autoApprove')).option('--off', t('option.off')).action((sessionId: string, options: { off?: boolean }) => withClient(async c => {
+  const result = await c.request<{ enabled: boolean }>('session.autoApprove', { sessionId, enabled: options.off !== true });
+  if (program.opts().json) print(result); else console.log(result.enabled ? t('autoApprove.on') : t('autoApprove.off'));
+}));
 program.command('attach <session>').description(t('command.attach')).action(async (sessionId: string) => {
   const c = await client(); const snapshot = await c.request<Snapshot>('system.snapshot');
   if (!snapshot.sessions.some(s => s.id === sessionId)) { c.close(); throw localizedError('SESSION_NOT_FOUND'); }

@@ -27,6 +27,12 @@ const en = {
   'common.reject': 'Reject',
   'common.approveOnce': 'Approve once',
   'common.unarchive': 'Unarchive',
+  // Delegated approvals: nobody is asked while this is on.
+  'session.autoApprove': 'Approve for me',
+  'session.autoApproveOff': 'Ask me again',
+  'session.autoApproveOn': 'Approving for you',
+  'session.autoApproveHint': 'Every approval in this session is granted as it arrives, until you turn this off or the host restarts.',
+  'approval.autoOn': 'Granted for you',
   'common.listSeparator': ', ',
 
   // Language switch.
@@ -280,6 +286,11 @@ const zh: Catalog = {
   'common.reject': '拒绝',
   'common.approveOnce': '批准本次',
   'common.unarchive': '取消归档',
+  'session.autoApprove': '帮我批准',
+  'session.autoApproveOff': '恢复询问我',
+  'session.autoApproveOn': '正在帮你批准',
+  'session.autoApproveHint': '这个会话的审批一到就自动批准，直到你关掉它，或主机重启。',
+  'approval.autoOn': '已代你批准',
   'common.listSeparator': '、',
 
   'locale.label': '语言',

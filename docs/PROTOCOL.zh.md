@@ -16,7 +16,7 @@
 
 成功：`{ "v": 1, "id": "...", "ok": true, "result": ... }`。失败：`{ "v": 1, "id": "...", "ok": false, "error": { "code": "...", "message": "..." } }`。
 
-方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
+方法：`system.snapshot`、`session.create`、`session.resume`、`session.message`、`session.cancel`、`session.queue`、`session.queueAction`、`session.autoApprove`、`session.rename`、`session.archive`、`approval.decide`、`events.list`、`history.page`、`subagent.list`、`inbox.page`、`request.result`、`notifications.status`、`notifications.subscribe`、`notifications.unsubscribe`。输入在 daemon 边界处校验。对于变更操作，请求 ID 跨重启持久化。完全相同的 ID/payload 会返回之前的回执。payload 变化则冲突。如果进程在预留之后、回执持久化之前死亡，Turnwire 会返回 `OUTCOME_UNKNOWN`，而不是重放一个可能已经完成的操作。这是至多一次的提交边界，并不声称分布式精确一次执行。
 
 会话命令按会话串行化；cancel 保持独立，因此 Stop 不会排在慢 prompt 之后等待。审批命令按审批串行化。每个成功的决定只应用一次。Runtime 断开和 daemon 重启会取消未完成的审批。
 
@@ -81,6 +81,12 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 `history.page {sessionId, before?, limit?}` 从 Core 读取完整的投影历史记录。`limit` 为 1–100，默认 40；`before` 是排他的正数原始记录序号。响应 `{events, cursor, hasMore, nextBefore}` 包含紧凑消息事件、完整工具启动/结果对、审批和错误。`nextBefore` 在最旧一页为 null。cursor 是页面捕获时的 journal watermark，而不是最旧记录。`originSeq` 在事件上可选，保留被压缩消息的原始位置；`seq` 是其最新包含版本。原始事件订阅和 `events.list` 保持原有含义。
 
 加密的 `subscribe` 接受数字 `after` 或 `"latest"`。后者从当前 journal 游标开始，避免为连接健康检查或快照请求进行历史重放。显式事件监听器从快照游标开始订阅，以覆盖并发变更。客户端不得把位于或早于其快照游标的元数据事件应用到当前状态。页面获取与实时事件使用页面 watermark 进行对账，watermark 之后的 delta 只应用一次。
+
+## 代别人批准
+
+`session.autoApprove {sessionId, enabled}` 把一个会话的审批委托出去：打开期间，每个 `approval.requested` 一到就直接批准，而不是等人回答；打开时也会先处理已经等着的那些。runtime 的词汇是封闭的 —— `allowed-once` 是它唯一的授权 —— 所以这是 Turnwire 在同一个 `approval.decide` 路径之上做的决定，不是 runtime 的策略。
+
+有两点让它保持诚实。会话字段 `autoApprove` 是主机状态而不是存储字段：它出现在快照里，重启即忘 —— 委托针对的是当下正在做的事，重启后应该有人再看一眼。这样产生的批准会在 `approval.resolved` 上带 `approval.auto: true`，记录因此说明没人被问过；只写 `approved` 是看不出来的。
 
 ## 还没跑的那条提示
 

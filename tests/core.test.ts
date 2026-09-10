@@ -15,6 +15,8 @@ let cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const fn of cleanup.reverse()) await fn(); cleanup = []; });
 function setup(store = new Store(':memory:')) { const runtime = new DemoRuntime(); const core = new TurnwireCore(store, [runtime], { id: 'mac', name: 'Test Mac' }); cleanup.push(() => core.dispose()); return { core, runtime, store }; }
 const call = (core: TurnwireCore, id: string, method: string, params: unknown = {}) => core.handle({ v: 1, id, method, params });
+/** Delegated approvals are granted off the event path, so a test waits for the outcome. */
+async function until(check: () => boolean) { for (let attempt = 0; attempt < 200; attempt++) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('Timed out'); }
 async function session(core: TurnwireCore) { return value<Session>(await call(core, 'create', 'session.create', { title: 'Test', cwd: process.cwd(), runtimeId: 'demo' })); }
 describe('durable daemon ownership', () => {
   it('deduplicates concurrent commands and rejects reused ids with changed content', async () => {
@@ -48,6 +50,27 @@ describe('durable daemon ownership', () => {
     const results = await Promise.all([call(core, 'approve', 'approval.decide', { approvalId: approval.id, decision: 'approved' }), call(core, 'reject', 'approval.decide', { approvalId: approval.id, decision: 'rejected' })]);
     expect(results.filter(r => r.ok)).toHaveLength(1); expect(spy).toHaveBeenCalledTimes(1); expect(store.approval(approval.id)?.status).toBe('approved');
     expect(store.session(s.id)?.status).toBe('idle');
+  });
+  it('grants a delegated session approvals as they arrive, and says so in the journal', async () => {
+    const { core, store } = setup(); const created = await session(core);
+    expect(value<{ enabled: boolean }>(await call(core, 'delegate', 'session.autoApprove', { sessionId: created.id, enabled: true }))).toEqual({ enabled: true });
+    // The snapshot carries the live flag, so a client shows the state it is actually in.
+    expect(value<{ sessions: Session[] }>(await call(core, 'snap', 'system.snapshot')).sessions[0]?.autoApprove).toBe(true);
+
+    // A prompt that raises an approval is granted without anyone answering it, and the journal
+    // records that nobody did.
+    await call(core, 'prompt', 'session.message', { sessionId: created.id, text: 'Needs approval' });
+    await until(() => store.approvals().some(a => a.sessionId === created.id && a.status === 'approved'));
+    const granted = store.approvals().find(a => a.sessionId === created.id && a.status === 'approved');
+    expect(granted?.auto).toBe(true);
+    // The grant unblocked the turn; the demo finishes it once its approval resolves.
+    expect(store.session(created.id)?.status).toBe('idle');
+
+    // Reclaiming it takes effect immediately: the next request waits for a person again.
+    expect(value<{ enabled: boolean }>(await call(core, 'reclaim', 'session.autoApprove', { sessionId: created.id, enabled: false }))).toEqual({ enabled: false });
+    await call(core, 'second', 'session.message', { sessionId: created.id, text: 'Needs approval again' });
+    await until(() => store.approvals().some(a => a.sessionId === created.id && a.status === 'pending'));
+    expect(value<{ sessions: Session[] }>(await call(core, 'snap2', 'system.snapshot')).sessions[0]?.autoApprove).toBeUndefined();
   });
   it('cancellation invalidates outstanding approvals', async () => {
     const { core, store } = setup(); const s = await session(core); await call(core, 'message', 'session.message', { sessionId: s.id, text: '审批' });

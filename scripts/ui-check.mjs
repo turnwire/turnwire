@@ -92,6 +92,32 @@ try {
   await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
   await expect(page.locator('.approval-panel')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(0);
+  // Delegated approvals: the host grants them as they arrive, the session says so, and a prompt that
+  // would otherwise wait for a person raises no panel. Taking it back makes the next one wait.
+  await page.locator('.session-actions summary').click();
+  // One stable control whose attribute says which way it will switch; clicking it by hit test is
+  // unreliable exactly because its label swaps under the pointer, so the test dispatches the click.
+  const delegate = page.locator('.session-actions [data-auto-approve]');
+  await expect(delegate).toHaveAttribute('data-auto-approve', 'off');
+  await expect(delegate).toHaveText('Approve for me');
+  await delegate.dispatchEvent('click');
+  await page.locator('.session-actions summary').click();
+  await expect(page.locator('.auto-approve-chip')).toHaveText('Approving for you');
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('第三条也需要审批');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false }).last()).toBeVisible();
+  await expect(page.locator('.approval-panel')).toHaveCount(0);
+  await page.locator('.session-actions summary').click();
+  await expect(delegate).toHaveAttribute('data-auto-approve', 'on');
+  await expect(delegate).toHaveText('Ask me again');
+  await delegate.dispatchEvent('click');
+  await page.locator('.session-actions summary').click();
+  await expect(page.locator('.auto-approve-chip')).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('第四条需要审批');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.locator('.approval-panel')).toHaveCount(1);
+  await page.locator('.approval-panel').first().getByRole('button', { name: 'Approve once', exact: true }).click();
+  await expect(page.locator('.approval-panel')).toHaveCount(0);
   await page.getByRole('button', { name: 'Open session list' }).click();
   await expect(page.getByRole('navigation', { name: 'Session list' })).toBeVisible();
   await page.getByRole('button', { name: 'Close list', exact: true }).click();

@@ -134,6 +134,7 @@ export function applyEvent(snapshot: Snapshot, event: TurnwireEvent): Snapshot {
   const d = event.data;
   let sessions = snapshot.sessions, approvals = snapshot.approvals;
   if ('session' in d) sessions = [d.session, ...sessions.filter(s => s.id !== d.session.id)];
+  if (d.type === 'session.autoApprove') sessions = sessions.map(s => s.id === d.sessionId ? { ...s, ...(d.auto ? { autoApprove: true } : { autoApprove: undefined }) } : s);
   if ('approval' in d) approvals = d.approval.status === 'pending' ? [...approvals.filter(a => a.id !== d.approval.id), d.approval] : approvals.filter(a => a.id !== d.approval.id);
   const runtimes = d.type === 'runtime.status' ? snapshot.runtimes.map(r => r.id === d.runtimeId ? { ...r, online: d.online, message: d.message } : r) : snapshot.runtimes;
   return { ...snapshot, sessions, approvals, runtimes, cursor: event.seq };

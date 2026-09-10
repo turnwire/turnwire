@@ -52,10 +52,11 @@ The TUI currently provides a line-oriented interactive command interface, includ
 | Verify paired device connection | `devices list --watch`; remote client `connection` | Same commands; devices menu shows last confirmation | Device state, last confirmation and latency, refreshed every 2 seconds |
 | Watch the background agents a session is running | `agents <session>` | Same command | Not yet — see the note below |
 | Change a prompt that is still waiting (rewrite, take back, jump the queue) | `queue <session>`, `queue edit/remove/steer` | Same commands | Not yet — see the note below |
+| Delegate a session's approvals (`approve for me`) | `approve-for-me <session> [--off]` | Same command | Not yet — see the note below |
 
 Host administration uses authenticated local `/remote` and `/devices`. A paired phone or remote CLI can operate sessions and approvals, but cannot change host settings or pair additional devices. This is a connection-permission boundary enforced by the daemon, not a missing UI feature. PWA currently serves this paired-phone role.
 
-The background-agent view (`subagent.list`) and the three controls a waiting prompt owns are in the PWA. The CLI/TUI and desktop commands and panels are still to come, so those cells are real gaps rather than platform differences.
+The background-agent view (`subagent.list`), the three controls a waiting prompt owns, and delegated approvals (`session.autoApprove`) are in the PWA and the CLI/TUI. The desktop equivalents are still to come, so those cells are real gaps rather than platform differences. A delegated session is also the one place where no person reads an approval before it is granted, which is why the desktop must show the state before it can offer the toggle.
 
 Deployment uses the same local permission boundary through `/deployment`. Clients submit runtime configuration and display shared asynchronous status; they never run SSH or install services themselves. The daemon owns the job, persists private configuration, strips model credentials from child processes, and connects to the installed Relay through `RemoteController`. Server addresses, login accounts and key paths are required runtime input. Optional advanced settings are available through the shared JSON configuration in every client and native advanced fields. Closing a client leaves the job running; daemon interruption is explicitly reported for recovery.
 

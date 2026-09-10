@@ -16,6 +16,14 @@ export class TurnwireCore {
   private locks = new Map<string, Promise<unknown>>();
   /** How prompts accepted while a turn was running were sent, until the runtime echoes them back. */
   private promptModes = new Map<string, 'queue' | 'steer'>();
+  /**
+   * Sessions whose approvals are granted on arrival. Deliberately in memory only: delegating a
+   * session's approvals is a decision about the work happening right now, and a host that restarts
+   * should make someone look again rather than keep granting in the background.
+   */
+  private delegated = new Set<string>();
+  /** Approvals the delegation is granting right now, so the journal can say nobody was asked. */
+  private delegating = new Set<string>();
   private runtimes: Map<string, AgentRuntime>;
   constructor(readonly store: Store, runtimes: AgentRuntime[], readonly device: { id: string; name: string }) { this.runtimes = new Map(runtimes.map(runtime => [runtime.id, runtime])); }
   async start() {
@@ -31,7 +39,8 @@ export class TurnwireCore {
   async snapshot(): Promise<Snapshot> {
     const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? { busy: await runtime.busy().catch(() => 0) } : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
-    return { device: this.device, sessions: this.store.sessions(), approvals: this.store.approvals().filter(a => a.status === 'pending'), runtimes, cursor: this.store.cursor() };
+    // The delegated flag is host state, not a stored field, so the snapshot is where a client sees it.
+    return { device: this.device, sessions: this.store.sessions().map(session => this.delegated.has(session.id) ? { ...session, autoApprove: true } : session), approvals: this.store.approvals().filter(a => a.status === 'pending'), runtimes, cursor: this.store.cursor() };
   }
   subscribe(listener: (event: TurnwireEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async handle(value: unknown, context?: { clientId: string }): Promise<RpcResponse> {
@@ -108,10 +117,12 @@ export class TurnwireCore {
         return this.lock(p.sessionId, async () => this.update(p.sessionId, { title: p.title }));
       }
       case 'session.archive': {
+        // An archived session has no work to approve, so its delegation ends with it.
         const p = methodSchemas['session.archive'].parse(request.params);
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId);
           if (p.archived && (['running', 'waiting_approval'].includes(session.status) || this.store.approvals().some(a => a.sessionId === session.id && a.status === 'pending'))) throw new TurnwireError('SESSION_BUSY', 'Stop the task or resolve approvals before archiving the session');
+          if (p.archived) this.delegated.delete(session.id);
           return this.update(session.id, { archived: p.archived });
         });
       }
@@ -179,6 +190,16 @@ export class TurnwireCore {
         if (!runtime.modelCatalog) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', 'This runtime does not support model selection');
         return runtime.modelCatalog();
       }
+      case 'session.autoApprove': {
+        const p = methodSchemas['session.autoApprove'].parse(request.params);
+        const session = this.session(p.sessionId); this.requireActive(session);
+        if (p.enabled) { this.delegated.add(session.id); await this.grantPending(session.id); }
+        else this.delegated.delete(session.id);
+        const enabled = this.delegated.has(session.id);
+        // Live state has no stored row to change, so clients learn it from this event.
+        this.publish({ type: 'session.autoApprove', sessionId: session.id, auto: enabled });
+        return { enabled };
+      }
       case 'approval.decide': {
         const p = methodSchemas['approval.decide'].parse(request.params);
         return this.lock(`approval:${p.approvalId}`, async () => {
@@ -191,6 +212,21 @@ export class TurnwireCore {
           return { accepted: true };
         });
       }
+    }
+  }
+  /**
+   * Grant every approval waiting on a delegated session. Each one goes through the same path a
+   * client's decision takes, so the runtime sees an ordinary grant and the journal records who
+   * answered — which here is the delegation itself, marked `auto`.
+   */
+  private async grantPending(sessionId: string) {
+    for (const approval of this.store.approvals().filter(a => a.sessionId === sessionId && a.status === 'pending')) {
+      const session = this.store.session(sessionId); if (!session) return;
+      this.delegating.add(approval.id);
+      try { await this.runtime(session.runtimeId).approve(session.runtimeSessionId, approval.id.slice(sessionId.length + 1), 'approved'); }
+      catch { continue; }
+      finally { this.delegating.delete(approval.id); }
+      if (this.store.approval(approval.id)?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'approved', auto: true } });
     }
   }
   private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `Runtime ${id} is not configured`); return runtime; }
@@ -219,11 +255,17 @@ export class TurnwireCore {
     if (event.type === 'error') { this.update(sessionId, { status: 'error' }); this.publish({ type: 'session.error', sessionId, message: event.message }); return; }
     if (event.type === 'approval.requested') {
       this.publish({ type: 'approval.requested', approval: { id: `${sessionId}:${event.requestId}`, sessionId, tool: event.tool, reason: event.reason, status: 'pending', createdAt: new Date().toISOString() } });
-      this.update(sessionId, { status: 'waiting_approval' }); return;
+      this.update(sessionId, { status: 'waiting_approval' });
+      // The request still reaches the journal first, so a client watching sees what was granted for
+      // it even though nobody was asked.
+      if (this.delegated.has(sessionId)) void this.grantPending(sessionId).catch(() => {});
+      return;
     }
     if (event.type === 'approval.resolved') {
       const approval = this.store.approval(`${sessionId}:${event.requestId}`);
-      if (approval?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: event.decision } });
+      // The runtime echoes its own resolution, and that echo is what the store keeps — so a grant
+      // made by the delegation has to be marked here, or it would read as a person's decision.
+      if (approval?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: event.decision, ...(this.delegating.has(approval.id) ? { auto: true } : {}) } });
       if (!this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending')) this.update(sessionId, { status: 'running' });
       return;
     }
@@ -243,5 +285,5 @@ export class TurnwireCore {
     const result = previous.catch(() => {}).then(operation); this.locks.set(key, result);
     try { return await result; } finally { if (this.locks.get(key) === result) this.locks.delete(key); }
   }
-  async dispose() { for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
+  async dispose() { this.delegated.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
 }
