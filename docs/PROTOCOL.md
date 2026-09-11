@@ -102,7 +102,7 @@ The answer is the runtime's own shape — `[{id, selected: [...], custom?}]` —
 
 `session.autoApprove {sessionId, enabled}` delegates a session's approvals: while it is on, each `approval.requested` is granted as it arrives instead of waiting for a person, and enabling it also settles whatever is already pending. The runtime's vocabulary is closed — `allowed-once` is its only grant — so this is a Turnwire decision layered over the same `approval.decide` path, not a runtime policy.
 
-Two things keep it honest. The session field `autoApprove` is host state rather than a stored one, so it is reported in the snapshot and forgotten on restart: a delegation is about the work happening now, and a restarted host makes someone look again. And a grant made this way is journaled with `approval.auto: true` on `approval.resolved`, so the record says nobody was asked — a plain `approved` would not.
+The session field `autoApprove` is persisted after an explicit choice and included in snapshots: it survives page exits, reconnects and host restarts until disabled or the session is archived. New sessions and legacy sessions without a persisted choice default to off; old delegation events do not silently restore authorization. Unarchiving does not re-enable delegation. Startup still cancels stale pending runtime approvals instead of replaying them. A grant made this way is journaled with `approval.auto: true` on `approval.resolved`, so the record says nobody was asked — a plain `approved` would not.
 
 ## Choosing a working directory
 

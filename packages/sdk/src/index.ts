@@ -173,11 +173,12 @@ export function applyEvent(snapshot: Snapshot, event: TurnwireEvent): Snapshot {
   let sessions = snapshot.sessions, approvals = snapshot.approvals;
   if ('session' in d) {
     const previous = sessions.find(s => s.id === d.session.id);
-    // Delegation is host-memory state announced separately, not part of persisted status updates.
-    const session = d.session.autoApprove === undefined && previous?.autoApprove !== undefined ? { ...d.session, autoApprove: previous.autoApprove } : d.session;
+    // New hosts send durable consent explicitly. Older hosts omit their transient flag on
+    // status updates; preserve it only in that case, never across archive or explicit false.
+    const session = { ...d.session, autoApprove: !d.session.archived && (d.session.autoApprove ?? previous?.autoApprove ?? false) };
     sessions = [session, ...sessions.filter(s => s.id !== d.session.id)];
   }
-  if (d.type === 'session.autoApprove') sessions = sessions.map(s => s.id === d.sessionId ? { ...s, ...(d.auto ? { autoApprove: true } : { autoApprove: undefined }) } : s);
+  if (d.type === 'session.autoApprove') sessions = sessions.map(s => s.id === d.sessionId ? { ...s, autoApprove: !s.archived && d.auto } : s);
   if ('approval' in d) approvals = d.approval.status === 'pending' ? [...approvals.filter(a => a.id !== d.approval.id), d.approval] : approvals.filter(a => a.id !== d.approval.id);
   let questions = snapshot.questions;
   if ('question' in d) questions = d.question.status === 'pending' ? [...questions.filter(q => q.id !== d.question.id), d.question] : questions.filter(q => q.id !== d.question.id);

@@ -104,7 +104,7 @@ describe('durable daemon ownership', () => {
     expect(value<{ enabled: boolean }>(await call(core, 'reclaim', 'session.autoApprove', { sessionId: created.id, enabled: false }))).toEqual({ enabled: false });
     await call(core, 'second', 'session.message', { sessionId: created.id, text: 'Needs approval again' });
     await until(() => store.approvals().some(a => a.sessionId === created.id && a.status === 'pending'));
-    expect(value<{ sessions: Session[] }>(await call(core, 'snap2', 'system.snapshot')).sessions[0]?.autoApprove).toBeUndefined();
+    expect(value<{ sessions: Session[] }>(await call(core, 'snap2', 'system.snapshot')).sessions[0]?.autoApprove).toBe(false);
   });
   it('cancellation invalidates outstanding approvals', async () => {
     const { core, store } = setup(); const s = await session(core); await call(core, 'message', 'session.message', { sessionId: s.id, text: '审批' });

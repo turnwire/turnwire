@@ -60,7 +60,7 @@ const en = {
   'session.autoApproveOn': 'Approving for you',
   'session.autoApproveShort': 'Auto-approve',
   'session.autoApproveShortOn': 'Auto-approve on',
-  'session.autoApproveHint': 'Every approval in this session is granted as it arrives, until you turn this off or the host restarts.',
+  'session.autoApproveHint': 'Automatically grants approvals in this session, including after reconnects and host restarts, until you turn it off or archive the session.',
   'approval.autoOn': 'Granted for you',
   'common.listSeparator': ', ',
 
@@ -412,7 +412,7 @@ const zh: Catalog = {
   'session.autoApproveOn': '正在帮你批准',
   'session.autoApproveShort': '代审批',
   'session.autoApproveShortOn': '代审批中',
-  'session.autoApproveHint': '这个会话的审批一到就自动批准，直到你关掉它，或主机重启。',
+  'session.autoApproveHint': '自动批准此会话的审批，退出重进或主机重启后仍保持，直到你手动关闭或归档会话。',
   'approval.autoOn': '已代你批准',
   'common.listSeparator': '、',
 

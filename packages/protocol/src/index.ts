@@ -35,8 +35,8 @@ export const sessionSchema = z.object({
   archived: z.boolean().optional(),
   /**
    * While true, this session's approval requests are granted as they arrive instead of waiting for
-   * someone to answer them. It is a live setting, not a stored one: the host forgets it on restart,
-   * so an approval cannot stay delegated to nobody months later.
+   * someone to answer them. Persisted per session across host restarts and resume; defaults to
+   * false for older sessions. Archiving clears it permanently; unarchiving does not reenable it.
    */
   autoApprove: z.boolean().optional(),
   /** Absent until the runtime reports a selection for this session. */

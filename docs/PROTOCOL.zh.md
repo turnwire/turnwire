@@ -102,7 +102,7 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 
 `session.autoApprove {sessionId, enabled}` 把一个会话的审批委托出去：打开期间，每个 `approval.requested` 一到就直接批准，而不是等人回答；打开时也会先处理已经等着的那些。runtime 的词汇是封闭的 —— `allowed-once` 是它唯一的授权 —— 所以这是 Turnwire 在同一个 `approval.decide` 路径之上做的决定，不是 runtime 的策略。
 
-有两点让它保持诚实。会话字段 `autoApprove` 是主机状态而不是存储字段：它出现在快照里，重启即忘 —— 委托针对的是当下正在做的事，重启后应该有人再看一眼。这样产生的批准会在 `approval.resolved` 上带 `approval.auto: true`，记录因此说明没人被问过；只写 `approved` 是看不出来的。
+会话字段 `autoApprove` 在用户明确选择后持久保存并进入快照，退出页面、重连和主机重启后仍保持，直到手动关闭或归档会话。新会话及没有持久选择的旧会话默认关闭，不从旧代审批事件中暗中恢复授权；取消归档不会重新开启。主机启动仍取消过期的待处理 runtime 审批，不重新执行它们。自动批准会在 `approval.resolved` 上带 `approval.auto: true`，记录因此说明没人被问过；只写 `approved` 是看不出来的。
 
 ## 选择工作目录
 

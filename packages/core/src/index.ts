@@ -26,12 +26,6 @@ export class TurnwireCore {
    * ones are still the reader's to change.
    */
   private waiting = new Map<string, { sessionId: string; started: boolean }>();
-  /**
-   * Sessions whose approvals are granted on arrival. Deliberately in memory only: delegating a
-   * session's approvals is a decision about the work happening right now, and a host that restarts
-   * should make someone look again rather than keep granting in the background.
-   */
-  private delegated = new Set<string>();
   /** Approvals the delegation is granting right now, so the journal can say nobody was asked. */
   private delegating = new Set<string>();
   /** Questions the agent is blocked on, keyed by approval-style id `${sessionId}:${requestId}`. */
@@ -53,8 +47,7 @@ export class TurnwireCore {
     await this.reconcileStatuses();
     const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? { busy: await runtime.busy().catch(() => 0) } : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
-    // The delegated flag is host state, not a stored field, so the snapshot is where a client sees it.
-    return { device: this.device, sessions: this.store.sessions().map(session => this.delegated.has(session.id) ? { ...session, autoApprove: true } : session), approvals: this.store.approvals().filter(a => a.status === 'pending'), questions: [...this.questions.values()].filter(question => question.status === 'pending'), runtimes, cursor: this.store.cursor() };
+    return { device: this.device, sessions: this.store.sessions(), approvals: this.store.approvals().filter(a => a.status === 'pending'), questions: [...this.questions.values()].filter(question => question.status === 'pending'), runtimes, cursor: this.store.cursor() };
   }
   subscribe(listener: (event: TurnwireEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async handle(value: unknown, context?: { clientId: string }): Promise<RpcResponse> {
@@ -167,7 +160,7 @@ export class TurnwireCore {
         // the session records what the runtime resolved rather than what was requested.
         const model = p.model && runtime.setModel ? await runtime.setModel(created.id, p.model) : undefined;
         const now = new Date().toISOString();
-        const session: Session = { id, runtimeId: runtime.id, runtimeSessionId: created.id, title: p.title, cwd, status: created.status, createdAt: now, updatedAt: now, ...(model ? { model } : {}) };
+        const session: Session = { id, runtimeId: runtime.id, runtimeSessionId: created.id, title: p.title, cwd, status: created.status, autoApprove: false, createdAt: now, updatedAt: now, ...(model ? { model } : {}) };
         this.publish({ type: 'session.created', session }); this.bind(session); return session;
       }
       case 'session.resume': {
@@ -184,8 +177,7 @@ export class TurnwireCore {
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId);
           if (p.archived && (['running', 'waiting_approval'].includes(session.status) || this.store.approvals().some(a => a.sessionId === session.id && a.status === 'pending'))) throw new TurnwireError('SESSION_BUSY', 'Stop the task or resolve approvals before archiving the session');
-          if (p.archived) this.delegated.delete(session.id);
-          return this.update(session.id, { archived: p.archived });
+          return this.update(session.id, { archived: p.archived, ...(p.archived ? { autoApprove: false } : {}) });
         });
       }
       case 'session.message': {
@@ -279,13 +271,14 @@ export class TurnwireCore {
       }
       case 'session.autoApprove': {
         const p = methodSchemas['session.autoApprove'].parse(request.params);
-        const session = this.session(p.sessionId); this.requireActive(session);
-        if (p.enabled) { this.delegated.add(session.id); await this.grantPending(session.id); }
-        else this.delegated.delete(session.id);
-        const enabled = this.delegated.has(session.id);
-        // Live state has no stored row to change, so clients learn it from this event.
-        this.publish({ type: 'session.autoApprove', sessionId: session.id, auto: enabled });
-        return { enabled };
+        return this.lock(p.sessionId, async () => {
+          const session = this.session(p.sessionId); this.requireActive(session);
+          // Commit consent and announce a coherent session before any runtime grant can occur.
+          this.update(session.id, { autoApprove: p.enabled });
+          this.publish({ type: 'session.autoApprove', sessionId: session.id, auto: p.enabled });
+          if (p.enabled) await this.grantPending(session.id);
+          return { enabled: p.enabled };
+        });
       }
       case 'question.answer': {
         const p = methodSchemas['question.answer'].parse(request.params);
@@ -326,12 +319,15 @@ export class TurnwireCore {
    */
   private async grantPending(sessionId: string) {
     for (const approval of this.store.approvals().filter(a => a.sessionId === sessionId && a.status === 'pending')) {
-      const session = this.store.session(sessionId); if (!session) return;
-      this.delegating.add(approval.id);
-      try { await this.runtime(session.runtimeId).approve(session.runtimeSessionId, approval.id.slice(sessionId.length + 1), 'approved'); }
-      catch { continue; }
-      finally { this.delegating.delete(approval.id); }
-      if (this.store.approval(approval.id)?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'approved', auto: true } });
+      await this.lock(`approval:${approval.id}`, async () => {
+        const session = this.store.session(sessionId);
+        if (!session?.autoApprove || session.archived || this.store.approval(approval.id)?.status !== 'pending') return;
+        this.delegating.add(approval.id);
+        try { await this.runtime(session.runtimeId).approve(session.runtimeSessionId, approval.id.slice(sessionId.length + 1), 'approved'); }
+        catch { return; }
+        finally { this.delegating.delete(approval.id); }
+        if (this.store.approval(approval.id)?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'approved', auto: true } });
+      });
     }
   }
   private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `Runtime ${id} is not configured`); return runtime; }
@@ -434,7 +430,7 @@ export class TurnwireCore {
       this.update(sessionId, { status: 'waiting_approval' });
       // The request still reaches the journal first, so a client watching sees what was granted for
       // it even though nobody was asked.
-      if (this.delegated.has(sessionId)) void this.grantPending(sessionId).catch(() => {});
+      if (this.store.session(sessionId)?.autoApprove) void this.grantPending(sessionId).catch(() => {});
       return;
     }
     if (event.type === 'question.requested') {
@@ -481,5 +477,5 @@ export class TurnwireCore {
     const result = previous.catch(() => {}).then(operation); this.locks.set(key, result);
     try { return await result; } finally { if (this.locks.get(key) === result) this.locks.delete(key); }
   }
-  async dispose() { this.delegated.clear(); this.questions.clear(); this.waiting.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
+  async dispose() { this.questions.clear(); this.waiting.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
 }

@@ -25,6 +25,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS inbox (position INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
       INSERT OR IGNORE INTO inbox(id,body) SELECT id,body FROM approvals ORDER BY json_extract(body,'$.createdAt');
     `);
+    // Legacy consent was transient. Never reconstruct it from old autoApprove journal events.
+    // Materialize the safe default in the durable session row, and keep archived sessions off.
+    this.db.exec(`UPDATE sessions SET body=json_set(body,'$.autoApprove',json('false'))
+      WHERE json_type(body,'$.autoApprove') IS NULL OR json_extract(body,'$.archived')=1`);
     // One-time, transactional projection migration. Existing event journals stay intact.
     if (!this.setting<boolean>('history-projection-v2')) {
       this.db.exec('BEGIN IMMEDIATE');

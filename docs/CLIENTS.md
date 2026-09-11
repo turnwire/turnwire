@@ -2,6 +2,8 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+Per-session auto-approval choices are stored by Core, not in client-local preferences. The shared command and authoritative snapshot preserve an explicit choice across reconnects and host restarts; this does not depend on keeping any client open. New sessions default off; disabling or archiving clears it, and old event journals do not restore prior transient authorization.
+
 [Image messages](IMAGES.md): PWA supports image selection/paste, prepared previews/removal and explicit sending; CLI/TUI use `send <session> [text] --image <path...>` through the SDK. Native code includes a local image picker and reference reads, but macOS compilation/live UI verification remains pending. Runtime `imageInput` advertises transport only: the selected model may reject images. History and text exports retain reference metadata, not embedded bytes. Images do not grant host-administration access.
 
 The PWA footer child list is limited to verified launches in the latest started human turn and their descendants. Queued and steer messages do not start another turn. A new human turn clears the old list; historical readers remain at their original transcript positions. If bounded history omits the turn boundary or launch receipt, the UI does not guess ownership; loading older records can restore it. DSH inactive includes persisted children whose execution activation has already been released, not necessarily live OS processes. Do not kill processes or delete history based on that flag.
