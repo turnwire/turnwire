@@ -19,6 +19,6 @@ const client = {
 };
 function Fixture() {
   const [running, setRunning] = useState(true); const [connected, setConnected] = useState(true);
-  return <main style={{ width: 390, padding: 12 }}><button onClick={() => setRunning(false)}>Settle child</button><button onClick={() => setConnected(value => !value)}>Toggle connection</button><AgentStrip sessionId="root" client={client as any} connected={connected} agents={[{ ...child, activity: running ? 'running' : 'inactive' }]} /></main>;
+  return <main style={{ width: 390, padding: 12 }}><button onClick={() => setRunning(false)}>Settle child</button><button onClick={() => setRunning(true)}>Run child</button><button onClick={() => setConnected(value => !value)}>Toggle connection</button><AgentStrip sessionId="root" client={client as any} connected={connected} agents={[{ ...child, activity: running ? 'running' : 'inactive' }]} /></main>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

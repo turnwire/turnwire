@@ -38,10 +38,12 @@ try {
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: 'Settle child', exact: true }).click();
   await expect(page.locator('.child-execution')).toBeVisible();
+  await expect(page.locator('.agent-heading')).toHaveCount(0);
   await expect(page.getByText('Latest window · inactive (not necessarily finished)', { exact: true })).toBeVisible();
   await row.click();
   await expect(row).toHaveCount(0);
-  await page.getByRole('button', { name: /Inactive agents/ }).click();
+  await expect(page.locator('.agent-strip')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Run child', exact: true }).click();
   await row.click();
   await expect(page.locator('.child-execution')).toBeVisible();
   await page.getByRole('button', { name: 'Toggle connection', exact: true }).click();

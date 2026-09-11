@@ -32,10 +32,12 @@ export function AgentStrip({ agents, client, sessionId, connected }: { agents: S
   if (agents.length === 0) return null;
   const running = agents.filter(agent => agent.activity === 'running');
   const resting = agents.filter(agent => agent.activity !== 'running');
+  // Idle history must not occupy the composer; preserve only an explicitly opened reader.
+  if (running.length === 0 && !agents.some(agent => agent.id === open)) return null;
   const shown = [...running.filter((agent, index) => all || index < MAX_AGENT_ROWS || agent.id === open), ...resting.filter(agent => inactive || agent.id === open)];
   const byId = new Map(agents.map(agent => [agent.id, agent]));
   return <div className="agent-strip" role="status" aria-label={translate('agents.aria')}>
-    <div className="agent-heading">{translate('agents.running', { count: running.length })}</div>
+    {running.length > 0 && <div className="agent-heading">{translate('agents.running', { count: running.length })}</div>}
     {resting.length > 0 && <button type="button" className="agent-more" aria-expanded={inactive} onClick={() => setInactive(value => !value)}>{translate(inactive ? 'agents.inactiveHide' : 'agents.inactiveShow', { count: resting.length })}</button>}
     <div className="agent-list">{shown.map(agent => {
       const expanded = open === agent.id;
