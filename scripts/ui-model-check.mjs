@@ -54,10 +54,16 @@ try {
   await sidebarOpen.click();
   const sidebarClose = sidebar.getByRole('button', { name: 'Close list', exact: true });
   await expect(sidebarClose).toBeFocused();
+  await expect(sidebar.locator('input[type=checkbox], input[aria-label="Search sessions"]')).toHaveCount(0);
+  await sidebar.getByRole('button', { name: 'Archived', exact: true }).click();
+  await expect(sidebar.getByRole('button', { name: 'Archived', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(sidebar.locator('.session-row')).toHaveCount(0);
+  await sidebar.getByRole('button', { name: 'Work sessions', exact: true }).click();
+  await expect(sidebar.locator('.session-row')).not.toHaveCount(0);
   await sidebarClose.press('Escape');
   await expect(sidebarOpen).toBeFocused();
   await expect(sidebar).toHaveAttribute('inert', '');
-  await sidebar.locator('input').first().evaluate(input => input.focus());
+  await sidebar.locator('.session-views button').first().evaluate(button => button.focus());
   await expect(sidebarOpen).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(sidebar).not.toHaveAttribute('inert', '');
