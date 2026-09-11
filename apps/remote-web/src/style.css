@@ -217,11 +217,54 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
 .inline-child-interaction { min-width: 0; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--line); }
 .inline-child-interaction > .tool-message { margin-top: 0; }
 .inline-child .child-execution { margin: 4px 0 10px; }
+/* Reserve transcript space even with a keyboard-sized viewport and stacked attachments.
+   The footer itself can scroll instead of pushing send controls below the viewport. */
+.composer-area { min-height: 0; flex-shrink: 1; overflow-y: auto; overflow-x: hidden; max-height: 65dvh; }
+.conversation { flex-shrink: 0; min-height: 48px; }
+@media (max-height: 500px) {
+  .composer-area { max-height: min(65dvh, calc(100dvh - 130px)); }
+  .composer-caption { padding-top: 4px; padding-bottom: 0; }
+  .error-banner, .connection-health { max-height: 20dvh; overflow-y: auto; }
+}
 .composer-bottom { gap: 8px; }
 .composer-bottom > .composer-path { flex: 1 1 0; min-width: 0; max-width: none; }
 .composer-path > svg { flex-shrink: 0; }
 .composer-path > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-bottom > div { flex: 0 0 auto; }
+.composer-bottom > div { flex: 0 1 auto; min-width: 0; }
+.composer-bottom .model-switch { flex: 0 1 auto; min-width: 0; }
+.composer-bottom .model-chip { display: block; min-width: 0; width: 100%; }
+.composer-bottom .send-button, .composer-bottom .stop-button { flex-shrink: 0; }
+@media (max-width:700px) {
+  .composer-bottom { gap: 5px; }
+  .composer-bottom > .composer-path { flex: 1 0 44px; }
+  .composer-bottom > div { gap: 4px; max-width: calc(100% - 49px); }
+  .composer-bottom .model-chip { padding-inline: 5px; min-height: 32px; }
+  .composer-bottom .stop-button { width: 32px; height: 32px; padding: 0; gap: 0; font-size: 0; }
+}
 .composer-bottom .approval-mode { display: inline-flex; flex: 0 0 auto; margin: 0; }
 .composer-bottom .approval-mode button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 30px; padding: 0 6px; font-size: 10px; white-space: nowrap; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); }
 .composer-bottom .approval-mode button[aria-checked="true"] { color: #8a5d16; background: #fff5df; border-color: #b27a23; }
+
+/* Mobile content controls: keep transcript content bounded without changing desktop density.
+   Status text stays in the accessibility tree; only the topbar's visual label becomes a dot. */
+@media (max-width: 700px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar .breadcrumb { min-width: 72px; }
+  .topbar .breadcrumb strong { min-width: 0; }
+  .topbar-right { flex-shrink: 0; }
+  .topbar-right > .status { font-size: 0; gap: 0; width: 12px; justify-content: center; flex-shrink: 0; }
+  .topbar-right > .status > span { width: 7px; height: 7px; }
+  .topbar .icon-button { min-width: 36px; min-height: 36px; }
+  .session-actions > summary { min-height: 36px; display: flex; align-items: center; }
+  .session-heading, .session-heading > *, .child-execution, .child-execution > *, .agent-meta { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  .session-heading > span { display: block; white-space: normal; }
+  .session-heading > span > svg { vertical-align: middle; margin-right: 6px; }
+  .session-heading h1, .session-heading p { white-space: normal; }
+  .tool-message > summary, .tool-group > summary, .turn-process > summary,
+  .child-record summary, .agent-secondary-plan summary { min-height: 32px; }
+  .agent-item, .agent-more { min-height: 36px; }
+  .agent-more { padding-inline: 6px; }
+  .question-other, .queued-edit, .session-actions input, .session-filter > input { font-size: 16px; }
+  .child-execution-actions { flex-wrap: wrap; }
+  .child-execution-actions button { min-height: 36px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}

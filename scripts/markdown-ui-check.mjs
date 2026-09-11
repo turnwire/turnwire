@@ -37,7 +37,7 @@ try {
   await page.goto(origin + '/#pair=' + encodePairing(pairing));
   const md = page.locator('.message.assistant .markdown-body').first();
   await expect(md.getByRole('heading', { name: '远程控制检查', exact: true })).toBeVisible();
-  await expect(page.locator('.connection-health')).toHaveAttribute('data-phase', 'connected');
+  await expect(page.locator('.connection-ok')).toBeVisible();
   await expect(md.locator('strong')).toHaveText('Mac 的回应');
   await expect(md.locator('blockquote')).toContainText('Mac 需要保持唤醒并联网。');
   await expect(md.getByRole('checkbox')).toHaveCount(3);

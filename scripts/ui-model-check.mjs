@@ -73,6 +73,24 @@ try {
   // scroller: toBeVisible only requires a non-empty box, while the conversation opens pinned to the
   // newest message, so a control inside that scroller would pass while sitting off-screen.
   const chip = page.getByLabel('Choose model', { exact: true });
+  // Stress presentation only: the model catalog/IDs remain entirely runtime-owned.
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 640 });
+    await chip.evaluate(el => { el.textContent = 'Long runtime display label '.repeat(12); });
+    await page.locator('.composer-bottom > div').evaluate(el => {
+      const stop = document.createElement('button'); stop.className = 'stop-button'; stop.dataset.geometryFixture = 'true';
+      stop.setAttribute('aria-label', 'Stop'); stop.innerHTML = '<svg width="14" height="14"></svg>Stop';
+      el.insertBefore(stop, el.querySelector('.send-button'));
+      const approval = el.querySelector('.approval-mode button span'); if (approval) approval.textContent = 'Auto-approve on';
+    });
+    for (const selector of ['.model-chip', '.stop-button', '.send-button', '.approval-mode button']) {
+      const control = page.locator(selector); const box = await control.boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.width).toBeGreaterThanOrEqual(30); expect(box.height).toBeGreaterThanOrEqual(30);
+    }
+    await page.locator('[data-geometry-fixture]').evaluate(el => el.remove());
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(chip).toBeVisible();
   await expect(chip).toBeInViewport();
   expect(await chip.evaluate(element => element.closest('[aria-label="Conversation"]') === null)).toBe(true);

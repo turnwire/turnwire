@@ -20,10 +20,11 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
   const older = window.before !== undefined;
   useEffect(() => {
     let active = true;
+    let firstRead = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (!client || !connected) { setLoading(false); return; }
     const load = async () => {
-      setLoading(true);
+      if (firstRead) setLoading(true);
       try {
         const result = await loadSubagentHistoryPage(client, { sessionId, subagentId, limit: 50, before: window.before, cursor: window.cursor });
         if (!active) return;
@@ -31,6 +32,7 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
       } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : String(cause)); }
       finally {
         if (active) {
+          firstRead = false;
           setLoading(false);
           if (running && !older) timer = setTimeout(() => void load(), 2000);
         }
@@ -51,7 +53,7 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
       </details> : <><small>{t(`execution.role.${record.role}`)} · {record.time}{!record.complete && ` · ${t('execution.inProgress')}`}</small><div className="child-record-text">{record.text}</div></>}
     </article>)}</div>
     <div className="child-execution-actions">
-      {page?.hasMore && page.nextBefore !== null && <button type="button" disabled={!connected || loading} onClick={() => { setWindow(value => ({ before: page.nextBefore!, cursor: page.cursor, revision: value.revision + 1 })); }}>{t('execution.older')}</button>}
+      {page?.hasMore && page.nextBefore !== null && <button type="button" disabled={!connected || loading} onClick={() => { if (viewport.current) viewport.current.scrollTop = 0; setWindow(value => ({ before: page.nextBefore!, cursor: page.cursor, revision: value.revision + 1 })); }}>{t('execution.older')}</button>}
       <button type="button" disabled={!connected || loading} onClick={() => { if (viewport.current) viewport.current.scrollTop = 0; setWindow(value => ({ revision: value.revision + 1 })); }}>{t(older ? 'execution.latestReset' : 'execution.refresh')}</button>
     </div>
     <small>{t('execution.pagingHint')}</small>

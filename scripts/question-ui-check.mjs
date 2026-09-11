@@ -287,6 +287,20 @@ try {
     expect(await toolbar.locator('.composer-path > span').evaluate(el => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis')).toBe(true);
     expect(await toolbar.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   }
+  for (const [width, height] of [[320, 320], [360, 400], [390, 400], [430, 320], [640, 320], [844, 390]]) {
+    await page.setViewportSize({ width, height });
+    const footer = page.locator('.composer-area');
+    const bounds = await footer.boundingBox();
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(height + 1);
+    expect((await page.locator('.conversation').boundingBox()).height).toBeGreaterThanOrEqual(48);
+    await page.locator('.send-button').scrollIntoViewIfNeeded();
+    const send = await page.locator('.send-button').boundingBox();
+    expect(send.y + send.height).toBeLessThanOrEqual(height);
+    await page.locator('.approval-panel').first().scrollIntoViewIfNeeded();
+    await expect(page.locator('.approval-panel').first()).toBeInViewport();
+  }
+  await page.setViewportSize({ width: 390, height: 640 });
   // Delay the new session's list: old children must disappear before that request resolves.
   const second = await core.handle({ v: 1, id: crypto.randomUUID(), method: 'session.create', params: { runtimeId: 'demo', title: 'Empty session', cwd: process.cwd() } });
   if (!second.ok) throw new Error('Second fixture session failed');
