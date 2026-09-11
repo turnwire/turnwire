@@ -1,19 +1,32 @@
 import { expect, it } from 'vitest';
-import { HISTORY_AUTO_PAGES, HISTORY_TOP_THRESHOLD, shouldLoadEarlier } from '../apps/remote-web/src/historyScroll.js';
+import { HISTORY_TOP_THRESHOLD, prependScrollTop, shouldLoadEarlier } from '../apps/remote-web/src/historyScroll.js';
 
-const ready = { scrollTop: 0, before: 41, loading: false, failed: false, pages: 0 };
+const ready = { scrollTop: 0, before: 41, loading: false, upward: true };
 
-it('loads older records only while the reader holds the top with earlier pages left', () => {
+it('requests a bounded page only on an upward reach with earlier records available', () => {
   expect(shouldLoadEarlier(ready)).toBe(true);
   expect(shouldLoadEarlier({ ...ready, scrollTop: HISTORY_TOP_THRESHOLD - 1 })).toBe(true);
   expect(shouldLoadEarlier({ ...ready, scrollTop: HISTORY_TOP_THRESHOLD })).toBe(false);
   expect(shouldLoadEarlier({ ...ready, before: null })).toBe(false);
   expect(shouldLoadEarlier({ ...ready, loading: true })).toBe(false);
-  expect(shouldLoadEarlier({ ...ready, failed: true })).toBe(false);
 });
 
-it('bounds automatic paging while an explicit manual load stays unlimited', () => {
-  expect(shouldLoadEarlier({ ...ready, pages: HISTORY_AUTO_PAGES - 1 })).toBe(true);
-  expect(shouldLoadEarlier({ ...ready, pages: HISTORY_AUTO_PAGES })).toBe(false);
-  expect(shouldLoadEarlier({ ...ready, pages: HISTORY_AUTO_PAGES * 3, limit: HISTORY_AUTO_PAGES * 4 })).toBe(true);
+it('never eagerly drains a short viewport or retries from layout alone', () => {
+  expect(shouldLoadEarlier({ ...ready, upward: false })).toBe(false);
+  expect(shouldLoadEarlier({ ...ready, before: null, initialFailed: true, upward: false })).toBe(false);
+  expect(shouldLoadEarlier({ ...ready, before: null, initialFailed: true })).toBe(true);
+});
+
+it('allows every deliberate top reach without a session page cap', () => {
+  for (let page = 0; page < 100; page++) expect(shouldLoadEarlier({ ...ready, before: 1000 - page })).toBe(true);
+});
+
+it('preserves viewport-relative geometry through repeated prepends', () => {
+  let height = 1200; let top = 35; let anchor = 180;
+  const relative = anchor - top;
+  for (const added of [500, 37, 1000, 0]) {
+    top = prependScrollTop({ height, top }, height + added);
+    height += added; anchor += added;
+    expect(anchor - top).toBe(relative);
+  }
 });

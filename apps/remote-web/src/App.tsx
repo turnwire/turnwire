@@ -12,7 +12,7 @@ import { AgentStrip } from './AgentStrip';
 import { InlineChild } from './InlineChild';
 import { conversationRows, currentTurnChildren, launchChild, type ConversationRowData } from './inlineChild';
 import { ModelPicker } from './ModelPicker';
-import { shouldLoadEarlier } from './historyScroll';
+import { prependScrollTop, shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
 
 type Connection = { kind: 'local'; url: string; token: string } | { kind: 'remote'; code: string };
@@ -97,9 +97,9 @@ export function App() {
   const [connection, setConnection] = useState(loadConnection);
   const [showInbox, setShowInbox] = useState(new URLSearchParams(location.search).has('inbox'));
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [selected, setSelected] = useState<string>();
-  const historyRef = useRef<{ sessionId: string; buffer: HistoryBuffer } | undefined>(undefined);
-  const [before, setBefore] = useState<number | null>(null);
-  const autoPages = useRef(0); const historyBusy = useRef(false);
+  const historyRef = useRef<{ sessionId: string; client: TurnwireClient; buffer: HistoryBuffer; busy: boolean; initialLoaded: boolean; before: number | null } | undefined>(undefined);
+  const scrollPosition = useRef(0); const touchY = useRef<number | undefined>(undefined);
+  const gestureUsed = useRef(false); const lastWheel = useRef(0);
   const [historyError, setHistoryError] = useState(false);
   const scroller = useRef<HTMLElement>(null); const follow = useRef(true); const prepend = useRef<{ height: number; top: number } | undefined>(undefined);
   const [events, setEvents] = useState<TurnwireEvent[]>([]); const [state, setState] = useState<ConnectionState>('offline');
@@ -377,30 +377,44 @@ export function App() {
   }, [connection]);
 
   useEffect(() => {
-    if (!selected || !clientRef.current) { historyRef.current = undefined; setEvents([]); return; }
-    let active = true; const buffer = new HistoryBuffer(); historyRef.current = { sessionId: selected, buffer };
-    setEvents([]); setBefore(null); setLoading(true); setHistoryError(false); setRenameTitle(undefined); follow.current = true; buffer.begin();
-    autoPages.current = 0; historyBusy.current = false;
-    void loadHistoryPage(clientRef.current, selected).then(page => {
-      if (!active) return; buffer.merge(page, true); setEvents(buffer.events); setBefore(page.nextBefore); setLoading(false);
-    }).catch(error => { if (active) { buffer.cancel(); setHistoryError(true); reportFailure(error); setLoading(false); } });
-    return () => { active = false; };
+    const client = clientRef.current;
+    prepend.current = undefined; scrollPosition.current = 0; touchY.current = undefined; gestureUsed.current = false; lastWheel.current = 0;
+    if (!selected || !client) { historyRef.current = undefined; setEvents([]); return; }
+    const buffer = new HistoryBuffer();
+    const history = { sessionId: selected, client, buffer, busy: true, initialLoaded: false, before: null as number | null };
+    historyRef.current = history;
+    setEvents([]); setLoading(true); setHistoryError(false); setRenameTitle(undefined); follow.current = true; buffer.begin();
+    void loadHistoryPage(client, selected).then(page => {
+      if (historyRef.current !== history || clientRef.current !== client) return;
+      buffer.merge(page, true); history.initialLoaded = true; history.before = page.nextBefore; setEvents(buffer.events);
+    }).catch(() => { if (historyRef.current === history && clientRef.current === client) { buffer.cancel(); setHistoryError(true); } })
+      .finally(() => { if (historyRef.current === history && clientRef.current === client) { history.busy = false; setLoading(false); } });
+    return () => { if (historyRef.current === history) historyRef.current = undefined; };
   }, [selected, connection]);
-  /** `auto` marks a load the reader triggered by holding the conversation at its oldest record. */
-  async function earlier(auto = false) {
-    const c = clientRef.current, history = historyRef.current; if (!c || !history || loading || historyBusy.current) return;
-    const replace = historyError; history.buffer.begin(); historyBusy.current = true; setLoading(true);
+  async function earlier() {
+    const history = historyRef.current;
+    if (!history || history.client !== clientRef.current || history.busy) return;
+    const replace = !history.initialLoaded;
+    if (!replace && history.before === null) return;
+    history.buffer.begin(); history.busy = true; gestureUsed.current = true; setLoading(true); setHistoryError(false);
     try {
-      const page = await loadHistoryPage(c, history.sessionId, replace ? undefined : before ?? undefined);
-      if (historyRef.current !== history) return;
+      const page = await loadHistoryPage(history.client, history.sessionId, replace ? undefined : history.before ?? undefined);
+      if (historyRef.current !== history || clientRef.current !== history.client) return;
       if (!replace && scroller.current) { follow.current = false; prepend.current = { height: scroller.current.scrollHeight, top: scroller.current.scrollTop }; }
-      history.buffer.merge(page, replace); setEvents(history.buffer.events); setBefore(page.nextBefore); setHistoryError(false); if (auto) autoPages.current++;
-    } catch (error) { if (historyRef.current === history) { history.buffer.cancel(); reportFailure(error); } }
-    finally { if (historyRef.current === history) setLoading(false); historyBusy.current = false; }
+      history.buffer.merge(page, replace); history.initialLoaded = true; history.before = page.nextBefore;
+      setEvents(history.buffer.events);
+    } catch { if (historyRef.current === history && clientRef.current === history.client) { history.buffer.cancel(); setHistoryError(true); } }
+    finally { if (historyRef.current === history && clientRef.current === history.client) { history.busy = false; setLoading(false); } }
+  }
+  function reachEarlier(el: HTMLElement, upward: boolean) {
+    const history = historyRef.current;
+    if (history && !gestureUsed.current && shouldLoadEarlier({ scrollTop: el.scrollTop, before: history.before, loading: history.busy, upward, initialFailed: !history.initialLoaded && historyError })) void earlier();
   }
   useLayoutEffect(() => {
-    if (prepend.current && scroller.current) { const old = prepend.current; scroller.current.scrollTop = old.top + scroller.current.scrollHeight - old.height; prepend.current = undefined; }
+    if (prepend.current && scroller.current) { scroller.current.scrollTop = prependScrollTop(prepend.current, scroller.current.scrollHeight); prepend.current = undefined; }
     else if (follow.current) bottom.current?.scrollIntoView({ block: 'end', behavior: 'instant' });
+    // Programmatic bottom/anchor restoration is not a new request for earlier history.
+    scrollPosition.current = scroller.current?.scrollTop ?? 0;
   }, [events, approvals.length]);
   async function perform(action: (c: TurnwireClient) => Promise<void>) { if (!clientRef.current) return; setBusy(true); clearFailure(); try { await action(clientRef.current); } catch (error) { reportFailure(error); } finally { setBusy(false); } }
   function saveConnection(value: Connection, remember: boolean) { localStorage.removeItem('turnwire.connection'); sessionStorage.removeItem('turnwire.connection'); (remember ? localStorage : sessionStorage).setItem('turnwire.connection', JSON.stringify(value)); setSnapshot(undefined); setSelected(undefined); setEvents([]); setState('connecting'); setConnection(value); }
@@ -434,10 +448,30 @@ export function App() {
         : showInbox && clientRef.current ? <Inbox client={clientRef.current} cursor={snapshot?.cursor ?? 0} connected={connected} remember={rememberDevice} onOpen={id => { setSelected(id); setShowInbox(false); }} />
         : !session ? <div className="empty-workspace"><div className="empty-symbol"><TerminalWindow size={38} weight="light" /></div><span className="eyebrow">{t('empty.eyebrow')}</span><h1>{t('empty.title')}</h1><p>{t('empty.bodyLine1')}<br />{t('empty.bodyLine2')}</p><button className="primary" onClick={() => setCreate(true)} disabled={!snapshot}><Plus size={17} />{t('common.newSession')}</button></div>
         : <>
-          <section className="conversation" aria-label={t('conversation.aria')} ref={scroller} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; if (shouldLoadEarlier({ scrollTop: el.scrollTop, before, loading, failed: historyError, pages: autoPages.current })) void earlier(true); }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && t('conversation.demoNote')}</p></div>
-            {(before !== null || historyError) && <button className="history-more" disabled={loading} onClick={() => void earlier()}>{loading ? t('conversation.loadingEarlier') : historyError ? t('conversation.retryEarlier') : t('conversation.loadEarlier')}</button>}
+          <section className="conversation" aria-label={t('conversation.aria')} ref={scroller} tabIndex={0}
+            onScroll={event => {
+              const el = event.currentTarget; const upward = el.scrollTop < scrollPosition.current;
+              scrollPosition.current = el.scrollTop; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              if (upward && touchY.current === undefined && performance.now() - lastWheel.current > 200) gestureUsed.current = false;
+              reachEarlier(el, upward);
+            }}
+            onWheel={event => {
+              const now = performance.now(); if (now - lastWheel.current > 200) gestureUsed.current = false;
+              lastWheel.current = now; reachEarlier(event.currentTarget, event.deltaY < 0);
+            }}
+            onTouchStart={event => { touchY.current = event.touches[0]?.clientY; gestureUsed.current = false; }}
+            onTouchMove={event => {
+              const y = event.touches[0]?.clientY; const previous = touchY.current; touchY.current = y;
+              reachEarlier(event.currentTarget, y !== undefined && previous !== undefined && y > previous);
+            }}
+            onTouchEnd={() => { touchY.current = undefined; }} onTouchCancel={() => { touchY.current = undefined; }}
+            onKeyDown={event => {
+              if (event.target !== event.currentTarget || !['ArrowUp', 'PageUp', 'Home'].includes(event.key)) return;
+              if (!event.repeat) gestureUsed.current = false; reachEarlier(event.currentTarget, true);
+            }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && t('conversation.demoNote')}</p></div>
+            <div className="history-status" role="status">{historyError ? t('conversation.historyFailed') : loading && messages.length > 0 ? t('conversation.loadingEarlier') : null}</div>
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />{t('conversation.loading')}</div>}
-            {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
+            {!loading && !historyError && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
             {/* The wire history does not say that the last assistant message summarizes its predecessors.
                 Keep every received answer visible; only explicit tool details are collapsible. */}
             {rows.map(row => <ConversationRow key={`${session.id}:${row.key}`} row={row} running={turnRunning} agents={scopedAgents} client={clientRef.current} sessionId={session.id} connected={connected} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}

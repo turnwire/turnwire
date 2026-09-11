@@ -334,8 +334,10 @@ try {
   await page.locator('.topbar button[aria-controls="session-sidebar"]').click();
   await page.locator('.session-row').filter({ hasText: 'Question check' }).click();
   // Latest bounded history can omit the turn boundary; do not guess from catalog timestamps.
+  await expect(page.locator('.inline-child').first()).toBeVisible();
+  await expect(page.locator('.conversation .loading')).toHaveCount(0);
   await expect(page.locator('.agent-strip')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Load earlier records' }).click();
+  await page.locator('.conversation').evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true })); });
   await expect(stripToggle).toHaveAttribute('aria-expanded', 'false');
   await stripToggle.click();
   await expect(page.locator('.agent-item')).toHaveCount(3);

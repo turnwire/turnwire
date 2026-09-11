@@ -1,28 +1,22 @@
-/**
- * Pages a reader may pull in by holding the conversation at its oldest record. The manual
- * control stays available past the bound; this only caps what one gesture fetches over the
- * encrypted mobile link, where a single page can already reach 512 KiB.
- */
-export const HISTORY_AUTO_PAGES = 10;
-/** Distance in pixels from the oldest loaded record that counts as "the reader wants earlier records". */
+/** Distance from the oldest loaded record at which an upward reach requests one page. */
 export const HISTORY_TOP_THRESHOLD = 120;
 
 export interface EarlierLoadState {
-  /** Scroll offset of the conversation container. */
   scrollTop: number;
-  /** Cursor for the next older page; null once the session's first record is loaded. */
   before: number | null;
-  /** A history request is already in flight. */
   loading: boolean;
-  /** The last history request failed and waits for an explicit retry. */
-  failed: boolean;
-  /** Pages this session already pulled in automatically. */
-  pages: number;
-  /** Overrides the automatic bound. */
-  limit?: number;
+  /** A deliberate upward scroll or a fresh wheel/touch/keyboard gesture, not layout. */
+  upward: boolean;
+  /** The initial page may be retried even though it has not supplied a cursor yet. */
+  initialFailed?: boolean;
 }
 
-/** True when reaching the top should silently load the next older page. */
+/** One bounded request per upward reach; no lifetime cap and no render-driven draining. */
 export function shouldLoadEarlier(state: EarlierLoadState): boolean {
-  return state.before !== null && !state.loading && !state.failed && state.scrollTop < HISTORY_TOP_THRESHOLD && state.pages < (state.limit ?? HISTORY_AUTO_PAGES);
+  return (state.before !== null || state.initialFailed === true) && !state.loading && state.upward && state.scrollTop < HISTORY_TOP_THRESHOLD;
+}
+
+/** Preserve the same viewport-relative content position after a prepend. */
+export function prependScrollTop(old: { height: number; top: number }, height: number): number {
+  return old.top + height - old.height;
 }
