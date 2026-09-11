@@ -168,7 +168,7 @@ try {
   await expect(delegate).toHaveAttribute('data-auto-approve', 'off');
   await expect(delegate).toHaveAccessibleName('Approve for me');
   await expect(page.locator('.composer-bottom .approval-mode')).toHaveCount(1);
-  await expect(delegate).toHaveText('');
+  await expect(delegate).toHaveText('Auto-approve');
   await expect(delegate).toBeEnabled();
   await delegate.click();
   await expect(delegate).toHaveAttribute('aria-checked', 'true');
