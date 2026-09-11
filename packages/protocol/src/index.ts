@@ -1,13 +1,16 @@
 import { z } from 'zod';
 import { pushSubscriptionSchema, clientHelloSchema, serverHelloSchema, sessionPayloadSchema } from './connection.js';
 export * from './connection.js';
+export * from './images.js';
+import { imageInputSchema, imageAttachmentSchema, MAX_IMAGES, MAX_TOTAL_IMAGE_BYTES, MAX_IMAGE_TEXT_LENGTH, MAX_IMAGE_CHUNK_LENGTH, MAX_IMAGE_BASE64_LENGTH, base64Bytes } from './images.js';
 
 export const PROTOCOL_VERSION = 1 as const;
 export const idSchema = z.string().min(1).max(200);
 export const statusSchema = z.enum(['idle', 'running', 'waiting_approval', 'interrupted', 'error']);
 export type SessionStatus = z.infer<typeof statusSchema>;
-export const capabilitiesSchema = z.object({ approvals: z.boolean(), streaming: z.boolean(), resume: z.boolean(), shell: z.boolean(), diff: z.boolean(), fileEdits: z.boolean(), toolCalls: z.boolean(), backgroundTasks: z.boolean(), modelSelection: z.boolean() });
-export type RuntimeCapabilities = z.infer<typeof capabilitiesSchema>;
+export const capabilitiesSchema = z.object({ approvals: z.boolean(), streaming: z.boolean(), resume: z.boolean(), shell: z.boolean(), diff: z.boolean(), fileEdits: z.boolean(), toolCalls: z.boolean(), backgroundTasks: z.boolean(), modelSelection: z.boolean(), imageInput: z.boolean().optional().default(false) });
+/** Capability advertisement only, not a guarantee that the selected model accepts images. */
+export type RuntimeCapabilities = Omit<z.infer<typeof capabilitiesSchema>, 'imageInput'> & { imageInput?: boolean };
 /** The model a session runs on. `reasoningEffort` is adapter-owned; absent means adapter default. */
 export const modelSelectionSchema = z.object({ provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict();
 export type ModelSelection = z.infer<typeof modelSelectionSchema>;
@@ -74,7 +77,7 @@ export type Question = z.infer<typeof questionSchema>;
 export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.created'), session: sessionSchema }),
   z.object({ type: z.literal('session.updated'), session: sessionSchema }),
-  z.object({ type: z.literal('message.user'), sessionId: idSchema, messageId: idSchema, text: z.string(),
+  z.object({ type: z.literal('message.user'), sessionId: idSchema, messageId: idSchema, text: z.string(), images: z.array(imageAttachmentSchema).max(MAX_IMAGES).optional(),
     /** True when a turn was already running, so this prompt waits behind it instead of interrupting. */
     queued: z.boolean().optional(),
     /** True when this prompt steered the turn that was already running instead of queueing behind it. */
@@ -149,7 +152,7 @@ export type SubagentHistoryPage = z.infer<typeof subagentHistoryPageSchema>;
 export const queueItemViewSchema = z.object({
   messageId: idSchema,
   target: z.enum(['next-turn', 'next-step']),
-  text: z.string(),
+  text: z.string(), images: z.array(imageAttachmentSchema).max(MAX_IMAGES).optional(),
 });
 export type QueueItemView = z.infer<typeof queueItemViewSchema>;
 /**
@@ -185,9 +188,15 @@ export const methodSchemas = {
   'session.resume': z.object({ sessionId: idSchema }).strict(),
   'session.rename': z.object({ sessionId: idSchema, title: z.string().trim().min(1).max(200) }).strict(),
   'session.archive': z.object({ sessionId: idSchema, archived: z.boolean() }).strict(),
-  'session.message': z.object({ sessionId: idSchema, text: z.string().trim().min(1).max(100_000),
+  'session.message': z.object({ sessionId: idSchema, text: z.string().max(100_000), images: z.array(imageInputSchema).min(1).max(MAX_IMAGES).optional(),
     /** Steer the running turn instead of waiting behind it; ignored semantics when no turn runs. */
-    steer: z.boolean().optional() }).strict(),
+    steer: z.boolean().optional() }).strict().superRefine((value, ctx) => {
+      if (!value.text.trim() && !value.images?.length) ctx.addIssue({ code: 'custom', message: 'A message requires text or images' });
+      if (value.images?.length && value.text.length > MAX_IMAGE_TEXT_LENGTH) ctx.addIssue({ code: 'custom', message: 'Image message text exceeds 16000 characters' });
+      if (value.images && value.images.reduce((sum, image) => sum + base64Bytes(image.data), 0) > MAX_TOTAL_IMAGE_BYTES) ctx.addIssue({ code: 'custom', message: 'Images exceed 512 KiB total' });
+    }).transform(value => ({ ...value, text: value.text.trim() })),
+  /** Read only: the attachment must already belong to this session's user history. */
+  'session.image': z.object({ sessionId: idSchema, attachmentId: idSchema, offset: z.number().int().nonnegative().max(MAX_IMAGE_BASE64_LENGTH).default(0), limit: z.number().int().min(1).max(MAX_IMAGE_CHUNK_LENGTH).default(MAX_IMAGE_CHUNK_LENGTH) }).strict(),
   'session.cancel': z.object({ sessionId: idSchema }).strict(),
   /** Change a prompt that has not run yet, addressed by the id the client already shows for it. */
   'session.queueAction': z.object({ sessionId: idSchema, messageId: idSchema, action: queueActionSchema }).strict(),
@@ -230,6 +239,10 @@ export const turnwireErrorCodes = [
   'HANDSHAKE_REUSED',
   'HOST_OFFLINE',
   'HTTP_ERROR',
+  'IMAGE_INPUT_UNSUPPORTED',
+  'IMAGE_NOT_FOUND',
+  'IMAGE_QUEUE_EDIT_UNSUPPORTED',
+  'INVALID_IMAGE',
   'INVALID_CIPHERTEXT',
   'INVALID_CURSOR',
   'INVALID_WORKSPACE',

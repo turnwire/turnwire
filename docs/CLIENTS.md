@@ -2,6 +2,8 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+[Image messages](IMAGES.md): PWA supports image selection/paste, prepared previews/removal and explicit sending; CLI/TUI use `send <session> [text] --image <path...>` through the SDK. Native code includes a local image picker and reference reads, but macOS compilation/live UI verification remains pending. Runtime `imageInput` advertises transport only: the selected model may reject images. History and text exports retain reference metadata, not embedded bytes. Images do not grant host-administration access.
+
 The PWA footer child list is limited to verified launches in the latest started human turn and their descendants. Queued and steer messages do not start another turn. A new human turn clears the old list; historical readers remain at their original transcript positions. If bounded history omits the turn boundary or launch receipt, the UI does not guess ownership; loading older records can restore it. DSH inactive includes persisted children whose execution activation has already been released, not necessarily live OS processes. Do not kill processes or delete history based on that flag.
 
 The [mobile presentation audit](MOBILE-AUDIT.md) records narrow-toolbar, short-viewport and touch-target fixes, browser coverage, and physical-device/focus/scroll limitations. Mobile approval mode remains in the existing composer toolbar; Stop is compact, model labels shrink before pinned actions, and long workspace paths preserve their leaf end.

@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { TurnwireError, errorResponse, methodSchemas, requestSchema } from '@turnwire/protocol';
+import { TurnwireError, errorResponse, methodSchemas, requestSchema, queueItemViewSchema, imageAttachmentSchema, MAX_IMAGES, MAX_IMAGE_BASE64_LENGTH, isCanonicalBase64, base64Bytes } from '@turnwire/protocol';
 import type { EventData, TurnwireEvent, Question, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData, WorkspaceEntry } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent } from '@turnwire/runtime';
 import { Store } from './store.js';
@@ -17,6 +17,8 @@ export class TurnwireCore {
   private locks = new Map<string, Promise<unknown>>();
   /** How prompts accepted while a turn was running were sent, until the runtime echoes them back. */
   private promptModes = new Map<string, 'queue' | 'steer'>();
+  /** Suppress incomplete echoes until the adapter supplies the durable refs. Contains no bytes. */
+  private imagePrompts = new Map<string, number>();
   /**
    * Prompts accepted behind a running turn, by message id. The journal records a prompt when the host
    * accepts it, which is where it was *written*; this is what lets the host say when the runtime
@@ -63,7 +65,7 @@ export class TurnwireCore {
     if (!parsed.success) return errorResponse(typeof (value as { id?: unknown })?.id === 'string' ? (value as { id: string }).id : 'invalid', parsed.error);
     const request = parsed.data;
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
-    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'subagent.history' || request.method === 'session.queue' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
+    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'subagent.history' || request.method === 'session.queue' || request.method === 'session.image' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
       try { return { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; } catch (error) { return errorResponse(request.id, error); }
     }
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: request.method, params: request.params, ...(request.method.startsWith('notifications.') ? { clientId: context?.clientId } : {}) })).digest('hex');
@@ -94,10 +96,26 @@ export class TurnwireCore {
         return request.method === 'notifications.subscribe' ? this.notifications.subscribe(context.clientId, methodSchemas['notifications.subscribe'].parse(request.params)) : this.notifications.unsubscribe(context.clientId);
       }
       case 'history.page': { const p = methodSchemas['history.page'].parse(request.params); this.session(p.sessionId); return this.store.history(p.sessionId, p.limit, p.before); }
+      case 'session.image': {
+        const p = methodSchemas['session.image'].parse(request.params);
+        const session = this.session(p.sessionId);
+        const known = this.store.imageAttachment(session.id, p.attachmentId);
+        if (!known) throw new TurnwireError('IMAGE_NOT_FOUND', 'Image does not belong to this session');
+        const runtime = this.runtime(session.runtimeId);
+        if (!runtime.readImage) throw new TurnwireError('IMAGE_INPUT_UNSUPPORTED', 'This runtime cannot read images');
+        const result = await runtime.readImage(session.runtimeSessionId, p.attachmentId);
+        const attachment = imageAttachmentSchema.parse(result.attachment);
+        if (attachment.attachmentId !== known.attachmentId || attachment.mediaType !== known.mediaType || attachment.bytes !== known.bytes || attachment.width !== known.width || attachment.height !== known.height) throw new TurnwireError('INVALID_IMAGE', 'Runtime image metadata does not match this session reference');
+        if (typeof result.data !== 'string' || result.data.length > MAX_IMAGE_BASE64_LENGTH || !isCanonicalBase64(result.data) || base64Bytes(result.data) !== attachment.bytes) throw new TurnwireError('INVALID_IMAGE', 'Runtime returned invalid or oversized image data');
+        if (p.offset > result.data.length) throw new TurnwireError('INVALID_CURSOR', 'Image offset exceeds image size');
+        const data = result.data.slice(p.offset, p.offset + p.limit);
+        const end = p.offset + data.length;
+        return { attachment, data, offset: p.offset, nextOffset: end < result.data.length ? end : null };
+      }
       case 'session.queue': {
         const p = methodSchemas['session.queue'].parse(request.params);
         const session = this.session(p.sessionId); const runtime = this.runtime(session.runtimeId);
-        const items = runtime.listQueue ? await runtime.listQueue(session.runtimeSessionId) : [];
+        const items = queueItemViewSchema.array().parse(runtime.listQueue ? await runtime.listQueue(session.runtimeSessionId) : []);
         // A runtime keeps its inbox entry around after it has picked the prompt up, so a prompt the
         // host has already announced as started is filtered out here: it belongs to the transcript
         // now, and it is not something a reader can still take back.
@@ -175,6 +193,8 @@ export class TurnwireCore {
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId);
           this.requireActive(session);
+          const runtime = this.runtime(session.runtimeId);
+          if (p.images?.length && !runtime.capabilities().imageInput) throw new TurnwireError('IMAGE_INPUT_UNSUPPORTED', 'This runtime does not support image input');
           if (session.status === 'interrupted' || session.status === 'error') throw new TurnwireError('RESUME_REQUIRED', 'Resume this session before sending a message');
           // The runtime queues a prompt sent during a turn instead of interrupting it, so record which
           // happened: a client can then say so instead of leaving the user to guess.
@@ -184,8 +204,16 @@ export class TurnwireCore {
           // still in flight, and that echo is the message the journal keeps.
           if (running) this.promptModes.set(request.id, mode);
           if (running && mode === 'queue') this.waiting.set(request.id, { sessionId: session.id, started: false });
-          await this.runtime(session.runtimeId).sendMessage(session.runtimeSessionId, { id: request.id, text: p.text, ...(p.steer ? { steer: true } : {}) });
-          this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(running ? (mode === 'steer' ? { steer: true } : { queued: true }) : {}) }, `${session.id}:user:${request.id}`);
+          if (p.images?.length) this.imagePrompts.set(`${session.id}:${request.id}`, p.images.length);
+          try {
+            const returned = await runtime.sendMessage(session.runtimeSessionId, { id: request.id, text: p.text, ...(p.images ? { images: p.images } : {}), ...(p.steer ? { steer: true } : {}) });
+            const images = returned ? imageAttachmentSchema.array().max(MAX_IMAGES).parse(returned) : this.store.userImages(session.id, request.id);
+            if (p.images?.length && images.length !== p.images.length) throw new TurnwireError('OUTCOME_UNKNOWN', 'Runtime accepted image prompt without durable image references; check session history before resending');
+            this.publish({ type: 'message.user', sessionId: session.id, messageId: request.id, text: p.text, ...(images.length ? { images } : {}), ...(running ? (mode === 'steer' ? { steer: true } : { queued: true }) : {}) }, `${session.id}:user:${request.id}`);
+          } catch (error) {
+            this.promptModes.delete(request.id); this.waiting.delete(request.id);
+            throw error;
+          } finally { this.imagePrompts.delete(`${session.id}:${request.id}`); }
           // The client is told which of the two happened, so it can put the prompt where it belongs
           // before the event stream catches up: a queued prompt belongs above the composer, not in
           // the flow, and waiting for a queue read to move it leaves it visible in the wrong place.
@@ -211,6 +239,7 @@ export class TurnwireCore {
           // would erase a prompt that is being answered right now from every client. The host knows
           // when it started, so that answer is the honest one.
           if (this.waiting.get(p.messageId)?.started) throw new TurnwireError('QUEUE_ITEM_STARTED', 'That prompt has already started running and cannot be taken back');
+          if (p.action.kind === 'edit' && (this.store.userImages(session.id, p.messageId).length || (await runtime.listQueue?.(session.runtimeSessionId))?.some(item => item.messageId === p.messageId && item.images?.length))) throw new TurnwireError('IMAGE_QUEUE_EDIT_UNSUPPORTED', 'Image-bearing queued prompts cannot be edited; remove and resend instead');
           await queueAction(session.runtimeSessionId, p.messageId, p.action);
           // The journal recorded the prompt as it was first sent. An edit or a steer would otherwise
           // leave the transcript describing a prompt that is not the one that ran, and a removal
@@ -431,6 +460,14 @@ export class TurnwireCore {
     // A selection made anywhere in the Host (including its own Web UI) arrives here and
     // becomes the session's recorded model.
     if (event.type === 'model.selected') { this.update(sessionId, { model: event.selection }); return; }
+    if (event.type === 'message.user') {
+      const parsed = imageAttachmentSchema.array().max(MAX_IMAGES).safeParse(event.images ?? []);
+      const expected = this.imagePrompts.get(`${sessionId}:${event.messageId}`);
+      if (!parsed.success) { this.publish({ type: 'session.error', sessionId, message: 'Runtime returned invalid image references' }); return; }
+      if (expected && parsed.data.length !== expected) return;
+      // Construct explicitly: runtime input fields must never leak bytes into the journal.
+      event = { type: 'message.user', messageId: event.messageId, text: event.text, ...(parsed.data.length ? { images: parsed.data } : {}) };
+    }
     // The runtime echo is what the journal keeps, so how the prompt was sent has to ride on it.
     const mode = event.type === 'message.user' ? this.promptModes.get(event.messageId) : undefined;
     if (event.type === 'message.user') this.promptModes.delete(event.messageId);

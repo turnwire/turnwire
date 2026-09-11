@@ -1,0 +1,43 @@
+// Run on demand: node tests/image-input.browser.mjs (isolated source fixture, no product build).
+import { createServer } from 'vite';
+import react from '@vitejs/plugin-react';
+import { chromium, expect } from '@playwright/test';
+import { resolve } from 'node:path';
+const root = resolve(import.meta.dirname, '..');
+const server = await createServer({ configFile: false, root, optimizeDeps: { include: ['react', 'react-dom/client', 'zod'] }, plugins: [react(), { name: 'image-fixture', configureServer(server) { server.middlewares.use('/image-fixture', (_req, res) => { res.setHeader('content-type', 'text/html'); res.setHeader('Content-Security-Policy', "img-src 'self' data:"); res.end('<div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh"; RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => type => type; window.__vite_plugin_react_preamble_installed__ = true;</script><script type="module" src="/tests/fixtures/image-input.tsx"></script>'); }); } }], resolve: { alias: { '@turnwire/sdk': resolve(root, 'packages/sdk/src/index.ts'), '@turnwire/protocol': resolve(root, 'packages/protocol/src/index.ts') } }, server: { host: '127.0.0.1', port: 0 } });
+await server.listen();
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
+const errors = []; page.on('pageerror', error => errors.push(error.message));
+const image = { name: 'tiny.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6R9sAAAAASUVORK5CYII=', 'base64') };
+try {
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/image-fixture`);
+  const input = page.locator('input[type=file]'); const previews = page.locator('.image-draft img');
+  await expect(input).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp,image/gif');
+  await expect(page.locator('.image-draft-strip')).toHaveCount(0);
+  const chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: 'Attach images' }).click(); await (await chooser).setFiles(image);
+  await expect(previews).toHaveCount(1);
+  await page.getByRole('button', { name: 'Remove image tiny.png' }).click(); await expect(previews).toHaveCount(0);
+  await input.setInputFiles(image); await expect(previews).toHaveCount(1);
+  await page.evaluate(() => { window.fixture.fail = true; });
+  await page.getByRole('button', { name: 'Send', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('Fixture RPC failure'); await expect(previews).toHaveCount(1);
+  expect(await page.evaluate(() => window.fixture.calls.at(-1))).toMatchObject({ method: 'session.message', text: '', images: [{ mediaType: 'image/png' }] });
+  await page.evaluate(() => { window.fixture.fail = false; }); await page.getByRole('button', { name: 'Send', exact: true }).click(); await expect(previews).toHaveCount(0);
+  await input.setInputFiles([image, image, image]); await expect(page.getByRole('alert')).toContainText('at most 2'); await expect(previews).toHaveCount(0);
+  await input.setInputFiles({ name: 'bad.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg/>') }); await expect(page.getByRole('alert')).toContainText('SVG');
+  await input.setInputFiles({ name: 'huge.png', mimeType: 'image/png', buffer: Buffer.alloc(10 * 1024 * 1024 + 1) }); await expect(page.getByRole('alert')).toContainText('10 MiB');
+  const wide = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 2000; canvas.height = 100; canvas.getContext('2d').fillRect(0, 0, 2000, 100); return canvas.toDataURL('image/png').split(',')[1]; });
+  await input.setInputFiles({ name: 'wide.png', mimeType: 'image/png', buffer: Buffer.from(wide, 'base64') }); await expect(previews).toHaveCount(1);
+  await expect(page.locator('.image-feedback[role=status]')).toContainText('resized or compressed');
+  expect(await previews.evaluate(img => img.naturalWidth)).toBeLessThanOrEqual(1600);
+  await page.getByRole('textbox').fill('x'.repeat(16001)); await page.getByRole('button', { name: 'Send', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('16,000');
+  await page.getByRole('button', { name: 'Switch session' }).click(); await expect(previews).toHaveCount(0); await expect(page.getByRole('textbox')).toHaveValue('');
+  await page.getByRole('button', { name: 'Switch session' }).click(); await expect(previews).toHaveCount(0);
+  await page.getByRole('textbox').evaluate((node, b64) => { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); const clipboardData = new DataTransfer(); clipboardData.items.add(new File([bytes], 'pasted.png', { type: 'image/png' })); node.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true })); }, image.buffer.toString('base64'));
+  await expect(previews).toHaveCount(1);
+  await page.getByRole('button', { name: 'Show received' }).click(); await expect(page.locator('.received-image img')).toHaveAttribute('src', /^data:image\/png;base64,/); expect(await page.locator('.received-image img').evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+  await page.getByRole('button', { name: 'Unsupported runtime' }).click(); await page.getByRole('button', { name: 'Send', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('does not support image transport'); await expect(previews).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+  console.log('Image browser fixture passed: picker, image-only, removal, RPC failure preservation, limits/types, paste, session reset, lazy received data URL, unsupported feedback, mobile width.');
+} finally { await browser.close(); await server.close(); }

@@ -3,7 +3,7 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { eventSessionId, historyKey, reduceHistory } from '@turnwire/protocol';
 import type { HistoryPage } from '@turnwire/protocol';
-import type { Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session } from '@turnwire/protocol';
+import type { ImageAttachment, Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session } from '@turnwire/protocol';
 
 export class Store {
   readonly db: DatabaseSync;
@@ -50,6 +50,15 @@ export class Store {
       ? this.db.prepare('SELECT seq,time,body FROM events WHERE seq>? AND session_id=? ORDER BY seq LIMIT ?').all(after, sessionId, limit)
       : this.db.prepare('SELECT seq,time,body FROM events WHERE seq>? ORDER BY seq LIMIT ?').all(after, limit);
     return rows.map(row => ({ seq: Number(row.seq), time: String(row.time), data: JSON.parse(row.body as string) as EventData }));
+  }
+  /** Only durable user-event refs authorize native reads; never accept raw runtime IDs or URLs. */
+  imageAttachment(sessionId: string, attachmentId: string): ImageAttachment | undefined {
+    const row = this.db.prepare("SELECT image.value AS image FROM events, json_each(events.body, '$.images') AS image WHERE events.session_id=? AND json_extract(events.body,'$.type')='message.user' AND json_extract(image.value,'$.attachmentId')=? LIMIT 1").get(sessionId, attachmentId);
+    return row ? JSON.parse(String(row.image)) as ImageAttachment : undefined;
+  }
+  userImages(sessionId: string, messageId: string): ImageAttachment[] {
+    const row = this.db.prepare("SELECT body FROM events WHERE session_id=? AND json_extract(body,'$.type')='message.user' AND json_extract(body,'$.messageId')=? LIMIT 1").get(sessionId, messageId);
+    return row ? (JSON.parse(String(row.body)).images ?? []) : [];
   }
   private project(event: TurnwireEvent) {
     const key = historyKey(event); if (!key) return;

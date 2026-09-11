@@ -329,6 +329,19 @@ try {
   await expect(modelButtons).toHaveCount(entries.length);
   await expect(picker.getByRole('alert')).toHaveCount(0);
 
+  // The checked-in bridge route is text-only by runtime configuration. Select an actual
+  // catalog entry, never an invented model, and prove image rejection preserves the draft.
+  const bridgeGroup = catalog.groups.find(group => group.id === 'bridge');
+  if (bridgeGroup?.models.length && catalog.routableProviders.includes(bridgeGroup.id)) {
+    await modelButton(bridgeGroup.id, bridgeGroup.models[0].id).click();
+    await expect(picker).toHaveCount(0);
+    await page.locator('input[type=file]').setInputFiles({ name: 'pixel.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5uoAAAAASUVORK5CYII=', 'base64') });
+    await expect(page.locator('.image-draft')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect(page.locator('.error-banner')).toContainText(/does not support image/i);
+    await expect(page.locator('.image-draft')).toHaveCount(1);
+    console.log('Actual DSH text-only route rejected image before inference and preserved draft.');
+  }
   expect(errors).toEqual([]);
   console.log('UI model checks passed: mobile sidebar inert/open-close focus and desktop availability, catalog loading/initial failure/stale failure/retry, delayed selection preserves composer focus, long default wrapping,  phone geometry, runtime-grouped list without search input, checked current model, Escape focus restoration, pending duplicate lock, inline failure/retry, success closes, runtime effort options where available, selection survives reload.');
 } catch (error) {

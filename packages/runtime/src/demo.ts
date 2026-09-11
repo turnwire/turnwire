@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, QueueAction, QueueItemView, QuestionAnswerItem, RuntimeCapabilities } from '@turnwire/protocol';
+import type { ImageAttachment, ImageInput, ApprovalDecision, QueueAction, QueueItemView, QuestionAnswerItem, RuntimeCapabilities } from '@turnwire/protocol';
 import { TurnwireError } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from './index.js';
 
@@ -22,7 +22,7 @@ export class DemoRuntime implements AgentRuntime {
   lastAnswers: QuestionAnswerItem[] = [];
   /** Replies a tool run still owes, so stopping the turn stops the answer it was going to give. */
   private replies = new Map<string, ReturnType<typeof setTimeout>>();
-  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: true, backgroundTasks: false, modelSelection: false }; }
+  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: false, diff: false, fileEdits: false, toolCalls: true, backgroundTasks: false, modelSelection: false, imageInput: false }; }
   async health() { return { online: true, message: 'Offline demo: runs no code and calls no model' }; }
   async createSession(options: { id: string; cwd: string }) { const session: RuntimeSession = { ...options, status: 'idle' }; this.sessions.set(session.id, session); return session; }
   async resumeSession(options: { id: string; cwd: string }) { return this.sessions.get(options.id) ?? this.createSession(options); }
@@ -37,7 +37,8 @@ export class DemoRuntime implements AgentRuntime {
     // Steering takes the prompt out of the queue and into the turn that is already running.
     if (action.kind === 'steer') this.answer(sessionId, item!.text);
   }
-  async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }) {
+  async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean; images?: ImageInput[] }): Promise<void | ImageAttachment[]> {
+    if (input.images?.length) throw new TurnwireError('IMAGE_INPUT_UNSUPPORTED', 'Demo runtime does not support image input');
     this.emit(sessionId, { type: 'message.user', messageId: input.id, text: input.text });
     // A prompt that arrives while a turn is going waits behind it, unless it steers that turn.
     if (input.steer !== true && this.running(sessionId)) {

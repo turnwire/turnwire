@@ -5,7 +5,8 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
-import { eventSessionId, tunnelProviderSchema } from '@turnwire/protocol';
+import { eventSessionId, tunnelProviderSchema, methodSchemas, MAX_IMAGE_TEXT_LENGTH } from '@turnwire/protocol';
+import { readImageInputs, imageSummary } from './images.js';
 import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { safe, printRemote, printPairing, remoteMenu, runTui, deploymentMenu, watchDeployment, directMenu, notificationsMenu } from './terminal.js';
 import { detectLocale, isLocale, localeFromArgv, localizedError, padEnd, setLocale, t, textIn } from './i18n.js';
@@ -151,7 +152,7 @@ program.command('history <session>').description(t('command.history'))
   .action((sessionId: string, options: { before?: number; limit: number; all?: boolean }) => withClient(async c => {
     const page = options.all ? { events: await loadHistory(c, sessionId), hasMore: false, nextBefore: null } : await loadHistoryPage(c, sessionId, options.before, options.limit);
     if (program.opts().json) print(page);
-    else { for (const message of conversation(page.events, sessionId)) console.log(`\n${safe(message.tool ?? message.role)}${message.steer ? t('history.steer') : message.queued ? t('history.queued') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text)}`);
+    else { for (const message of conversation(page.events, sessionId)) console.log(`\n${safe(message.tool ?? message.role)}${message.steer ? t('history.steer') : message.queued ? t('history.queued') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text + imageSummary(message.images))}`);
       if (page.hasMore) console.log('\n' + t('history.earlier', { session: sessionId, cursor: page.nextBefore ?? '' }));
     }
   }));
@@ -160,8 +161,24 @@ program.command('export <session>').description(t('command.export')).requiredOpt
   const messages = conversation(await loadHistory(c, sessionId), sessionId); const path = resolve(options.output);
   await writeFile(path, transcriptMarkdown(session, messages), { flag: 'wx', mode: 0o600 }); print({ path });
 }));
-program.command('send <session> <prompt>').description(t('command.send')).option('--steer', t('option.steer'))
-  .action((sessionId: string, text: string, options: { steer?: boolean }) => withClient(async c => print(await c.request('session.message', { sessionId, text, ...(options.steer ? { steer: true } : {}) }))));
+program.command('send <session> [text]').description(t('command.send')).option('--steer', t('option.steer'))
+  .option('--image <path...>', t('option.image'), (path: string, previous: string[]) => [...previous, path], [])
+  .action(async (sessionId: string, text: string | undefined, options: { steer?: boolean; image: string[] }) => {
+    if (!text?.trim() && !options.image.length) throw new Error(t('images.empty'));
+    if (options.image.length && (text ?? '').length > MAX_IMAGE_TEXT_LENGTH) throw new Error(t('images.text'));
+    const images = await readImageInputs(options.image);
+    const params = { sessionId, text: text ?? '', ...(images.length ? { images } : {}), ...(options.steer ? { steer: true } : {}) };
+    methodSchemas['session.message'].parse(params);
+    await withClient(async c => {
+      if (images.length) {
+        const snapshot = await c.request<Snapshot>('system.snapshot');
+        const session = snapshot.sessions.find(s => s.id === sessionId);
+        if (!session) throw localizedError('SESSION_NOT_FOUND');
+        if (!snapshot.runtimes.find(runtime => runtime.id === session.runtimeId)?.capabilities.imageInput) throw new Error(t('images.unsupported'));
+      }
+      print(await c.request('session.message', params));
+    });
+  });
 program.command('resume <session>').description(t('command.resume')).action((sessionId: string) => withClient(async c => print(await c.request('session.resume', { sessionId }))));
 program.command('stop <session>').description(t('command.stop')).action((sessionId: string) => withClient(async c => print(await c.request('session.cancel', { sessionId }))));
 program.command('result <id>').description(t('command.result')).action((requestId: string) => withClient(async c => print(await c.request('request.result', { requestId }))));
@@ -193,7 +210,7 @@ program.command('attach <session>').description(t('command.attach')).action(asyn
   const page = await loadHistoryPage(c, sessionId); const history = page.events;
   if (page.hasMore && !program.opts().json) console.log(t('history.earlier', { session: sessionId, cursor: page.nextBefore ?? '' }));
   if (program.opts().json) for (const event of history) print(event);
-  else for (const message of conversation(history, sessionId)) console.log(`\n${message.role === 'user' ? t('role.you') : message.role === 'tool' ? message.tool : message.role === 'error' ? t('role.error') : message.role === 'question' ? t('role.question') : t('role.assistant')}${message.isError ? t('history.failed') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text)}${message.role === 'question' && message.question?.answers?.length ? `\n${t('history.answered')}: ${safe(message.question.answers.map(entry => [...entry.selected, ...(entry.custom ? [entry.custom] : [])].join(', ')).join(' · '))}` : ''}`);
+  else for (const message of conversation(history, sessionId)) console.log(`\n${message.role === 'user' ? t('role.you') : message.role === 'tool' ? message.tool : message.role === 'error' ? t('role.error') : message.role === 'question' ? t('role.question') : t('role.assistant')}${message.isError ? t('history.failed') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text + imageSummary(message.images))}${message.role === 'question' && message.question?.answers?.length ? `\n${t('history.answered')}: ${safe(message.question.answers.map(entry => [...entry.selected, ...(entry.custom ? [entry.custom] : [])].join(', ')).join(' · '))}` : ''}`);
   const rendered = new Map(conversation(history, sessionId).map(m => [m.id, m.text]));
   const cursor = page.cursor;
   const unsubscribe = c.subscribe((event: TurnwireEvent) => {
@@ -204,7 +221,7 @@ program.command('attach <session>').description(t('command.attach')).action(asyn
     if (program.opts().json) { print(event); return; }
     if (d.type === 'message.delta') { const prior = rendered.get(d.messageId) ?? ''; if (!rendered.has(d.messageId)) process.stdout.write(`\n${t('role.assistant')}\n`); process.stdout.write(safe(d.text)); rendered.set(d.messageId, prior + d.text); }
     if (d.type === 'message.completed') { const prior = rendered.get(d.messageId) ?? ''; console.log(safe(d.text.startsWith(prior) ? d.text.slice(prior.length) : d.text)); rendered.set(d.messageId, d.text); }
-    if (d.type === 'message.user') console.log(`\n${t('role.you')}\n${safe(d.text)}`);
+    if (d.type === 'message.user') console.log(`\n${t('role.you')}\n${safe(d.text + imageSummary(d.images))}`);
     if (d.type === 'approval.requested') console.log(t('attach.approval', { tool: safe(d.approval.tool), reason: safe(d.approval.reason), id: d.approval.id }));
     if (d.type === 'tool.started') console.log(`\n▶ ${safe(d.tool)}\n${safe(d.detail)}`);
     if (d.type === 'tool.finished') console.log(`\n${d.isError ? '✗' : '↳'} ${safe(d.tool)}\n${safe(d.detail)}`);

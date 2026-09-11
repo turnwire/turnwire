@@ -1,0 +1,17 @@
+.composer { position: relative; }
+.composer .image-picker { position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; padding: 4px; display: grid; place-items: center; border: 0; background: transparent; color: inherit; opacity: .75; }
+.composer textarea[aria-label] { padding-right: 44px; }
+.image-draft-strip, .message-images { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.image-draft-strip { padding: 0 12px; }
+.image-draft-strip small { flex: 1; min-width: 140px; font-size: 11px; opacity: .7; }
+.image-draft { position: relative; }
+.image-draft img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; display: block; }
+.image-draft button { position: absolute; top: -5px; right: -5px; border-radius: 50%; width: 23px; height: 23px; padding: 3px; display: grid; place-items: center; }
+.image-feedback { display: block; padding: 4px 12px; font-size: 12px; }
+.image-feedback[role=alert] { color: #d45c53; }
+.received-image { min-width: 90px; min-height: 48px; max-width: 100%; font-size: 12px; }
+.received-image img { display: block; max-width: min(280px, 100%); max-height: 240px; object-fit: contain; border-radius: 8px; }
+.received-image button { display: block; }
+.queued-item .message-images { flex-shrink: 0; }
+.queued-item .received-image { min-width: 40px; }
+.queued-item .received-image img { max-width: 64px; max-height: 64px; }

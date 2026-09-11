@@ -1,5 +1,5 @@
 import { subagentHistoryPageSchema, directStatusSchema, directConfigurationSchema, notificationStatusSchema } from '@turnwire/protocol';
-import type { DirectStatus, DirectConfiguration, NotificationStatus, Question } from '@turnwire/protocol';
+import type { DirectStatus, DirectConfiguration, NotificationStatus, Question, ImageAttachment } from '@turnwire/protocol';
 export { acceptClientHandshake, createClientHandshake, SessionChannel } from './session-crypto.js';
 export { retryDelay } from './retry.js';
 import { historyOrder, connectionPongSchema, eventSchema, TurnwireError, pairingSchema, responseSchema, remoteConfigurationSchema, remoteStatusSchema, pairedDeviceSchema, pairingResultSchema, pairDeviceSchema, revokeDeviceSchema, deploymentConfigSchema, deploymentStatusSchema } from '@turnwire/protocol';
@@ -10,6 +10,10 @@ export { HistoryBuffer } from '@turnwire/protocol';
 export type { HistoryPage } from '@turnwire/protocol';
 export { SecureChannel, secureMessage, randomSecret } from './crypto.js';
 export type ConnectionState = 'connecting' | 'connected' | 'offline';
+export type RpcClient = Pick<TurnwireClient, 'request'>;
+export { loadImage, sendImageMessage } from './images.js';
+export type { LoadImageArgs, SendImageMessageArgs } from './images.js';
+export type { ImageInput, ImageAttachment } from '@turnwire/protocol';
 export interface TurnwireClient {
   request<T = unknown>(method: Method, params?: unknown, id?: string): Promise<T>;
   subscribe(listener: (event: TurnwireEvent) => void, state?: (state: ConnectionState) => void, after?: number): () => void;
@@ -90,7 +94,9 @@ export function decodePairing(value: string): Pairing {
 }
 export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'error' | 'question'; text: string; time: string; tool?: string; complete: boolean; input?: string; output?: string; endedAt?: string; isError?: boolean; queued?: boolean; steer?: boolean;
   /** Set on a `question` row: what the agent asked, and what was answered. */
-  question?: Question; }
+  question?: Question;
+  /** Normalized image references only; image bytes are loaded explicitly with loadImage. */
+  images?: ImageAttachment[]; }
 export function conversation(events: TurnwireEvent[], sessionId: string): ConversationMessage[] {
   const messages = new Map<string, ConversationMessage>();
   for (const event of [...events].sort(historyOrder)) {
@@ -112,6 +118,10 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
     }
     // A prompt accepted while a turn was running waits behind it; keep that on the projection so every
     // client, and the exported transcript, can say so.
+    if (d.type === 'message.user' && d.images) {
+      const message = messages.get(d.messageId);
+      if (message) message.images = d.images.map(({ attachmentId, mediaType, bytes, width, height, name }) => ({ attachmentId, mediaType, bytes, width, height, ...(name === undefined ? {} : { name }) }));
+    }
     if (d.type === 'message.user' && d.queued) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, queued: true }); }
     if (d.type === 'message.user' && d.steer) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, steer: true }); }
     // A prompt that had not run yet can be changed or taken back after it was journaled; the
@@ -193,7 +203,7 @@ export function transcriptMarkdown(session: Session, messages: ConversationMessa
   for (const message of messages) {
     if (message.role === 'question') sections.push('## ' + text.question + '\n\n' + (message.question?.questions ?? []).map(item => item.question).join('\n') + '\n\n' + (message.question?.answers ?? []).map(answer => answer.selected.join(', ') + (answer.custom ? (answer.selected.length ? ' · ' : '') + answer.custom : '')).join('\n'));
     else     if (message.role === 'tool') sections.push('## ' + text.tool + ' · ' + message.tool + '\n\n### ' + text.input + '\n\n' + code(message.input ?? '') + '\n\n### ' + text.output + '\n\n' + code(message.output ?? text.pendingOutput));
-    else sections.push('## ' + (message.role === 'user' ? (message.steer ? text.steer : message.queued ? text.queued : text.you) : message.role === 'error' ? text.executionError : text.assistant) + '\n\n' + message.text);
+    else sections.push('## ' + (message.role === 'user' ? (message.steer ? text.steer : message.queued ? text.queued : text.you) : message.role === 'error' ? text.executionError : text.assistant) + '\n\n' + message.text + (message.images?.length ? '\n\n' + code(JSON.stringify({ images: message.images.map(({ attachmentId, mediaType, bytes, width, height, name }) => ({ attachmentId, mediaType, bytes, width, height, ...(name === undefined ? {} : { name }) })) }, null, 2)) : ''));
   }
   return sections.join('\n\n') + '\n';
 }

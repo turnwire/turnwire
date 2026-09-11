@@ -1,10 +1,10 @@
-import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
+import type { ImageInput, ImageAttachment, ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
 export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
 export type RuntimeEvent =
   | { type: 'status'; status: SessionStatus }
   | { type: 'message.delta' | 'message.completed'; messageId: string; text: string }
-  | { type: 'message.user'; messageId: string; text: string }
+  | { type: 'message.user'; messageId: string; text: string; images?: ImageAttachment[] }
   | { type: 'tool.started' | 'tool.finished'; callId: string; tool: string; detail: string; isError?: boolean }
   | { type: 'approval.requested'; requestId: string; tool: string; reason: string }
   | { type: 'approval.resolved'; requestId: string; decision: ApprovalDecision | 'cancelled' }
@@ -54,7 +54,10 @@ export interface AgentRuntime {
    * the returned selection rather than assuming the requested one.
    */
   setModel?(sessionId: string, selection: ModelSelection): Promise<ModelSelection>;
-  sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }): Promise<void>;
+  /** Image sends resolve only after durable native user refs are available; never return inline bytes. */
+  sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean; images?: ImageInput[] }): Promise<void | ImageAttachment[]>;
+  /** Core verifies the reference in the public session before invoking this native scoped read. */
+  readImage?(sessionId: string, attachmentId: string): Promise<{ attachment: ImageAttachment; data: string }>;
   cancel(sessionId: string): Promise<void>;
   approve(sessionId: string, requestId: string, decision: ApprovalDecision): Promise<void>;
   /** Answer a runtime's pending question batch. Present only when the runtime asks questions. */

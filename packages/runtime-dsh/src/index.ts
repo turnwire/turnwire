@@ -1,10 +1,10 @@
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { TurnwireError, modelCatalogSchema, modelSelectionSchema } from '@turnwire/protocol';
+import { TurnwireError, methodSchemas, imageAttachmentSchema, isCanonicalBase64, MAX_IMAGE_BASE64_LENGTH, modelCatalogSchema, modelSelectionSchema, type ImageInput, type ImageAttachment } from '@turnwire/protocol';
 import type { ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent, RuntimeSession } from '@turnwire/runtime';
-import { assistantId, compactText, mapEvent, record, wireEventSchema } from './mapper.js';
+import { assistantId, compactText, imageContent, mapEvent, record, wireEventSchema } from './mapper.js';
 export { mapEvent, compactText } from './mapper.js';
 import { historyPageSchema, historySnapshotSchema, historyRecords, liveHistoryRecord, type HistorySnapshot } from './history.js';
 
@@ -61,6 +61,7 @@ export class DshRuntime implements AgentRuntime {
   private questions = new Map<string, { sessionId: string; clientId: string }>();
   private childReads = new Map<string, { resolve: (snapshot: HistorySnapshot) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
   private childCuts = new Map<string, number>();
+  private imageSends = new Map<string, { sessionId: string; messageId: string; count: number; resolve: (images: ImageAttachment[]) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
   private clientId?: string;
   private lastError = 'DSH is not connected yet';
   constructor(private options: DshOptions) {
@@ -69,7 +70,7 @@ export class DshRuntime implements AgentRuntime {
     if (!['http:', 'https:'].includes(this.url.protocol)) throw new Error('DSH URL must use HTTP or HTTPS');
     if (this.url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(this.url.hostname)) throw new Error('Non-loopback DSH connections require HTTPS');
   }
-  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true }; }
+  capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true, imageInput: true }; }
   /**
    * Ask the Host for each followed session's direct children and count the running ones.
    * `subagents/list` is a live Session query, unlike the `subagent/start`/`subagent/end`
@@ -303,11 +304,40 @@ export class DshRuntime implements AgentRuntime {
     const session = this.sessions.get(sessionId); if (session) session.model = value.selected;
     return value.selected;
   }
-  async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean }) {
-    await this.connect(); this.follow(sessionId);
-    // `steer` joins the turn that is already running, `queue` waits behind it: that is the whole
-    // difference between interrupting the agent and adding to its backlog.
-    await this.rpc('session/prompt', { request: { requestId: input.id, sessionId, mode: input.steer ? 'steer' : 'queue', content: [{ type: 'text', text: input.text }] } });
+  async sendMessage(sessionId: string, input: { id: string; text: string; steer?: boolean; images?: ImageInput[] }): Promise<void | ImageAttachment[]> {
+    const validated = methodSchemas['session.message'].parse({ sessionId, text: input.text, images: input.images, steer: input.steer });
+    const images = validated.images ?? [];
+    await this.connect();
+    const key = JSON.stringify([sessionId, input.id]);
+    if (images.length && (this.imageSends.has(key) || this.imageSends.size >= 32)) throw new TurnwireError('RUNTIME_UNAVAILABLE', 'Too many pending image prompts or duplicate request');
+    let refs: Promise<ImageAttachment[]> | undefined;
+    if (images.length) {
+      refs = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.imageSends.delete(key);
+          reject(new TurnwireError('OUTCOME_UNKNOWN', 'Image prompt outcome unknown: durable references did not arrive; reconnect before retrying'));
+        }, 10_000);
+        this.imageSends.set(key, { sessionId, messageId: input.id, count: images.length, resolve, reject, timer });
+      });
+      // A prompt RPC can outlive the echo timeout. Handle that rejection immediately.
+      void refs.catch(() => {});
+    }
+    this.follow(sessionId);
+    try {
+      // The actual model's admission check is authoritative; never guess from a catalog cache.
+      const accepted = this.rpc('session/prompt', { request: { requestId: input.id, sessionId, mode: input.steer ? 'steer' : 'queue', content: [{ type: 'text', text: input.text }, ...images.map(image => ({ type: 'image', ...image }))] } });
+      if (refs) return (await Promise.all([accepted, refs]))[1];
+      await accepted;
+    } finally {
+      const pending = this.imageSends.get(key);
+      if (pending) { clearTimeout(pending.timer); this.imageSends.delete(key); pending.reject(new TurnwireError('RUNTIME_UNAVAILABLE', 'Image prompt did not complete')); }
+    }
+  }
+  async readImage(sessionId: string, attachmentId: string): Promise<{ attachment: ImageAttachment; data: string }> {
+    await this.connect();
+    const value = z.object({ attachment: imageAttachmentSchema.strip(), data: z.string().max(MAX_IMAGE_BASE64_LENGTH) }).parse(await this.rpc('session/attachment', { request: { sessionId, attachmentId } }));
+    if (value.attachment.attachmentId !== attachmentId || !isCanonicalBase64(value.data) || Buffer.from(value.data, 'base64').length !== value.attachment.bytes) throw new TurnwireError('RUNTIME_UNAVAILABLE', 'Invalid image attachment response');
+    return value;
   }
   async cancel(sessionId: string) { await this.connect(); await this.rpc('session/cancel', { request: { sessionId } }); }
   async approve(sessionId: string, requestId: string, decision: ApprovalDecision) {
@@ -444,8 +474,23 @@ export class DshRuntime implements AgentRuntime {
     }
   }
   private durable(id: string, event: z.infer<typeof wireEventSchema>) {
+    const mappedEvents = mapEvent(id, event);
+    // Admission is durable in the inbox before a busy agent consumes user/message.
+    // Observe replay behind the saved cursor too: retries still need the native refs.
+    const messages = event.type === 'user/message' ? [event.data] : event.type === 'agent/inbox/spliced' && Array.isArray(event.data.inserted) ? event.data.inserted.map(record) : [];
+    for (const message of messages) {
+      const source = record(message.source);
+      if (source.kind !== 'user' || typeof source.rpcId !== 'string') continue;
+      const key = JSON.stringify([id, source.rpcId]);
+      const pending = this.imageSends.get(key);
+      if (!pending) continue;
+      const images = imageContent(message.content);
+      clearTimeout(pending.timer); this.imageSends.delete(key);
+      if (images.length === pending.count) pending.resolve(images);
+      else pending.reject(new TurnwireError('OUTCOME_UNKNOWN', 'Image prompt accepted with incomplete references; reconnect before retrying'));
+    }
     const cursor = this.cursors.get(id) ?? this.options.readCursor?.(id) ?? -1; if (event.seq <= cursor) return;
-    for (const mapped of mapEvent(id, event)) this.emit(id, mapped);
+    for (const mapped of mappedEvents) this.emit(id, mapped);
     this.cursors.set(id, event.seq); this.options.saveCursor?.(id, event.seq);
   }
   private async remoteEvent(frame: Record<string, unknown>) {
@@ -479,6 +524,8 @@ export class DshRuntime implements AgentRuntime {
   private emit(id: string, event: RuntimeEvent) { if (event.type === 'model.selected') { const session = this.sessions.get(id); if (session) session.model = event.selection; } for (const listener of this.listeners.get(id) ?? []) listener(event); }
   private send(value: unknown) { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(value)); }
   private cancelPending() {
+    for (const pending of this.imageSends.values()) { clearTimeout(pending.timer); pending.reject(new TurnwireError('OUTCOME_UNKNOWN', 'DSH disconnected before image references arrived; reconnect before retrying')); }
+    this.imageSends.clear();
     for (const [id, pending] of this.pending) this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' });
     this.pending.clear();
     for (const [id, question] of this.questions) this.emit(question.sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' });
