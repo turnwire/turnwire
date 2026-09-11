@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { MessageBody, ToolCall } from './MessagePresentation';
 import { loadSubagentHistoryPage, type TurnwireClient } from '@turnwire/sdk';
 import type { SubagentHistoryPage } from '@turnwire/protocol';
 import { t, useLocale } from './i18n';
@@ -12,6 +13,7 @@ export function ChildExecution(props: ChildExecutionProps) {
 }
 function ExecutionWindow({ client, sessionId, subagentId, running, connected }: ChildExecutionProps) {
   useLocale();
+  const instanceId = useId();
   const [page, setPage] = useState<SubagentHistoryPage>();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -63,11 +65,12 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
     {error && <p role="alert">{t(page ? 'execution.stale' : 'execution.loadError', { error })} <button type="button" disabled={!connected || loading} onClick={() => setWindow(value => ({ ...value, revision: value.revision + 1 }))}>{t('execution.retry')}</button></p>}
     {loading && <p role="status">{t('execution.loading')}</p>}
     {page && !page.records.length && <p>{t('execution.empty')}</p>}
-    <div className="child-records" ref={viewport}>{page?.records.map(record => <article key={record.id} className={`child-record child-${record.role}`} data-record-id={record.id}>
-      {record.role === 'tool' ? <details><summary>{record.tool ?? t('tool.tool')} · {t(record.isError ? 'tool.failed' : record.complete ? 'execution.complete' : running && !older ? 'tool.running' : 'tool.noResult')}</summary>
-        <h5>{t('execution.input')}</h5><pre>{record.input ?? ''}</pre><h5>{t('tool.output')}</h5><pre>{record.output ?? (record.complete ? record.text : t(running && !older ? 'execution.pendingResult' : 'tool.noResult'))}</pre>
-      </details> : <><small>{t(`execution.role.${record.role}`)} · {record.time}{!record.complete && ` · ${t(running && !older ? 'execution.inProgress' : 'tool.noResult')}`}</small><div className="child-record-text">{record.text}</div></>}
-    </article>)}</div>
+    <div className="child-records" ref={viewport}>{page?.records.map(record => <div key={record.id} className={`child-record child-${record.role}`} data-record-id={record.id}>
+      {record.role === 'tool' ? <ToolCall message={{ ...record, input: record.input ?? '', output: record.output ?? (record.complete ? record.text : t(running && !older ? 'execution.pendingResult' : 'tool.noResult')) }} running={running && !older} /> : <MessageBody
+        message={{ ...record, id: `${instanceId}-${record.id}` }} userLabel={t('execution.role.user')} authorLabel={t(`execution.role.${record.role}`)}
+        streaming={!record.complete && running && !older} status={!record.complete ? t(running && !older ? 'execution.inProgress' : 'tool.noResult') : undefined}
+      />}
+    </div>)}</div>
     <div className="child-execution-actions">
       {page?.hasMore && page.nextBefore !== null && <button type="button" disabled={!connected || loading} onClick={() => { pendingScroll.current = 'older'; setWindow(value => ({ before: page.nextBefore!, cursor: page.cursor, revision: value.revision + 1 })); }}>{t('execution.older')}</button>}
       {older && <button type="button" disabled={!connected || loading} onClick={() => { pendingScroll.current = 'latest'; setWindow(value => ({ revision: value.revision + 1 })); }}>{t('execution.latestReset')}</button>}

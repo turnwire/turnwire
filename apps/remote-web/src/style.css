@@ -4,14 +4,19 @@
 .child-execution { display: grid; gap: 5px; min-width: 0; padding: 4px 0; font-size: 12px; line-height: 1.5; }
 .child-execution-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
 .child-execution-heading strong { font-size: 12px; font-weight: 600; }
-.child-execution-heading span, .child-execution > small, .child-record > small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.child-execution-heading span, .child-execution > small { color: var(--muted); font-size: 10px; line-height: 1.4; }
 .child-records { min-width: 0; max-height: 32dvh; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
-.child-record { border-top: 1px solid var(--line); padding: 6px 0; overflow-wrap: anywhere; }
-.child-record-text, .child-record pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
-.child-record-text { font-size: 12px; line-height: 1.5; }
-.child-record pre { font-size: 11px; line-height: 1.45; margin: 4px 0; max-height: 24dvh; overflow: auto; }
-.child-record summary, .agent-secondary-plan summary { cursor: pointer; font-size: 11px; line-height: 1.4; }
-.child-record h5 { margin: 5px 0 2px; font-size: 10px; font-weight: 600; color: var(--muted); }
+/* Compact conversation variant: retain shared message/Markdown/tool design, only reduce scale. */
+.child-record { min-width: 0; padding: 6px 0; overflow-wrap: anywhere; }
+.child-record .message { padding-bottom: 4px; margin: 0; }
+.child-record .message-author { gap: 6px; margin-bottom: 6px; font-size: 11px; flex-wrap: wrap; }
+.child-record .message-author img, .child-record .message-author .avatar { width: 18px; height: 18px; font-size: 8px; }
+.child-record .message-author time, .child-record .message-status { font-size: 10px; color: var(--muted); }
+.child-record .message-text { padding-left: 24px; font-size: 12px; line-height: 1.5; }
+.child-record .markdown-body { font-size: 12px; line-height: 1.5; }
+.child-record .tool-message { margin: 0 0 4px 24px; }
+.child-record .tool-message pre { font-size: 10.5px; line-height: 1.45; max-height: 24dvh; }
+.child-record .tool-message > summary, .agent-secondary-plan summary { cursor: pointer; font-size: 11px; line-height: 1.4; }
 .child-execution-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .child-execution button { font-size: 11px; line-height: 1.3; min-height: 30px; padding: 4px 8px; }
 .agent-dot[data-activity=inactive] { background: var(--muted); animation: none; }

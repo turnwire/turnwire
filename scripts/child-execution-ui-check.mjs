@@ -24,9 +24,23 @@ try {
   await assertLatestVisible();
   await expect(page.getByRole('button', { name: 'Refresh latest', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Return to latest (reset)', exact: true })).toHaveCount(0);
-  await page.getByText('read · Complete', { exact: true }).click();
+  const answer = page.locator('[data-record-id="answer"]');
+  await expect(answer.locator('.message.assistant .message-author img')).toHaveCount(1);
+  await expect(answer.locator('time')).toHaveCount(1);
+  await expect(answer.locator('.markdown-body h1')).toHaveText('Shared heading');
+  await expect(answer.locator('.markdown-body li')).toHaveCount(2);
+  await expect(answer.locator('.markdown-body pre code')).toContainText('const safe');
+  expect(await page.evaluate(() => window.childUnsafe)).toBeUndefined();
+  expect(await answer.locator('.markdown-body').evaluate(node => getComputedStyle(node).fontSize)).toBe('12px');
+  for (const selector of ['h1', 'li', 'pre code']) {
+    const styles = await page.locator(`.main-reference .markdown-body ${selector}`).first().evaluate(node => ({ font: getComputedStyle(node).fontFamily, color: getComputedStyle(node).color }));
+    expect(await answer.locator(`.markdown-body ${selector}`).first().evaluate(node => ({ font: getComputedStyle(node).fontFamily, color: getComputedStyle(node).color }))).toEqual(styles);
+  }
+  await expect(page.locator('[data-record-id="tool"] .tool-message')).not.toHaveAttribute('open');
+  await expect(page.locator('[data-record-id="tool"] .tool-status')).toHaveText('Returned');
+  await page.locator('[data-record-id="tool"] summary').click();
   await expect(page.getByText('actual tool output', { exact: true })).toBeVisible();
-  await expect(page.getByText('/workspace/example.ts', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-record-id="tool"] pre').first()).toHaveText('/workspace/example.ts');
   await page.locator('.agent-list').evaluate(node => { node.scrollTop = 20; });
   const readingPosition = await page.locator('.agent-list').evaluate(node => node.scrollTop);
   await page.evaluate(() => { window.fixture.version = 2; });
@@ -52,8 +66,12 @@ try {
   await expect(page.locator('.child-execution')).toBeVisible();
   await expect(page.locator('.agent-heading')).toHaveCount(0);
   await expect(page.getByText('Latest window · inactive (not necessarily finished)', { exact: true })).toBeVisible();
-  await expect(page.locator('[data-record-id="answer"] small')).toContainText('No result received');
-  await expect(page.locator('[data-record-id="answer"] small')).not.toContainText('In progress');
+  await expect(page.locator('[data-record-id="answer"] .message-status')).toContainText('No result received');
+  await expect(page.locator('[data-record-id="answer"] .message-status')).not.toContainText('In progress');
+  await expect(page.locator('.child-record .cursor')).toHaveCount(0);
+  await expect(page.locator('[data-record-id="pending"] .tool-status')).toHaveText('No result received');
+  await page.locator('[data-record-id="pending"] summary').click();
+  await expect(page.locator('[data-record-id="pending"] pre').last()).toHaveText('No result received');
   await row.click();
   await expect(row).toHaveCount(0);
   await expect(page.locator('.agent-strip')).toHaveCount(0);

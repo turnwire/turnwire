@@ -245,7 +245,7 @@ try {
   await expect(page.locator('.agent-meta')).toContainText('Can continue');
   const compact = await page.locator('.agent-detail').evaluate(detail => ({
     heading: getComputedStyle(detail.querySelector('.child-execution-heading strong')).fontSize,
-    body: getComputedStyle(detail.querySelector('.child-record-text')).fontSize,
+    body: getComputedStyle(detail.querySelector('.child-record .message-text')).fontSize,
     nestedScroll: getComputedStyle(detail).overflowY,
     recordsScroll: getComputedStyle(detail.querySelector('.child-records')).overflowY,
   }));

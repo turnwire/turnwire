@@ -7,7 +7,7 @@ import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, enc
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
 import { TurnwireError, eventSessionId, methodSchemas } from '@turnwire/protocol';
 import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
-import { MarkdownMessage } from './MarkdownMessage';
+import { MessageBody, ToolCall, ToolHeading } from './MessagePresentation';
 import { AgentStrip } from './AgentStrip';
 import { InlineChild } from './InlineChild';
 import { conversationRows, currentTurnChildren, launchChild, type ConversationRowData } from './inlineChild';
@@ -467,45 +467,6 @@ function ConnectionView({ initial, connecting, connected, onConnect, onDisconnec
   return <section className="connection-view"><div className="connection-intro"><div className="connection-symbol"><Laptop size={38} weight="light" /><span /><ChatCircle size={28} weight="light" /></div><span className="eyebrow">{t('connection.eyebrow')}</span><h1>{t('connection.title')}</h1><p>{t('connection.bodyLine1')}<br />{t('connection.bodyLine2')}</p><div className="connection-facts"><div><ShieldCheck size={18} /><span>{t('connection.factPermissions')}</span></div><div><TerminalWindow size={18} /><span>{t('connection.factLocal')}</span></div></div></div><form className="connection-form" onSubmit={(event: FormEvent) => { event.preventDefault(); onConnect(kind === 'local' ? { kind, url, token } : { kind, code }, remember); }}><h2>{t('connection.connectDevice')}</h2><div className="segmented"><button type="button" className={kind === 'remote' ? 'active' : ''} onClick={() => setKind('remote')}>{t('connection.remotePairing')}</button><button type="button" className={kind === 'local' ? 'active' : ''} onClick={() => setKind('local')}>{t('connection.localPairing')}</button></div>{kind === 'remote' ? <><label>{t('connection.pairingCode')}<textarea required value={code} onChange={e => setCode(e.target.value)} placeholder={t('connection.pairingPlaceholder')} rows={4} /></label><p className="field-help">{t('connection.pairingHelpBefore')}<code>turnwire devices pair</code>{t('connection.pairingHelpAfter')}</p></> : <><label>{t('connection.hostUrl')}<input type="url" required value={url} onChange={e => setUrl(e.target.value)} /></label><label>{t('connection.token')}<input type="password" required value={token} onChange={e => setToken(e.target.value)} autoComplete="off" placeholder={t('connection.tokenPlaceholder')} /></label><p className="field-help">{t('connection.connectHelpBefore')}<code>turnwire connect</code>{t('connection.connectHelpAfter')}</p></>}<label className="remember"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />{t('connection.remember')}</label><button className="primary wide" disabled={connecting}>{connecting ? <CircleNotch size={18} className="spin" /> : <Plug size={18} />}{connecting ? t('connection.connecting') : t('connection.connect')}<ArrowRight size={17} /></button>{connected && <div className="connection-actions"><button type="button" onClick={onBack}>{t('connection.back')}</button><button type="button" onClick={onDisconnect}>{t('connection.disconnect')}</button></div>}</form></section>;
 }
 
-/** The first line of a value, since a closed row has room for one. */
-function firstLine(value: string) { return value.split('\n').map(line => line.trim()).find(Boolean) ?? ''; }
-
-/**
- * What a tool call is doing, in the tool's own words: the command it runs, the file it touches, the
- * task it delegates. The arguments arrive as the tool's raw JSON, and a closed row that only said
- * `shell` made the reader open every call to find out which command was running.
- */
-function toolAction(message: ConversationMessage) {
-  const source = (message.input ?? message.output ?? message.text ?? '').trim();
-  if (!source) return '';
-  if (source.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(source) as Record<string, unknown>;
-      // The keys that describe the action, before any other string the arguments happen to carry.
-      for (const key of ['command', 'description', 'query', 'pattern', 'path', 'file_path', 'filePath', 'url', 'prompt', 'name']) {
-        const value = parsed[key];
-        if (typeof value === 'string' && value.trim()) return firstLine(value);
-      }
-      const first = Object.values(parsed).find(value => typeof value === 'string' && value.trim());
-      if (typeof first === 'string') return firstLine(first);
-    } catch { /* Not JSON: the detail already is the action. */ }
-  }
-  return firstLine(source);
-}
-
-/** The tool and what it is doing. A closed tool row lives on the second half of this. */
-function ToolHeading({ message }: { message: ConversationMessage }) {
-  const t = useLocale();
-  const action = toolAction(message);
-  return <><span className="tool-name">{message.tool === 'subagent' ? t('tool.subagentName') : message.tool ?? t('tool.tool')}</span>{action && <span className="tool-action" title={action}>{action}</span>}</>;
-}
-
-/** One tool call: a quiet line that says what it is doing until someone opens it. */
-function ToolCall({ message, running }: { message: ConversationMessage; running: boolean }) {
-  const t = useLocale();
-  return <details className="tool-message"><summary><TerminalWindow size={13} /><ToolHeading message={message} /><span className="tool-status">{message.isError ? t('tool.failed') : message.complete ? t('tool.returned') : t(running ? 'tool.running' : 'tool.noResult')}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>{t('tool.input')}</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>{t('tool.output')}</strong><pre>{message.output}</pre></>}</details>;
-}
-
 /** One row of the conversation: a message, or a run of tool calls. */
 function ConversationRow({ row, running, agents, client, sessionId, connected, pendingQuestions, disabled, onAnswer }: { row: ConversationRowData; running: boolean; agents: SubagentView[]; client?: TurnwireClient; sessionId: string; connected: boolean; pendingQuestions?: Set<string>; disabled?: boolean; onAnswer?: (question: Question, answers: QuestionAnswerItem[]) => void }) {
   const t = useLocale();
@@ -513,7 +474,7 @@ function ConversationRow({ row, running, agents, client, sessionId, connected, p
   if (row.tools) return <ToolRun items={row.tools} running={running} />;
   const message = row.message!;
   if (message.role === 'question' && message.question) return <QuestionCard question={message.question} pending={pendingQuestions?.has(message.question.id) === true} disabled={disabled === true} onAnswer={answers => onAnswer?.(message.question!, answers)} />;
-  return <article className={`message ${message.role}${row.lead ? '' : ' follow'}`}>{row.lead && <div className="message-author">{message.role === 'user' ? <><span className="avatar">{t('conversation.you')}</span>{t('conversation.you')}</> : <><img src="/icon-192.png" width="23" height="23" alt="" />Turnwire</>}<time>{new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>}{(message.queued || message.steer) && <div className="message-tags">{message.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{message.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div>}<MessageImages client={client} sessionId={sessionId} images={message.images} /><div className="message-text">{message.role === 'assistant' ? <MarkdownMessage text={message.text} id={message.id} /> : message.text}{!message.complete && <span className="cursor" />}</div></article>;
+  return <MessageBody message={message} lead={row.lead === true}>{(message.queued || message.steer) && <div className="message-tags">{message.queued && <span className="queued-chip">{t('message.queuedChip')}</span>}{message.steer && <span className="queued-chip">{t('message.steerChip')}</span>}</div>}<MessageImages client={client} sessionId={sessionId} images={message.images} /></MessageBody>;
 }
 
 /**

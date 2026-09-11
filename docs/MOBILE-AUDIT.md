@@ -20,6 +20,8 @@ Turnwire PWA audit: 320/360/390/430px portrait widths; 320/400px short heights a
 | Child polling added/removes loading paragraph every2s; older page retained old scroll offset | Initial/manual loads show loading, background polling does not; older navigation resets top | Existing child reader lifecycle browser regression; exact coordinate/tail-follow policy still needs stronger coverage |
 | Markdown regression used obsolete connected banner selector | Assert current connected button | Existing encrypted replay/Markdown browser scenario |
 
+Child detail presentation now reuses the main transcript's message and tool presentation, including Markdown, with compact scoped typography for the bounded reader. Opening/latest navigation positions the newest record; background polling does not force-scroll a reader inspecting earlier text.
+
 Other regressions: directory creation validation/cancel/error/busy/confirmation, child inline launch identity/retention/reload, chronological history and Markdown wrapping/independent code/table scrolling.
 
 ## Remaining risks and follow-up work
