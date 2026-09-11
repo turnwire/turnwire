@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
 import WebSocket from 'ws';
 import { request } from 'node:https';
 import { TurnwireCore, Store } from '@turnwire/core';
@@ -17,7 +18,7 @@ afterEach(async () => { for (const close of cleanup.reverse()) await close(); cl
 it('authenticates an isolated TLS bridge and fails over to Relay without exposing management endpoints', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'turnwire-direct-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const cert = join(directory, 'cert.pem'), key = join(directory, 'key.pem');
-  await promisify(execFile)('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost']);
+  await promisify(execFile)('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], { env: hermeticEnv(directory), timeout: 10000 });
   const ca = await readFile(cert);
   // Explicit test CA trust, with normal hostname/certificate verification still enabled.
   vi.stubGlobal('WebSocket', class extends WebSocket { constructor(url: string | URL) { super(url, { ca }); } });

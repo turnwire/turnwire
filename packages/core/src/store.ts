@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { eventSessionId, historyKey, reduceHistory } from '@turnwire/protocol';
+import { eventSessionId, historyKey, reduceHistory, projectHistoryEvent, HISTORY_PAGE_BYTES } from '@turnwire/protocol';
 import type { HistoryPage } from '@turnwire/protocol';
 import type { ImageAttachment, Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session } from '@turnwire/protocol';
 
@@ -19,6 +19,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS event_session ON events(session_id, seq);
       CREATE TABLE IF NOT EXISTS history (session_id TEXT NOT NULL, key TEXT PRIMARY KEY, first_seq INTEGER NOT NULL, body TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS history_session ON history(session_id, first_seq);
+      CREATE TABLE IF NOT EXISTS history_deltas (key TEXT NOT NULL, seq INTEGER NOT NULL PRIMARY KEY);
+      CREATE INDEX IF NOT EXISTS history_delta_key ON history_deltas(key, seq);
       CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, body TEXT NOT NULL);
@@ -49,11 +51,19 @@ export class Store {
     return { items, nextBefore: rows.length > limit ? items.at(-1)!.position : null, cursor: this.cursor() };
   }
   cursor(): number { return Number(this.db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM events').get()!.seq); }
-  events(after: number, limit: number, sessionId?: string): TurnwireEvent[] {
+  events(after: number, limit: number, sessionId?: string, preview = false): TurnwireEvent[] {
     const rows = sessionId
-      ? this.db.prepare('SELECT seq,time,body FROM events WHERE seq>? AND session_id=? ORDER BY seq LIMIT ?').all(after, sessionId, limit)
-      : this.db.prepare('SELECT seq,time,body FROM events WHERE seq>? ORDER BY seq LIMIT ?').all(after, limit);
-    return rows.map(row => ({ seq: Number(row.seq), time: String(row.time), data: JSON.parse(row.body as string) as EventData }));
+      ? this.db.prepare('SELECT seq,time,body FROM events WHERE seq>? AND session_id=? ORDER BY seq LIMIT ?').iterate(after, sessionId, limit)
+      : this.db.prepare('SELECT seq,time,body FROM events WHERE seq>? ORDER BY seq LIMIT ?').iterate(after, limit);
+    const events: TurnwireEvent[] = []; let bytes = 0;
+    for (const row of rows) {
+      const full = { seq: Number(row.seq), time: String(row.time), data: JSON.parse(row.body as string) as EventData };
+      const event = preview ? projectHistoryEvent(full) : full;
+      const size = preview ? Buffer.byteLength(JSON.stringify(event)) : 0;
+      if (events.length && bytes + size > HISTORY_PAGE_BYTES) break;
+      events.push(event); bytes += size;
+    }
+    return events;
   }
   /** Only durable user-event refs authorize native reads; never accept raw runtime IDs or URLs. */
   imageAttachment(sessionId: string, attachmentId: string): ImageAttachment | undefined {
@@ -67,21 +77,55 @@ export class Store {
   private project(event: TurnwireEvent) {
     const key = historyKey(event); if (!key) return;
     const sessionId = eventSessionId(event.data);
-    const row = this.db.prepare('SELECT first_seq,body FROM history WHERE key=?').get(key);
-    const events = reduceHistory(row ? JSON.parse(String(row.body)) as TurnwireEvent[] : [], event);
+    const row = event.data.type === 'message.delta'
+      ? this.db.prepare('SELECT first_seq FROM history WHERE key=?').get(key)
+      : this.db.prepare('SELECT first_seq,body FROM history WHERE key=?').get(key);
+    // Deltas reference the immutable journal, in the same transaction. No repeated full-text
+    // read/serialize/write per token, and no asynchronous buffer that can lose data on restart.
+    if (event.data.type === 'message.delta' && row) {
+      this.db.prepare('INSERT OR IGNORE INTO history_deltas VALUES(?,?)').run(key, event.seq);
+      return;
+    }
+    // Completed messages replace the accumulated text; only their baseline identity is needed.
+    const existing = row ? (event.data.type === 'message.completed' ? JSON.parse(String(row.body)) as TurnwireEvent[] : this.materialize(key, String(row.body))) : [];
+    const events = reduceHistory(existing, event);
+    this.db.prepare('DELETE FROM history_deltas WHERE key=?').run(key);
     this.db.prepare('INSERT OR REPLACE INTO history VALUES(?,?,?,?)').run(sessionId!, key, row ? Number(row.first_seq) : event.seq, JSON.stringify(events));
   }
-  history(sessionId: string, limit: number, before = Number.MAX_SAFE_INTEGER): HistoryPage {
-    const rows = this.db.prepare('SELECT first_seq,body FROM history WHERE session_id=? AND first_seq<? ORDER BY first_seq DESC LIMIT ?').all(sessionId, before, limit + 1);
-    const selected: typeof rows = []; let bytes = 0;
-    // Keep normal pages small enough for encrypted mobile transport. An individual record stays whole.
+  private materialize(key: string, body: string): TurnwireEvent[] {
+    let events = JSON.parse(body) as TurnwireEvent[];
+    const rows = this.db.prepare('SELECT e.seq,e.time,e.body FROM history_deltas d JOIN events e ON e.seq=d.seq WHERE d.key=? ORDER BY e.seq').all(key);
+    // Join the accumulated text once rather than repeatedly concatenating every prefix.
+    if (rows.length) {
+      const first = events[0]; const last = rows.at(-1)!;
+      const data = JSON.parse(String(last.body)) as EventData;
+      if (data.type === 'message.delta') {
+        const text = (first && 'text' in first.data ? first.data.text : '') + rows.map(row => (JSON.parse(String(row.body)) as { text: string }).text).join('');
+        events = [{ seq: Number(last.seq), time: first?.time ?? String(last.time), originSeq: first?.originSeq ?? first?.seq ?? Number(rows[0]!.seq), data: { ...data, text } }];
+      }
+    }
+    return events;
+  }
+  /** Full durable entity for chunked export. Callers must pin/check its revision across chunks. */
+  historyRecord(sessionId: string, originSeq: number): TurnwireEvent[] | undefined {
+    const row = this.db.prepare('SELECT key,body FROM history WHERE session_id=? AND first_seq=?').get(sessionId, originSeq);
+    return row ? this.materialize(String(row.key), String(row.body)) : undefined;
+  }
+  history(sessionId: string, limit: number, before = Number.MAX_SAFE_INTEGER, preview = false): HistoryPage {
+    const rows = this.db.prepare('SELECT key,first_seq FROM history WHERE session_id=? AND first_seq<? ORDER BY first_seq DESC LIMIT ?').all(sessionId, before, limit + 1);
+    const selected: { firstSeq: number; events: TurnwireEvent[] }[] = []; let bytes = 1024;
     for (const row of rows) {
-      const size = Buffer.byteLength(String(row.body));
-      if (selected.length && (selected.length === limit || bytes + size > 512 * 1024)) break;
-      selected.push(row); bytes += size;
+      if (selected.length === limit) break;
+      const body = this.db.prepare('SELECT body FROM history WHERE key=?').get(String(row.key))!;
+      const full = this.materialize(String(row.key), String(body.body));
+      const events = preview ? full.map(projectHistoryEvent) : full;
+      const size = Buffer.byteLength(JSON.stringify(events));
+      if (selected.length && bytes + size > HISTORY_PAGE_BYTES) break;
+      selected.push({ firstSeq: Number(row.first_seq), events }); bytes += size;
     }
     const hasMore = rows.length > selected.length;
-    return { events: selected.reverse().flatMap(row => JSON.parse(String(row.body)) as TurnwireEvent[]), cursor: this.cursor(), hasMore, nextBefore: hasMore ? Number(selected[0]!.first_seq) : null };
+    const nextBefore = hasMore ? selected.at(-1)!.firstSeq : null;
+    return { events: selected.reverse().flatMap(row => row.events), cursor: this.cursor(), hasMore, nextBefore };
   }
   append(data: EventData, source?: string): TurnwireEvent | undefined {
     const sessionId = eventSessionId(data) ?? null;

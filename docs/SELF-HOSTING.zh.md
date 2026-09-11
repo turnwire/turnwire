@@ -25,7 +25,7 @@ scripts/install-dev-host.sh --state <state> --dsh-home <dsh-state>
 
 `--state` 和 `--dsh-home` 必须是当前主机已经在使用的目录，否则主机会在没有已配对设备、没有 Relay token、也没有会话日志的情况下启动。不会启动任何东西：unit 存在但保持 inactive，直到你切换过去。
 
-加上 `--enable-watch` 会启用 `turnwire-dev-reload.path`，当 `apps/`、`packages/` 或 `scripts/` 变化时自动重载。它默认禁用。
+加上 `--enable-watch` 会同时启用 `turnwire-dev-reload.path` 和补充轮询的 `.timer`。默认关闭；禁用会立即停止两种触发器及正在运行的重载任务。监听只允许兼容的前端静态资源发布，后端或 DSH 变动不会自动重启服务。
 
 ## DSH 环境文件
 
@@ -61,15 +61,15 @@ Turnwire 侧不需要知道任何事：runtime 的模型目录会为每条已注
 ## 重载
 
 ```bash
-scripts/host-reload.sh          # rebuild and restart at a safe point
-scripts/host-reload.sh --force  # ignore the fingerprint
+scripts/host-reload.sh             # 检查内容变化；只发布兼容的前端资源
+scripts/host-reload.sh --frontend  # 显式确认前后端兼容并初始化/发布前端
 ```
 
-三个特性让重复运行无害：
-
-- **指纹。** `git rev-parse HEAD` 加上 `git status --porcelain`。因为 `dist/` 被 gitignore，重建不会改变指纹，所以跟随一次构建的 watch 触发运行会立即退出，而不是循环。
-- **安全点。** 它会等待（默认 900s）直到没有会话处于 `running` 或 `waiting_approval`，然后才重启，因此重载永远不会打断一个回合。但子代理不是会话：委派工具把活交给子代理后立刻返回，父会话可能已经空闲，而子代理还在跑。所以运行时会报告它仍在负责的子代理（快照里的 `busy`），等待同时覆盖这两者。这个计数是对主机的实时查询，因此连接断开期间启动的子代理也算在内；主机已经无法枚举的子代理（例如已经被上一次重启杀掉的）不在检查范围内，此时退回手工停掉计时器（`systemctl --user stop turnwire-dev-reload.timer`）。
-- **重启是可存活的。** 一个回合在 DSH 内部运行，而 DSH 会持久化自己的会话日志，Turnwire 则通过跟随会话并从存储的游标重放来重连。重载后重新 attach 并继续。
+- **按组件计算内容指纹。** 文档和测试不触发部署；同一个已修改文件的后续内容变化也能识别。部署锁防止并行发布。
+- **默认不重启后台。** 后端或 DSH 内容变化只报告需要人工维护，不再把查询失败当成空闲，也不在重载时同步模型列表。`busyKnown: false` 表示运行状态未知，不能用它证明可以停止任务。
+- **分阶段发布前端。** 构建到临时目录，保留旧哈希资源，最后替换入口；本地健康检查成功才更新部署标记。检查失败回滚入口；不会因为改 README 重启主机。
+- **daemon 与 DSH 生命周期分离。** daemon 意外退出进行有限退避重试，耗尽后保持 DSH 存活。维护时可向监督进程发送 `SIGUSR2` 只重新启动 daemon，现有连接仍会短暂中断，待决审批仍可能取消；它不是零中断部署。DSH 退出则停止依赖它的 daemon，由 systemd 恢复整组。
+- **不声称自动排空。** 当前没有跨执行层的原子 drain 协议，所以后端部署必须安排维护窗口；DSH 升级和整组服务重启必须明确确认。DSH 启动地址仍使用固定版本的 stdout 握手格式校验和脱敏，不声称已有独立 readiness API。
 
 ## 安全地切换主机
 

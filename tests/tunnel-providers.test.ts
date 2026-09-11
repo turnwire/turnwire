@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, chmod, readFile, rm, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
 import { localhostAddress, startLocalhostTunnel } from '../apps/daemon/src/providers/localhost-run.js';
 import { cpolarAddress, startCpolarTunnel } from '../apps/daemon/src/providers/cpolar.js';
 import type { TunnelHandle, TunnelOptions } from '../apps/daemon/src/tunnel.js';
@@ -10,6 +11,8 @@ let cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.reverse()) await close(); cleanup = []; vi.unstubAllEnvs(); });
 async function fixture(source: string) {
   const directory = await mkdtemp(join(tmpdir(), 'turnwire-provider-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const env = hermeticEnv(directory);
+  for (const key of new Set([...Object.keys(process.env), ...Object.keys(env)])) vi.stubEnv(key, env[key]);
   const binary = join(directory, 'component'); await writeFile(binary, '#!' + process.execPath + '\n' + source); await chmod(binary, 0o700);
   const options: TunnelOptions = { directory, port: 12345, signal: new AbortController().signal, progress: () => {}, exited: () => {} };
   return { directory, binary, options };

@@ -36,8 +36,11 @@ scripts/install-dev-host.sh --state <state> --dsh-home <dsh-state>
 comes up with no paired devices, no Relay token and no session log. Nothing is started: the unit
 exists but stays inactive until you switch to it.
 
-Add `--enable-watch` to enable `turnwire-dev-reload.path`, which reloads automatically when
-`apps/`, `packages/` or `scripts/` change. It is disabled by default.
+Add `--enable-watch` to enable both `turnwire-dev-reload.path` and
+`turnwire-dev-reload.timer` (nested edits are caught by the timer). These only publish frontend
+assets after an explicit initial frontend publication; backend and DSH changes remain manual.
+Without the flag the installer disables and stops both triggers and stops the reload service.
+The host is never started by this installer; enabling watch does start the reload triggers.
 
 ## The DSH environment file
 
@@ -81,26 +84,40 @@ change, and no model id invented on this side.
 ## Reload
 
 ```bash
-scripts/host-reload.sh          # rebuild and restart at a safe point
-scripts/host-reload.sh --force  # ignore the fingerprint
+scripts/host-reload.sh             # publish only changed frontend assets, never restart
+scripts/host-reload.sh --frontend  # explicit initial/manual frontend publication
 ```
 
-Three properties make repeat runs harmless:
+- **Content fingerprints.** Separate frontend, backend/shared and DSH hashes cover actual bytes,
+  paths and executable bits of relevant tracked and untracked files. Docs, tests, generated output,
+  dependencies and credential files are excluded. Dirty-to-dirty edits are detected; docs-only
+  edits never build or deploy. The first automatic observation records no deployment success and
+  performs no build. `--force` is no longer supported.
+- **No automatic backend update.** Backend/shared changes are reported as requiring an operator.
+  There is no race-free drain gate, so an idle snapshot is not permission to restart. Neither
+  daemon nor DSH is restarted by this script. DSH changes always need explicit operator action;
+  daemon maintenance must use a supervisor daemon-only operation that preserves DSH. A full host
+  restart can terminate live work. No model catalog synchronization runs during reload.
+- **Frontend publication.** A checkout-local `flock` serializes reload builds and publication.
+  Only the remote-web workspace builds, into staging. Content-addressed old assets are retained,
+  new assets land before the index is atomically replaced, and changed non-hashed asset collisions
+  fail closed for manual handling. Failed builds leave the existing index intact. Use the same
+  lock for other manual asset builds; unrelated `npm run build` commands do not honor this lock.
+- **Health and stamps.** Local `/health` must return HTTP success and `{status:"ok",protocol:1}`
+  before building, before publication and after publication. Unknown/unreachable health blocks;
+  failure after publication restores the old index. Only verified frontend publication writes
+  `.turnwire/reload.frontend.json`. The separate observation file is not a running-version stamp.
+  Set `TURNWIRE_RELOAD_HEALTH_URL` for a nondefault local daemon endpoint. This is frontend HTTP
+  readiness, not evidence that all model providers are available or that sessions are drained.
+  Shared/backend drift blocks automatic frontend publication too; use `--frontend` only after
+  checking compatibility during manual maintenance.
 
-- **Fingerprint.** `git rev-parse HEAD` plus `git status --porcelain`. Because `dist/` is
-  gitignored, a rebuild does not change the fingerprint, so a watch-triggered run that follows a
-  build exits immediately instead of looping.
-- **Safe point.** It waits (default 900s) until no session is `running` or `waiting_approval`
-  before restarting, so a reload never interrupts a turn. A background agent is not a session: a
-  delegation tool returns as soon as it hands work to a child, so the parent session reads as idle
-  while the child is still working. The runtime therefore reports the children it still owns
-  (`busy` in the snapshot) and the wait covers both. That count is a live query of the host, so it
-  also includes a child that started while the connection was down. A child the host can no longer
-  enumerate — one an earlier restart already killed — is outside the check, and stopping the timer
-  by hand (`systemctl --user stop turnwire-dev-reload.timer`) is the fallback.
-- **Restart is survivable.** A turn runs inside DSH, which persists its session log, and
-  Turnwire reconnects by following the session and replaying from its stored cursor. After a
-  reload, re-attach and continue.
+To stop all automatic checks (including an in-flight reload):
+
+```bash
+systemctl --user disable --now turnwire-dev-reload.timer turnwire-dev-reload.path
+systemctl --user stop turnwire-dev-reload.service
+```
 
 ## Switching the host, safely
 

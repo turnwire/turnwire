@@ -45,7 +45,7 @@ export class TurnwireCore {
   async snapshot(): Promise<Snapshot> {
     // A read that is about to report whether anything is running repairs a status left behind first.
     await this.reconcileStatuses();
-    const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? { busy: await runtime.busy().catch(() => 0) } : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
+    const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? await runtime.busy().then(busy => ({ busy, busyKnown: true })).catch(() => ({ busyKnown: false })) : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
     return { device: this.device, sessions: this.store.sessions(), approvals: this.store.approvals().filter(a => a.status === 'pending'), questions: [...this.questions.values()].filter(question => question.status === 'pending'), runtimes, cursor: this.store.cursor() };
   }
@@ -58,7 +58,7 @@ export class TurnwireCore {
     if (!parsed.success) return errorResponse(typeof (value as { id?: unknown })?.id === 'string' ? (value as { id: string }).id : 'invalid', parsed.error);
     const request = parsed.data;
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
-    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'subagent.history' || request.method === 'session.queue' || request.method === 'session.image' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
+    if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'subagent.history' || request.method === 'session.queue' || request.method === 'session.image' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'history.record' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
       try { return { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; } catch (error) { return errorResponse(request.id, error); }
     }
     const fingerprint = createHash('sha256').update(JSON.stringify({ method: request.method, params: request.params, ...(request.method.startsWith('notifications.') ? { clientId: context?.clientId } : {}) })).digest('hex');
@@ -88,7 +88,22 @@ export class TurnwireCore {
         if (!context?.clientId || !this.notifications) throw new TurnwireError('NOT_AVAILABLE', 'Enable or disable notifications for this device from a paired phone');
         return request.method === 'notifications.subscribe' ? this.notifications.subscribe(context.clientId, methodSchemas['notifications.subscribe'].parse(request.params)) : this.notifications.unsubscribe(context.clientId);
       }
-      case 'history.page': { const p = methodSchemas['history.page'].parse(request.params); this.session(p.sessionId); return this.store.history(p.sessionId, p.limit, p.before); }
+      case 'history.page': { const p = methodSchemas['history.page'].parse(request.params); this.session(p.sessionId); return this.store.history(p.sessionId, p.limit, p.before, true); }
+      case 'history.record': {
+        const p = methodSchemas['history.record'].parse(request.params);
+        this.session(p.sessionId);
+        const events = this.store.historyRecord(p.sessionId, p.originSeq);
+        if (!events?.length) throw new TurnwireError('HISTORY_NOT_FOUND', 'History record does not belong to this session');
+        const cursor = Math.max(...events.map(event => event.seq));
+        if (p.cursor !== undefined && p.cursor !== cursor) throw new TurnwireError('HISTORY_CHANGED', 'History record changed while being read; restart from offset zero');
+        const serialized = JSON.stringify(events);
+        if (p.offset > serialized.length) throw new TurnwireError('INVALID_CURSOR', 'History offset exceeds record size');
+        let end = Math.min(serialized.length, p.offset + p.limit);
+        // Chunks cross JSON strings, so do not divide a Unicode surrogate pair between frames.
+        if (end < serialized.length && /[\uD800-\uDBFF]/.test(serialized.charAt(end - 1))) end--;
+        if (end <= p.offset && end < serialized.length) throw new TurnwireError('INVALID_REQUEST', 'Chunk limit is too small for the next character');
+        return { data: serialized.slice(p.offset, end), cursor, nextOffset: end < serialized.length ? end : null };
+      }
       case 'session.image': {
         const p = methodSchemas['session.image'].parse(request.params);
         const session = this.session(p.sessionId);
@@ -128,7 +143,7 @@ export class TurnwireCore {
         const session = this.session(p.sessionId); const runtime = this.runtime(session.runtimeId);
         return { subagents: runtime.listSubagents ? await runtime.listSubagents(session.runtimeSessionId) : [] };
       }
-      case 'events.list': { const p = methodSchemas['events.list'].parse(request.params); return { events: this.store.events(p.after, p.limit, p.sessionId), cursor: this.store.cursor() }; }
+      case 'events.list': { const p = methodSchemas['events.list'].parse(request.params); return { events: this.store.events(p.after, p.limit, p.sessionId, true), cursor: this.store.cursor() }; }
       case 'workspace.list': return this.listWorkspace(methodSchemas['workspace.list'].parse(request.params));
       case 'workspace.mkdir': {
         const p = methodSchemas['workspace.mkdir'].parse(request.params);

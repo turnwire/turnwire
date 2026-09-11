@@ -1,5 +1,31 @@
 import type { EventData, TurnwireEvent } from './index.js';
 
+export const HISTORY_EVENT_BYTES = 64 * 1024;
+export const HISTORY_PAGE_BYTES = 512 * 1024;
+export const HISTORY_TRUNCATION_MARKER = '\n[Transport preview truncated; full content remains in the host journal.]';
+const encodedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+/** Deterministic transport-only projection. Never write this preview back to the journal. */
+export function projectHistoryEvent(event: TurnwireEvent): TurnwireEvent {
+  const originalBytes = encodedBytes(event);
+  if (originalBytes <= HISTORY_EVENT_BYTES) return event;
+  const data = { ...event.data };
+  const field = 'text' in data ? 'text' : 'detail' in data ? 'detail' : 'message' in data ? 'message' : undefined;
+  if (!field || typeof (data as Record<string, unknown>)[field] !== 'string') throw new Error('History entity exceeds transport limit without a previewable text field');
+  const text = (data as Record<string, unknown>)[field] as string;
+  const projected = { ...event, data, truncation: { originalBytes, reason: 'transport-preview' as const } };
+  let low = 0; let high = text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    (data as Record<string, unknown>)[field] = text.slice(0, middle) + HISTORY_TRUNCATION_MARKER;
+    if (encodedBytes(projected) <= HISTORY_EVENT_BYTES) low = middle; else high = middle - 1;
+  }
+  // Avoid splitting a surrogate pair at the preview boundary.
+  if (low && /[\uD800-\uDBFF]/.test(text[low - 1]!)) low--;
+  (data as Record<string, unknown>)[field] = text.slice(0, low) + HISTORY_TRUNCATION_MARKER;
+  if (encodedBytes(projected) > HISTORY_EVENT_BYTES) throw new Error('History metadata exceeds transport limit');
+  return projected;
+}
+
 /** A page contains whole messages / tool calls, never a slice of token deltas. */
 export interface HistoryPage { events: TurnwireEvent[]; cursor: number; hasMore: boolean; nextBefore: number | null }
 export function historyKey(event: TurnwireEvent): string | undefined {
@@ -36,7 +62,7 @@ export function reduceHistory(existing: TurnwireEvent[], event: TurnwireEvent): 
     }
     if (d.type === 'message.removed') return [];
     const text = d.type === 'message.delta' ? (previous && 'text' in previous ? previous.text : '') + d.text : d.text;
-    return [{ ...event, originSeq, time: first?.time ?? event.time, data: { ...d, text } }];
+    return [{ ...(d.type === 'message.delta' && first?.truncation ? { truncation: first.truncation } : {}), ...event, originSeq, time: first?.time ?? event.time, data: { ...d, text } }];
   }
   const value = { ...event, originSeq };
   if (d.type === 'tool.finished' || d.type === 'approval.resolved' || d.type === 'question.resolved') return [...existing.filter(e => e.data.type === 'tool.started' || e.data.type === 'approval.requested' || e.data.type === 'question.requested'), value];

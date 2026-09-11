@@ -15,6 +15,16 @@ import { DevicePresence } from './presence.js';
 export type { RemoteMode, RemoteStatus } from '@turnwire/protocol';
 interface RelaySettings { serverUrl: string; relayUrl: string; remoteUrl?: string; token: string }
 interface Preferences { mode: RemoteMode; relay?: RelaySettings; provider?: TunnelProvider; cpolarToken?: string; namedTunnel?: NamedTunnelOptions }
+// Compare only transport-affecting preferences, not remembered credentials for other modes.
+function effective(preferences: Preferences) {
+  if (preferences.mode === 'off') return JSON.stringify(['off']);
+  if (preferences.mode === 'relay') return JSON.stringify(['relay', preferences.relay?.relayUrl, preferences.relay?.remoteUrl, preferences.relay?.token]);
+  const provider = preferences.provider ?? 'cloudflare';
+  const named = preferences.namedTunnel;
+  return JSON.stringify(['temporary', provider, provider === 'cpolar' ? preferences.cpolarToken : undefined,
+    ...(provider === 'cloudflare-named' ? [named?.name, named?.hostname, named?.credentialsFile, named?.protocol ?? 'http2'] : [])]);
+}
+const retryDelays = [1000, 2000, 4000];
 export interface RemoteAccess {
   status(): RemoteStatus;
   configure(value: unknown): RemoteStatus;
@@ -44,6 +54,7 @@ export class RemoteController implements RemoteAccess {
   private active?: { relayUrl: string; remoteUrl?: string };
   private bridge?: RemoteBridge; private relay?: Awaited<ReturnType<typeof startRelay>>; private tunnel?: TunnelHandle;
   private operation: Promise<void> = Promise.resolve(); private aborter?: AbortController; private disposed = false;
+  private retryTimer?: ReturnType<typeof setTimeout>; private retryAttempt = 0;
   constructor(private core: TurnwireCore, private options: Options) {
     this.notifications = new NotificationController(core);
     this.direct = new DirectController(core, () => this.active?.remoteUrl ?? this.preferences?.relay?.remoteUrl, () => this.preferences?.mode !== 'off');
@@ -62,7 +73,14 @@ export class RemoteController implements RemoteAccess {
     let state = this.phase; let message = this.message;
     if (this.phase === 'online' || this.phase === 'offline') {
       state = this.bridge?.connected ? 'online' : 'offline';
-      message = state === 'online' ? 'Channel is ready; check paired devices for phone connection status' : this.bridge?.statusMessage ?? 'Connecting to the remote service…';
+      const confirmed = state === 'online' && this.core.store.devices().some(device => this.presence.get(device.clientId).connection === 'connected');
+      message = state === 'online'
+        ? confirmed
+          ? 'A paired device confirmed its connection through the relay channel; other devices and networks remain unverified'
+          : this.preferences.mode === 'temporary'
+            ? 'Local relay is ready; public tunnel reachability is unverified. Check paired devices for confirmed phone connections'
+            : 'Relay channel is ready; phone connectivity is unverified until a paired device confirms its connection'
+        : this.bridge?.statusMessage ?? 'Connecting to the remote service…';
     }
     return { mode: this.preferences.mode, state, message, ...this.active, relayServerUrl: this.preferences.relay?.serverUrl, hasRelayToken: !!this.preferences.relay?.token, provider: this.preferences.provider ?? 'cloudflare', hasCpolarToken: !!this.preferences.cpolarToken, providers: (this.options.providers ?? []).map(({ start, ...info }) => info), notices: this.preferences.mode === 'temporary' ? [this.options.providers?.find(p => p.id === (this.preferences.provider ?? 'cloudflare'))?.description, ...(this.options.notices ?? [])].filter((s): s is string => !!s) : [] };
   }
@@ -92,8 +110,13 @@ export class RemoteController implements RemoteAccess {
       const relayUrl = new URL(serverUrl + '/relay'); relayUrl.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       next.relay = { serverUrl, remoteUrl: serverUrl, relayUrl: relayUrl.href, token };
     }
+    const unchanged = effective(next) === effective(this.preferences);
     this.core.store.setSetting('remote-preferences', next);
-    this.preferences = next; this.schedule(next); return this.status();
+    this.preferences = next;
+    // An identical request is a retry only after failure/disconnection, never during startup/backoff.
+    const state = this.status().state;
+    if (!unchanged || state === 'error' || state === 'offline') this.schedule(next);
+    return this.status();
   }
   endpoints() { return this.bridge?.connected ? this.active : undefined; }
   refreshDevices() { this.bridge?.refreshDevices(); this.direct.refreshDevices(); }
@@ -102,8 +125,33 @@ export class RemoteController implements RemoteAccess {
   directStatus() { return this.direct.status(); }
   configureDirect(value: unknown) { return this.direct.configure(value); }
   deviceStatus(id: string) { const direct = this.direct.presence.get(id); const relay = this.presence.get(id); return direct.connection === 'connected' || relay.connection === 'unconfirmed' ? direct : relay; }
-  private schedule(preferences: Preferences) {
-    this.direct.start();
+  private recover(preferences: Preferences, aborter: AbortController, reason: string) {
+    if (this.disposed || aborter.signal.aborted) return;
+    aborter.abort(); this.active = undefined;
+    const stable = preferences.provider === 'cloudflare-named';
+    const address = stable ? 'The named hostname is unchanged; existing pairings remain valid.' : 'A temporary address may change; re-pair only if the address changes.';
+    const delay = retryDelays[this.retryAttempt];
+    // Serialize cleanup with startup: an exit callback can arrive before startTunnel resolves.
+    this.operation = this.operation.catch(() => {}).then(() => this.release());
+    if (delay === undefined) {
+      this.phase = 'error';
+      this.message = `${reason}. Automatic retry limit reached; retry remote access explicitly. ${address}`;
+      return;
+    }
+    this.retryAttempt++;
+    this.phase = 'starting';
+    this.message = `${reason}. Retrying in ${delay / 1000}s (${this.retryAttempt}/${retryDelays.length}). ${address}`;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      if (!this.disposed && this.aborter === aborter) this.schedule(preferences, true);
+    }, delay);
+    this.retryTimer.unref();
+  }
+  private schedule(preferences: Preferences, recovering = false) {
+    if (this.disposed) return;
+    clearTimeout(this.retryTimer); this.retryTimer = undefined;
+    if (!recovering) this.retryAttempt = 0;
+    if (!recovering) this.direct.start();
     this.aborter?.abort(); const aborter = new AbortController(); this.aborter = aborter;
     this.phase = preferences.mode === 'off' ? 'off' : 'starting';
     this.message = preferences.mode === 'off' ? 'Remote access is off' : 'Turning on remote access…';
@@ -123,14 +171,10 @@ export class RemoteController implements RemoteAccess {
           bridgeUrl = 'ws://127.0.0.1:' + this.relay.port + '/relay';
           aborter.signal.throwIfAborted();
           this.tunnel = await startTunnel({
-            directory: this.options.directory, toolsDirectory: this.options.toolsDirectory, port: this.relay.port, signal: aborter.signal, ...(provider === 'cpolar' ? { token: preferences.cpolarToken } : {}), ...(preferences.namedTunnel ? { namedTunnel: preferences.namedTunnel } : {}),
+            directory: this.options.directory, toolsDirectory: this.options.toolsDirectory, port: this.relay.port, signal: aborter.signal, ...(provider === 'cpolar' ? { token: preferences.cpolarToken } : {}), ...(provider === 'cloudflare-named' && preferences.namedTunnel ? { namedTunnel: preferences.namedTunnel } : {}),
             changed: url => { if (!aborter.signal.aborted && this.active) { this.active = { remoteUrl: url, relayUrl: url.replace(/^http/, 'ws') + '/relay' }; } },
             progress: message => { if (!aborter.signal.aborted) this.message = message; },
-            exited: () => {
-              if (aborter.signal.aborted) return;
-              this.phase = 'error'; this.message = 'The temporary channel stopped; turn it on again — the new address requires re-pairing'; this.active = undefined;
-              aborter.abort(); this.operation = this.operation.then(() => this.release());
-            },
+            exited: () => this.recover(preferences, aborter, 'The tunnel process stopped unexpectedly'),
           });
           remoteUrl = this.tunnel.url;
           relayUrl = remoteUrl.replace(/^http/, 'ws') + '/relay';
@@ -143,7 +187,11 @@ export class RemoteController implements RemoteAccess {
         this.bridge = new RemoteBridge(this.core, bridgeUrl ?? relayUrl, token, this.presence, () => this.direct.endpoints()); this.notifications.attach(this.bridge, relayUrl); this.bridge.start(); this.phase = 'offline';
       } catch (error) {
         await this.release();
-        if (!aborter.signal.aborted) { this.active = undefined; this.phase = 'error'; this.message = error instanceof Error ? error.message : 'Failed to start remote access'; }
+        if (!aborter.signal.aborted) {
+          const reason = error instanceof Error ? error.message : 'Failed to start remote access';
+          if (preferences.mode === 'temporary') this.recover(preferences, aborter, reason);
+          else { this.active = undefined; this.phase = 'error'; this.message = reason; }
+        }
       }
     });
   }
@@ -153,5 +201,5 @@ export class RemoteController implements RemoteAccess {
     await this.tunnel?.close(); this.tunnel = undefined;
     await this.relay?.close(); this.relay = undefined;
   }
-  async close() { this.disposed = true; this.aborter?.abort(); await this.operation; await this.release(); await this.direct.close(); await this.notifications.close(); }
+  async close() { this.disposed = true; clearTimeout(this.retryTimer); this.retryTimer = undefined; this.aborter?.abort(); await this.operation; await this.release(); await this.direct.close(); await this.notifications.close(); }
 }

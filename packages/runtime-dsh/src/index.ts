@@ -71,22 +71,27 @@ export class DshRuntime implements AgentRuntime {
     if (this.url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(this.url.hostname)) throw new Error('Non-loopback DSH connections require HTTPS');
   }
   capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true, imageInput: true }; }
-  /**
-   * Ask the Host for each followed session's direct children and count the running ones.
-   * `subagents/list` is a live Session query, unlike the `subagent/start`/`subagent/end`
-   * lifecycle frames the Remote waterfall never forwards to this client, so an agent that
-   * started while we were disconnected still counts and a duplicate frame cannot double it.
-   * A read that fails reports 0: an unanswerable count must not block a reload, and a
-   * runtime we cannot query owns nothing we can prove is alive.
-   */
+  /** Count descendants of followed sessions. Unknown or bounded-out reads must never mean idle. */
   async busy(): Promise<number> {
-    try { await this.connect(); } catch { return 0; }
+    await this.connect();
     let count = 0;
-    for (const sessionId of this.sessions.keys()) count += await this.runningChildren(sessionId);
+    const queue = [...this.sessions.keys()].map(id => ({ id, depth: 0 }));
+    const seen = new Set(queue.map(item => item.id));
+    let examined = 0;
+    while (queue.length) {
+      const parent = queue.shift()!;
+      for (const entry of await this.childEntries(parent.id)) {
+        if (seen.has(entry.id)) continue;
+        seen.add(entry.id);
+        if (++examined > MAX_SUBAGENTS) throw new Error('Runtime activity cannot be fully verified within the catalog limit');
+        if (entry.activity === 'running') count++;
+        if (entry.hasChildren) {
+          if (parent.depth + 1 >= MAX_SUBAGENT_DEPTH) throw new Error('Runtime activity cannot be fully verified within the depth limit');
+          queue.push({ id: entry.id, depth: parent.depth + 1 });
+        }
+      }
+    }
     return count;
-  }
-  private async runningChildren(parentSessionId: string): Promise<number> {
-    try { return (await this.childEntries(parentSessionId)).filter(entry => entry.activity === 'running').length; } catch { return 0; }
   }
   /**
    * The subagent tree under one session, ready for a progress view: `subagents/list` is the

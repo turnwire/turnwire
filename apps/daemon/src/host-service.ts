@@ -7,80 +7,131 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveManagedHostPaths } from '../../../packages/sdk/src/node-paths.js';
 
-/** Turnwire's own secrets: neither child may inherit these, whatever a configuration file says. */
+/** Neither ambient provider credentials nor Node injection options cross this boundary. */
+const SYSTEM_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SYSTEMROOT', 'WINDIR', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_RUNTIME_DIR', 'TERM', 'COLORTERM'];
+const DAEMON_ENV = ['TURNWIRE_PORT', 'TURNWIRE_ALLOWED_ORIGINS', 'TURNWIRE_RELAY_URL', 'TURNWIRE_REMOTE_URL', 'TURNWIRE_CLOUDFLARED_PATH', 'TURNWIRE_CPOLAR_PATH', 'TURNWIRE_SSH_PATH'];
 const TURNWIRE_SECRETS = ['TURNWIRE_RELAY_TOKEN', 'TURNWIRE_DSH_TOKEN', 'TURNWIRE_DSH_URL'];
+function pick(names: string[]): NodeJS.ProcessEnv {
+  return Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]]]));
+}
+function integer(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`Invalid ${name}`);
+  return value;
+}
 
 export async function runManagedHost() {
   const root = resolve(process.env.TURNWIRE_INSTALL_DIR ?? fileURLToPath(new URL('../../../', import.meta.url)));
   const paths = resolveManagedHostPaths(root);
-  const directory = paths.state;
-  const dshHome = paths.dshHome;
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await mkdir(dshHome, { recursive: true, mode: 0o700 });
-  // The private file is the DSH environment, not one slot for one key: a deployment may register
-  // several provider routes, each naming its own credential by environment variable. Every string
-  // it holds is therefore forwarded to DSH — and only to DSH, because model credentials never
-  // belong in a client or in the daemon. Turnwire's own secrets are never forwarded, whatever the
-  // file says, and every forwarded value is kept out of the logs.
-  const envFile = paths.dshEnvFile;
+  await mkdir(paths.state, { recursive: true, mode: 0o700 });
+  await mkdir(paths.dshHome, { recursive: true, mode: 0o700 });
+  // Custom provider credential names are supported only through this private DSH environment
+  // file, never by copying the supervisor's ambient environment to either child.
   let values: Record<string, unknown> = {};
-  try { values = JSON.parse(await readFile(envFile, 'utf8')) as Record<string, unknown>; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`Cannot read the DSH environment file ${envFile}`); }
+  try {
+    const parsed: unknown = JSON.parse(await readFile(paths.dshEnvFile, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid environment');
+    values = parsed as Record<string, unknown>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Cannot read the private DSH environment file');
+  }
   const forwarded: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(values)) if (typeof value === 'string' && !TURNWIRE_SECRETS.includes(name)) forwarded[name] = value;
   const key = process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY || forwarded.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   if (!key) throw new Error('Configure TURNWIRE_HARNESS_DEEPSEEK_API_KEY in the DSH environment file');
-  const base: NodeJS.ProcessEnv = { ...process.env, TURNWIRE_HOME: directory, TURNWIRE_CONFIG_HOME: paths.config, TURNWIRE_DATA_HOME: paths.data, TURNWIRE_CACHE_HOME: paths.cache };
-  // The model credentials belong to DSH alone: the daemon drives the runtime, it never holds a key.
-  for (const name of [...TURNWIRE_SECRETS, 'TURNWIRE_HARNESS_DEEPSEEK_API_KEY']) delete base[name];
-  // Redact the model credentials and anything else long enough to be one: a short value in that
-  // file is configuration, and replacing it everywhere would mangle unrelated log text.
-  const secrets = [...new Set([key, ...Object.values(forwarded)])].filter((secret): secret is string => typeof secret === 'string' && (secret === key || secret.length >= 8));
-  const dshEntry = paths.dshEntry;
+  const system = pick(SYSTEM_ENV);
+  const base = { ...system, ...pick(DAEMON_ENV), TURNWIRE_HOME: paths.state, TURNWIRE_CONFIG_HOME: paths.config, TURNWIRE_DATA_HOME: paths.data, TURNWIRE_CACHE_HOME: paths.cache };
+  const secrets = [...new Set([key, ...Object.values(forwarded), ...TURNWIRE_SECRETS.map(name => process.env[name])])].filter((secret): secret is string => typeof secret === 'string' && secret.length > 0);
+  const clean = (text: string) => secrets.reduce((redacted, secret) => redacted.replaceAll(secret, '[redacted]'), text).replace(/([?&]token=)[^\s)&]+/gi, '$1[redacted]');
   const daemonEntry = resolve(process.env.TURNWIRE_DAEMON_ENTRY ?? join(root, 'apps/daemon/dist/main.js'));
-  const port = process.env.TURNWIRE_DSH_PORT ?? '3080';
-  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error('Invalid TURNWIRE_DSH_PORT');
-  const timeoutMs = Number(process.env.TURNWIRE_HOST_START_TIMEOUT_MS ?? 120_000);
-  const children: ChildProcess[] = []; let stopping = false; let launchURL = '';
-  const clean = (text: string) => secrets.reduce((redacted, secret) => redacted.replaceAll(secret, '[redacted]'), text).replace(/([?&]token=)[^\s)&]+/g, '$1[redacted]');
+  const port = String(integer('TURNWIRE_DSH_PORT', 3080, 1, 65535));
+  const timeoutMs = integer('TURNWIRE_HOST_START_TIMEOUT_MS', 120_000, 1, 3_600_000);
+  const restartBase = integer('TURNWIRE_HOST_RESTART_DELAY_MS', 500, 1, 60_000);
+  const restartMax = integer('TURNWIRE_HOST_RESTART_MAX_DELAY_MS', 30_000, restartBase, 300_000);
+  const restartLimit = integer('TURNWIRE_HOST_RESTART_LIMIT', 5, 0, 100);
+  const stableMs = integer('TURNWIRE_HOST_STABLE_MS', 60_000, 1, 3_600_000);
+  let stopping = false; let launchURL = ''; let daemon: ChildProcess | undefined;
+  let failures = 0; let reloading = false;
+  let restart: NodeJS.Timeout | undefined; let stable: NodeJS.Timeout | undefined;
   let finish!: (code: number) => void;
   const done = new Promise<number>(ok => { finish = ok; });
+  const alive = (child: ChildProcess | undefined): child is ChildProcess => !!child?.pid && child.exitCode === null && child.signalCode === null;
+  async function terminateChild(child: ChildProcess | undefined) {
+    if (!alive(child)) return;
+    await new Promise<void>(resolveStop => {
+      const kill = setTimeout(() => child.kill('SIGKILL'), 10_000);
+      child.once('exit', () => { clearTimeout(kill); resolveStop(); });
+      child.kill('SIGTERM');
+    });
+  }
   async function stop(code: number) {
-    if (stopping) return; stopping = true; clearTimeout(startup);
-    // Stop the connector first so it can persist cursors before the runtime exits.
-    for (const child of [...children].reverse()) {
-      if (!child.pid || child.exitCode !== null || child.signalCode !== null) continue;
-      await new Promise<void>(resolveStop => {
-        const kill = setTimeout(() => child.kill('SIGKILL'), 10_000);
-        child.once('exit', () => { clearTimeout(kill); resolveStop(); }); child.kill('SIGTERM');
-      });
-    }
+    if (stopping) return;
+    stopping = true; clearTimeout(startup); clearTimeout(restart); clearTimeout(stable);
+    // Full shutdown only: daemon crash/reload never enters this path while DSH is healthy.
+    await terminateChild(daemon);
+    await terminateChild(dsh);
     finish(code);
   }
-  const startup = setTimeout(() => { console.error('DSH startup timed out'); void stop(1); }, timeoutMs);
-  const launch = (entry: string, args: string[], env: NodeJS.ProcessEnv, label: string) => {
-    const child = spawn(process.execPath, [entry, ...args], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] }); children.push(child);
-    child.once('error', error => { console.error(clean(`${label}: ${error.message}`)); void stop(1); });
-    child.once('exit', () => { if (!stopping) { console.error(`${label} exited; supervisor will restart the host`); void stop(1); } });
-    return child;
+  const logOutput = (child: ChildProcess) => {
+    for (const stream of [child.stdout!, child.stderr!]) createInterface({ input: stream }).on('line', line => console.log(clean(line)));
   };
-  // Process environment first, then the file: an operator's exported value wins over the stored one.
-  const dsh = launch(dshEntry, ['--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', port], { ...forwarded, ...base, DSH_HOME: dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, 'DSH');
-  for (const stream of [dsh.stdout!, dsh.stderr!]) createInterface({ input: stream }).on('line', line => {
+  function scheduleRestart() {
+    if (stopping || reloading) return;
+    if (failures >= restartLimit) {
+      console.error('Turnwire restart budget exhausted; DSH remains running. Explicit SIGUSR2 reload retries the daemon.');
+      return;
+    }
+    const delay = Math.min(restartMax, restartBase * 2 ** failures++);
+    console.error(`Turnwire exited; restarting daemon in ${delay}ms (DSH remains running)`);
+    restart = setTimeout(() => { restart = undefined; startDaemon(); }, delay);
+  }
+  function startDaemon() {
+    if (stopping || !launchURL || alive(daemon)) return;
+    const child = spawn(process.execPath, [daemonEntry], { cwd: root, env: { ...base, TURNWIRE_RUNTIME: 'dsh', TURNWIRE_DSH_URL: launchURL }, stdio: ['ignore', 'pipe', 'pipe'] });
+    daemon = child; logOutput(child);
+    stable = setTimeout(() => { failures = 0; }, stableMs);
+    let ended = false;
+    const end = () => {
+      if (ended) return; ended = true; clearTimeout(stable);
+      if (daemon === child) daemon = undefined;
+      scheduleRestart();
+    };
+    child.once('error', () => { console.error('Turnwire launch failed'); end(); });
+    child.once('exit', end);
+  }
+  // Explicit operator-only daemon reload. Coalesce repeated signals, including during shutdown;
+  // no automatic backend update path should invoke this before its safe handling is complete.
+  const reload = () => {
+    if (stopping || reloading || !launchURL) return;
+    reloading = true; clearTimeout(restart); restart = undefined; clearTimeout(stable);
+    void terminateChild(daemon).then(() => {
+      reloading = false; failures = 0;
+      if (!stopping) startDaemon();
+    });
+  };
+  const startup = setTimeout(() => { console.error('DSH startup timed out'); void stop(1); }, timeoutMs);
+  const dsh = spawn(process.execPath, [paths.dshEntry, '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', port], { cwd: root, env: { ...system, ...forwarded, DSH_HOME: paths.dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  dsh.once('error', () => { console.error('DSH launch failed'); void stop(1); });
+  dsh.once('exit', () => { if (!stopping) { console.error('DSH exited; stopping dependent daemon for supervisor recovery'); void stop(1); } });
+  // Pinned DSH exposes readiness only through its launch line, not a private endpoint-file API.
+  // Limitation: this is coupled to that stdout format (stderr is never trusted as readiness).
+  // Capture only the exact loopback endpoint on the requested port. The bearer URL stays in a
+  // private pipe and daemon environment, never argv or logs; redact even malformed launch lines.
+  createInterface({ input: dsh.stdout! }).on('line', line => {
     if (!launchURL && !stopping) {
-      const found = line.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/)?.[1];
+      const found = line.match(/^dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9._~%+-]+)\s*$/)?.[1];
       if (found && new URL(found).port === port) {
-        launchURL = found; clearTimeout(startup);
-        const daemon = launch(daemonEntry, [], { ...base, TURNWIRE_RUNTIME: 'dsh', TURNWIRE_DSH_URL: found }, 'Turnwire');
-        for (const output of [daemon.stdout!, daemon.stderr!]) createInterface({ input: output }).on('line', value => console.log(clean(value)));
+        launchURL = found; secrets.push(new URL(found).searchParams.get('token')!);
+        clearTimeout(startup); startDaemon();
       }
     }
     console.log(clean(line));
   });
+  createInterface({ input: dsh.stderr! }).on('line', line => console.log(clean(line)));
   const terminate = () => { void stop(0); };
-  process.once('SIGTERM', terminate); process.once('SIGINT', terminate);
+  process.on('SIGTERM', terminate); process.on('SIGINT', terminate); process.on('SIGUSR2', reload);
   const code = await done;
-  process.off('SIGTERM', terminate); process.off('SIGINT', terminate);
+  process.off('SIGTERM', terminate); process.off('SIGINT', terminate); process.off('SIGUSR2', reload);
   return code;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

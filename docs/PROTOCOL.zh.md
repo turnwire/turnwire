@@ -28,7 +28,7 @@
 
 `subagent.history {sessionId, subagentId, before?, cursor?, limit?}` 是只读请求，权限与 `subagent.list` 相同，不增加管理或控制子代理的权限。Core 解析根会话并确认 ID 属于运行时上报的后代目录，由此获得直接父级和模式，不接受客户端声称的父级。DSH 使用子代理地址的 `session/follow` 快照和 `session/page`，不收养或恢复普通会话。
 
-结果为 `{subagent, records, cursor, hasMore, nextBefore}`。记录包含稳定 `id`、`role`（`user`、`assistant`、`tool`、`error`）、`text`、ISO `time`、`complete`，以及可选的 `tool`、`input`、`output`、`isError`。这是规范化的公开执行内容，不是内部原始日志或隐藏推理。首次请求返回最新窗口；`cursor` 是包含边界的运行时游标（空记录为 `-1`）。更早页面传入该游标及排他边界 `before: nextBefore`。`limit` 默认 50，范围 1–100，是运行时消息窗口而非字节上限。实时快照替换同 ID 记录，不重复追加正文。接口不可用时明确报错，不伪装成空记录。目录中的 `inactive` 只表示当前未运行，不保证可继续子代理以后不会再运行。PWA 使用替换式窗口：查看更早页面时暂停实时轮询，返回最新会重置窗口。DSH 每字段文本限制为 32,000 字符并标记截断，不呈现非文本结构化工具块；有界回溯可能无法带上较早的工具输入，需翻到调用所在页。继承的父会话上下文会被排除；有界扫描无法确定继承边界时拒绝读取。
+结果为 `{subagent, records, cursor, hasMore, nextBefore}`。记录包含稳定 `id`、`role`（`user`、`assistant`、`tool`、`error`）、`text`、ISO `time`、`complete`，以及可选的 `tool`、`input`、`output`、`isError`。这是规范化的公开执行内容，不是内部原始日志或隐藏推理。首次请求返回最新窗口；`cursor` 是包含边界的运行时游标（空记录为 `-1`）。更早页面传入该游标及排他边界 `before: nextBefore`。`limit` 默认 50，范围 1–100，是运行时消息窗口而非字节上限。实时快照替换同 ID 记录，不重复追加正文。接口不可用时明确报错，不伪装成空记录。目录中的 `inactive` 只表示当前未运行，不保证可继续子代理以后不会再运行。PWA 使用简约的最新输出窗口，隐藏委派输入和工具原始载荷，在运行时轮询，不提供子代理分页按钮；协议保留其他客户端读取更早窗口的能力。DSH 每字段文本限制为 32,000 字符并标记截断，不呈现非文本结构化工具块；有界回溯可能无法带上较早的工具输入，需翻到调用所在页。继承的父会话上下文会被排除；有界扫描无法确定继承边界时拒绝读取。
 
 `workspace.mkdir {parent, name}` 在主机已有的绝对父目录下创建一个目录，返回以新目录为根的 `WorkspaceListing`。名称去除首尾空白，必须是单一目录名，拒绝空名、点/双点、正反斜杠和控制字符。非递归创建，重名文件或目录报错，不覆盖。沿用主机 OS 写入权限；已认证配对客户端具有现有会话操作的工作区访问权限，不因此获得主机管理权限。该变更遵循请求回执，同一请求 ID 重放返回原结果，不按只读列表处理。
 
@@ -88,7 +88,11 @@ daemon 绑定到 `127.0.0.1`。Host header 与 origin 检查保护其浏览器�
 
 ## 分页历史
 
-`history.page {sessionId, before?, limit?}` 从 Core 读取完整的投影历史记录。`limit` 为 1–100，默认 40；`before` 是排他的正数原始记录序号。响应 `{events, cursor, hasMore, nextBefore}` 包含紧凑消息事件、完整工具启动/结果对、审批和错误。`nextBefore` 在最旧一页为 null。cursor 是页面捕获时的 journal watermark，而不是最旧记录。`originSeq` 在事件上可选，保留被压缩消息的原始位置；`seq` 是其最新包含版本。原始事件订阅和 `events.list` 保持原有含义。
+`history.page {sessionId, before?, limit?}` 从 Core 读取完整的投影历史记录。`limit` 为 1–100，默认 40；`before` 是排他的正数原始记录序号。响应 `{events, cursor, hasMore, nextBefore}` 包含紧凑消息事件、完整工具启动/结果对、审批和错误。`nextBefore` 在最旧一页为 null。cursor 是页面捕获时的 journal watermark，而不是最旧记录。`originSeq` 在事件上可选，保留被压缩消息的原始位置；`seq` 是其最新包含版本。传输使用下述有界预览，底层 journal 保留完整内容。
+
+超大文本带可见截断说明和事件元数据 `truncation: {originalBytes, reason: "transport-preview"}`，事件 JSON 限制 64 KiB，页面 JSON 限制 512 KiB。无法安全裁剪的超大结构字段明确失败，不静默改写身份或业务数据。`history.record {sessionId, originSeq, offset?, limit?, cursor?}` 分块读取完整投影实体（JSON 事件数组），每块最多 65,536 个 UTF-16 代码单元，服务端不拆开代理对。响应为 `{data, nextOffset, cursor}`，后续请求固定首块给出的记录最大事件序号；版本变化返回 `HISTORY_CHANGED` 并重新开始，记录不存在或跨会话返回 `HISTORY_NOT_FOUND`。客户端使用服务端返回的偏移续读。完整导出补全预览并验证会话、记录及版本，单记录组装超过 64 MiB 或三次版本重试仍失败时明确报错。它保证单记录一致性，不是运行会话的全局原子快照。
+
+回放分批读取、让出事件循环并等待传输写入，限制排队条目和字节，过载时断开而非无限堆积。流式 delta 在同一事务写入 journal 引用，读取时再合并，不再每个 token 重写整段累计消息。不会自动删除 journal 或命令回执：删除回执会影响至多一次提交语义，保留/清理仍需独立维护策略。
 
 加密的 `subscribe` 接受数字 `after` 或 `"latest"`。后者从当前 journal 游标开始，避免为连接健康检查或快照请求进行历史重放。显式事件监听器从快照游标开始订阅，以覆盖并发变更。客户端不得把位于或早于其快照游标的元数据事件应用到当前状态。页面获取与实时事件使用页面 watermark 进行对账，watermark 之后的 delta 只应用一次。
 

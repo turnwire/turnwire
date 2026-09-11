@@ -1,4 +1,6 @@
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
+afterEach(() => vi.unstubAllEnvs());
 import { mkdtemp, writeFile, chmod, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,6 +8,8 @@ import { startCloudflareTunnel } from '../apps/daemon/src/providers/cloudflare.j
 
 async function fixture(source: string) {
   const directory = await mkdtemp(join(tmpdir(), 'turnwire-tunnel-'));
+  const env = hermeticEnv(directory);
+  for (const key of new Set([...Object.keys(process.env), ...Object.keys(env)])) vi.stubEnv(key, env[key]);
   const binary = join(directory, 'cloudflared');
   await writeFile(binary, '#!' + process.execPath + '\n' + source);
   await chmod(binary, 0o700);

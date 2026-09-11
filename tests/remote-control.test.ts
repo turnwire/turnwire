@@ -127,14 +127,25 @@ it('cancels a pending temporary start and retains an explicit off preference acr
   expect(restored.endpoints()).toBeUndefined();
 });
 
-it('surfaces temporary process failure and can retry without leaving a stale pairing endpoint', async () => {
-  let stopped = 0; let crash: () => void = () => {};
+it('automatically recovers temporary process failure without leaving a stale pairing endpoint', async () => {
+  let stopped = 0; let started = 0; let crash: () => void = () => {};
   const { controller } = await setup(async ({ port, exited }) => {
-    crash = exited; return { url: 'http://127.0.0.1:' + port, close: async () => { stopped++; } };
+    started++; crash = exited; return { url: 'http://127.0.0.1:' + port, close: async () => { stopped++; } };
   });
   controller.configure({ mode: 'temporary' }); await until(() => controller.status().state === 'online');
-  crash(); await until(() => stopped === 1);
-  expect(controller.status().state).toBe('error');
+  const previousCrash = crash;
+  crash();
   expect(controller.endpoints()).toBeUndefined();
-  controller.configure({ mode: 'temporary' }); await until(() => controller.status().state === 'online');
+  await until(() => stopped === 1);
+  expect(controller.status().state).toBe('starting');
+  expect(controller.status().message).toContain('Retrying in 1s (1/3)');
+  expect(controller.status().message).toContain('address may change');
+  expect(controller.endpoints()).toBeUndefined();
+  // An identical configure must not bypass backoff or spawn a second recovery.
+  controller.configure({ mode: 'temporary' }); expect(started).toBe(1);
+  await until(() => controller.status().state === 'online');
+  expect(started).toBe(2); expect(stopped).toBe(1);
+  const recovered = controller.endpoints(); expect(recovered).toBeDefined();
+  previousCrash(); expect(controller.endpoints()).toEqual(recovered);
+  expect(controller.status().state).toBe('online');
 });

@@ -3,17 +3,19 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
 
 it('shares a new XDG client config between isolated daemon and CLI without a legacy directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'turnwire-xdg-'));
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_CACHE_HOME: join(root, 'cache'), TURNWIRE_RUNTIME: 'demo', TURNWIRE_PORT: '0' };
-  for (const key of ['TURNWIRE_HOME', 'TURNWIRE_CONFIG_HOME', 'TURNWIRE_DATA_HOME', 'TURNWIRE_CACHE_HOME', 'TURNWIRE_RELAY_URL', 'TURNWIRE_RELAY_TOKEN']) delete env[key];
+  const env = hermeticEnv(root, { HOME: root, XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_CACHE_HOME: join(root, 'cache') });
   const daemon = spawn(process.execPath, ['--import', 'tsx', resolve('apps/daemon/src/main.ts')], { env, stdio: 'pipe' });
   let diagnostics = ''; daemon.stderr.on('data', chunk => { diagnostics += String(chunk); });
   const stopped = new Promise(resolveExit => daemon.once('exit', resolveExit));
   try {
     const clientFile = join(root, 'config/turnwire/client.json');
-    await expect.poll(async () => JSON.parse(await readFile(clientFile, 'utf8')).url, { timeout: 10000, message: diagnostics }).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    try {
+      await expect.poll(async () => JSON.parse(await readFile(clientFile, 'utf8')).url, { timeout: 10000 }).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    } catch (error) { throw new Error(`Isolated daemon did not publish its config (exit ${daemon.exitCode}): ${diagnostics}`, { cause: error }); }
     expect((await stat(clientFile)).mode & 0o777).toBe(0o600);
     expect(await readdir(join(root, 'state/turnwire'))).toContain('state.db');
     const cli = spawn(process.execPath, ['--import', 'tsx', resolve('apps/cli/src/main.ts'), 'status', '--json'], { env, stdio: 'pipe' });

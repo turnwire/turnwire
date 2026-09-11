@@ -125,11 +125,12 @@ describe('durable daemon ownership', () => {
   });
   it('reports background agents the runtime still owns', async () => {
     class BusyRuntime extends DemoRuntime { async busy() { return 2; } }
-    // A runtime that cannot answer must not break the snapshot; it reports none.
+    // A runtime that cannot answer must not break the snapshot or pretend it is idle.
     class UnreachableRuntime extends DemoRuntime { async busy(): Promise<number> { throw new Error('The runtime host is unreachable'); } }
     const device = { id: 'mac', name: 'Test Mac' };
     expect((await new TurnwireCore(new Store(':memory:'), [new BusyRuntime()], device).snapshot()).runtimes[0]?.busy).toBe(2);
-    expect((await new TurnwireCore(new Store(':memory:'), [new UnreachableRuntime()], device).snapshot()).runtimes[0]?.busy).toBe(0);
+    const unavailable = (await new TurnwireCore(new Store(':memory:'), [new UnreachableRuntime()], device).snapshot()).runtimes[0];
+    expect(unavailable?.busy).toBeUndefined(); expect(unavailable?.busyKnown).toBe(false);
   });
   it('reports the background agents under a session as a read clients may poll', async () => {
     class AgentRuntime extends DemoRuntime {

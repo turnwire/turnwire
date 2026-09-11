@@ -35,9 +35,10 @@ export class RemoteBridge {
         let peer = this.peers.get(id);
         if (!peer) {
           peer = new RemotePeer(this.core, id, payload => {
-            if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
-            if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.terminate(); return; }
-            socket.send(JSON.stringify({ type: 'payload', clientId: id, connectionId, payload }));
+            if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) throw new Error('Relay socket closed');
+            const frame = JSON.stringify({ type: 'payload', clientId: id, connectionId, payload });
+            if (socket.bufferedAmount + Buffer.byteLength(frame) > 4 * 1024 * 1024) { socket.terminate(); throw new Error('Relay write overload'); }
+            return new Promise<void>((resolve, reject) => socket.send(frame, error => error ? reject(error) : resolve()));
           }, () => { this.peers.get(id)?.close(); this.peers.delete(id); this.sendControl({ type: 'client.close', clientId: id, connectionId }); }, this.presence, this.routes);
           this.peers.set(id, peer);
         }

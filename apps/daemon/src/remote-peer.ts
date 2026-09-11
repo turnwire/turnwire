@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { connectionPingSchema, connectionAckSchema, TurnwireError } from '@turnwire/protocol';
+import { connectionPingSchema, connectionAckSchema, TurnwireError, projectHistoryEvent } from '@turnwire/protocol';
+import { setImmediate as yieldToIO } from 'node:timers/promises';
+
+const MAX_QUEUE_BYTES = 2 * 1024 * 1024;
+const MAX_QUEUE_ITEMS = 256;
+const REPLAY_BATCH = 32;
 import type { SecureMessage, Pairing } from '@turnwire/protocol';
 import type { TurnwireCore } from '@turnwire/core';
 import { SecureChannel, secureMessage, acceptClientHandshake } from '@turnwire/sdk';
@@ -13,11 +18,20 @@ export class RemotePeer {
   private queue: Promise<void> = Promise.resolve(); private outgoing: Promise<void> = Promise.resolve();
   private active = true; private subscribed?: number; private challenge?: { value: string; started: number };
   private authenticatedDevice?: Pairing;
+  private incomingBytes = 0; private outgoingBytes = 0;
+  private incomingItems = 0; private outgoingItems = 0;
+  private replayGeneration = 0; private requests = 0; private requestBytes = 0;
+  private fail() { if (!this.active) return; this.close(); try { this.disconnect(); } catch { /* Transport may already be gone. */ } }
   private unsubscribe: () => void;
-  constructor(private core: TurnwireCore, readonly id: string, private write: (payload: unknown) => void, private disconnect: () => void, private presence: DevicePresence, private routes: () => string[] = () => []) {
+  constructor(private core: TurnwireCore, readonly id: string, private write: (payload: unknown) => void | Promise<void>, private disconnect: () => void, private presence: DevicePresence, private routes: () => string[] = () => []) {
     this.unsubscribe = core.subscribe(event => { if (this.subscribed !== undefined && event.seq > this.subscribed) { this.subscribed = event.seq; this.send('event', event); } });
   }
   receive(payload: unknown) {
+    if (!this.active) return;
+    let bytes: number;
+    try { bytes = Buffer.byteLength(JSON.stringify(payload)); } catch { this.fail(); return; }
+    if (this.incomingBytes + bytes > MAX_QUEUE_BYTES || this.incomingItems >= MAX_QUEUE_ITEMS) { this.fail(); return; }
+    this.incomingBytes += bytes; this.incomingItems++;
     this.queue = this.queue.then(async () => {
       if (!this.active) return;
       const device = this.core.store.devices().find(d => d.clientId === this.id); if (!device) throw new Error('Revoked device');
@@ -26,7 +40,7 @@ export class RemotePeer {
         if (device.bootstrap && (!device.expiresAt || Date.parse(device.expiresAt) < Date.now())) throw new Error('Pairing expired');
         const accepted = await acceptClientHandshake(payload, device.key, `${device.hostId}:${device.clientId}`);
         if (!this.active) return;
-        this.channel = accepted.channel; this.authenticatedDevice = device; this.write(accepted.reply); return;
+        this.channel = accepted.channel; this.authenticatedDevice = device; await this.write(accepted.reply); return;
       }
       if (!this.channel && device.v === 1) { this.channel = new SecureChannel(device.key, `${device.hostId}:${device.clientId}`, 'host'); this.authenticatedDevice = device; }
       if (!this.channel) throw new Error('Handshake required');
@@ -52,24 +66,55 @@ export class RemotePeer {
         if (device.v === 2) this.send('confirmed', { challenge });
       } else if (message.kind === 'request') {
         // Runtime operations never hold the receive queue; cancellation remains reachable.
-        void this.core.handle(message.body, { clientId: this.id }).then(response => { if (this.active) this.send('response', response); });
+        if (this.requests >= MAX_QUEUE_ITEMS || this.requestBytes + bytes > MAX_QUEUE_BYTES) throw new Error('Request overload');
+        this.requests++; this.requestBytes += bytes;
+        void this.core.handle(message.body, { clientId: this.id }).then(response => { if (this.active) this.send('response', response); })
+          .catch(() => this.fail()).finally(() => { this.requests--; this.requestBytes -= bytes; });
       } else if (message.kind === 'subscribe') {
         const { after } = z.object({ after: z.union([z.number().int().nonnegative(), z.literal('latest')]) }).strict().parse(message.body);
         if (typeof after === 'number' && after > this.core.store.cursor()) throw new TurnwireError('INVALID_CURSOR', 'Event cursor is beyond the host journal; read state again');
-        let cursor = after === 'latest' ? this.core.store.cursor() : after;
-        while (true) { const events = this.core.store.events(cursor, 1000); for (const event of events) { this.send('event', event); cursor = event.seq; } if (events.length < 1000) break; }
-        this.subscribed = cursor; this.send('subscribed', { cursor, heartbeat: true });
-        if (device.v === 2) this.send('routes', { urls: this.routes() });
+        this.subscribed = undefined;
+        const generation = ++this.replayGeneration;
+        // Replay never holds the inbound chain: ping/cancel remain reachable during catchup.
+        void this.replay(after === 'latest' ? this.core.store.cursor() : after, generation, device.v === 2).catch(() => this.fail());
       }
-    }).catch(() => { if (this.active) this.disconnect(); });
+    }).catch(() => this.fail()).finally(() => { this.incomingBytes -= bytes; this.incomingItems--; });
   }
-  private send(kind: SecureMessage['kind'], body: unknown) {
+  private async replay(cursor: number, generation: number, routes: boolean) {
+    while (this.active && generation === this.replayGeneration) {
+      // Live notifications are disabled until an empty journal read. Events written while
+      // yielding are read from the journal next time, without an unbounded side buffer.
+      const events = this.core.store.events(cursor, REPLAY_BATCH, undefined, true);
+      if (!events.length) {
+        this.subscribed = cursor;
+        // No await between the empty read, subscription, and enqueuing its confirmation.
+        this.send('subscribed', { cursor, heartbeat: true });
+        if (routes) this.send('routes', { urls: this.routes() });
+        return;
+      }
+      for (const event of events) {
+        if (!this.active || generation !== this.replayGeneration) return;
+        await this.send('event', event); cursor = event.seq;
+      }
+      await yieldToIO();
+    }
+  }
+  private send(kind: SecureMessage['kind'], body: unknown): Promise<void> {
+    if (!this.active) return Promise.resolve();
     const channel = this.channel;
+    let message: SecureMessage; let bytes: number;
+    try {
+      message = secureMessage(kind, kind === 'event' ? projectHistoryEvent(body as import('@turnwire/protocol').TurnwireEvent) : body);
+      bytes = Buffer.byteLength(JSON.stringify(message));
+    } catch { this.fail(); return Promise.resolve(); }
+    if (this.outgoingBytes + bytes > MAX_QUEUE_BYTES || this.outgoingItems >= MAX_QUEUE_ITEMS) { this.fail(); return Promise.resolve(); }
+    this.outgoingBytes += bytes; this.outgoingItems++;
     this.outgoing = this.outgoing.then(async () => {
       if (!channel || !this.active) return;
-      const payload = await channel.encrypt(secureMessage(kind, body));
-      if (this.active) this.write(payload);
-    }).catch(() => { if (this.active) this.disconnect(); });
+      const payload = await channel.encrypt(message);
+      if (this.active) await this.write(payload);
+    }).catch(() => this.fail()).finally(() => { this.outgoingBytes -= bytes; this.outgoingItems--; });
+    return this.outgoing;
   }
-  close() { this.active = false; this.unsubscribe(); this.subscribed = undefined; }
+  close() { this.active = false; this.replayGeneration++; this.unsubscribe(); this.subscribed = undefined; }
 }

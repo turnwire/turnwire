@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { pairingSchema, connectionPongSchema, responseSchema, eventSchema, TurnwireError } from '@turnwire/protocol';
-import type { Pairing, Method, TurnwireEvent, SecureMessage } from '@turnwire/protocol';
+import { parseMethodResult, pairingSchema, connectionPongSchema, responseSchema, eventSchema, TurnwireError } from '@turnwire/protocol';
+import type { MethodArgs, MethodResult, Pairing, Method, TurnwireEvent, SecureMessage } from '@turnwire/protocol';
 import { SecureChannel, secureMessage, randomSecret } from './crypto.js';
 import { createClientHandshake } from './session-crypto.js';
 import type { SessionChannel } from './session-crypto.js';
 import { retryDelay } from './retry.js';
-import { validateEndpoint } from './index.js';
+import { call, validateEndpoint } from './index.js';
 import type { TurnwireClient, ConnectionState } from './index.js';
 
 export interface ConnectionHealth {
@@ -193,12 +193,14 @@ export class RemoteClient implements TurnwireClient {
       if (JSON.stringify(urls) !== JSON.stringify(this.pairing.directUrls ?? [])) void this.save({ ...this.pairing, directUrls: urls }).catch(() => {});
     }
   }
-  async request<T = unknown>(method: Method, params: unknown = {}, id = crypto.randomUUID()): Promise<T> {
+  call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> { return call(this, method, ...args); }
+  /** @deprecated Use call() for inferred method parameters and results. */
+  async request<T = unknown>(method: Method, params: unknown = {}, id: string = crypto.randomUUID()): Promise<T> {
     await this.connect();
     if (this.pending.has(id)) throw new TurnwireError('REQUEST_PENDING', 'This request is already awaiting a result');
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new TurnwireError('OUTCOME_UNKNOWN', `Request result unknown; check it with request ID ${id}`)); }, 35_000);
-      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
+      this.pending.set(id, { resolve: value => { try { resolve(parseMethodResult(method, value) as T); } catch (error) { reject(error); } }, reject, timer });
       void this.transport!.send('request', { v: 1, id, method, params }).catch(() => { this.pending.delete(id); clearTimeout(timer); reject(new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`)); });
     });
   }

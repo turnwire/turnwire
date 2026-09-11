@@ -6,7 +6,8 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { z } from 'zod';
 import type { TurnwireCore } from '@turnwire/core';
 import type { Pairing } from '@turnwire/protocol';
-import { pairDeviceSchema, revokeDeviceSchema } from '@turnwire/protocol';
+import { pairDeviceSchema, revokeDeviceSchema, projectHistoryEvent } from '@turnwire/protocol';
+import { setImmediate as yieldToIO } from 'node:timers/promises';
 import { encodePairing, validateEndpoint } from '@turnwire/sdk';
 import type { RemoteAccess } from './remote-control.js';
 import type { DeploymentAccess } from './deployment.js';
@@ -107,7 +108,12 @@ export function startDaemonServer(options: DaemonServerOptions) {
     live.add(socket); socket.on('pong', () => live.add(socket));
     let unsubscribe: (() => void) | undefined;
     const timer = setTimeout(() => socket.close(4401, 'Authentication required'), 5000);
-    const send = (frame: unknown) => { if (socket.readyState !== WebSocket.OPEN) return; if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.terminate(); return; } socket.send(JSON.stringify(frame)); };
+    const send = (frame: unknown): Promise<void> => {
+      if (socket.readyState !== WebSocket.OPEN) return Promise.resolve();
+      const payload = JSON.stringify(frame);
+      if (socket.bufferedAmount + Buffer.byteLength(payload) > 4 * 1024 * 1024) { socket.terminate(); return Promise.resolve(); }
+      return new Promise<void>(resolve => socket.send(payload, error => { if (error) socket.terminate(); resolve(); }));
+    };
     socket.on('error', () => {});
     socket.once('message', raw => {
       try {
@@ -116,9 +122,24 @@ export function startDaemonServer(options: DaemonServerOptions) {
         if (auth.after > core.store.cursor()) { socket.close(4002, 'Cursor exceeds journal'); return; }
         clearTimeout(timer);
         let cursor = auth.after;
-        // The synchronous SQLite replay and listener registration share one event-loop turn.
-        while (true) { const events = core.store.events(cursor, 1000); for (const event of events) { send({ type: 'event', event }); cursor = event.seq; } if (events.length < 1000) break; }
-        unsubscribe = core.subscribe(event => send({ type: 'event', event })); send({ type: 'ready', cursor });
+        void (async () => {
+          while (socket.readyState === WebSocket.OPEN) {
+            const events = core.store.events(cursor, 32, undefined, true);
+            if (!events.length) {
+              // Empty journal read, listener registration, and ready enqueue are one atomic
+              // event-loop turn; writes during replay are caught by the next journal read.
+              unsubscribe = core.subscribe(event => {
+                try { void send({ type: 'event', event: projectHistoryEvent(event) }); } catch { socket.close(4002, 'Event exceeds transport limit'); }
+              });
+              void send({ type: 'ready', cursor }); return;
+            }
+            for (const event of events) {
+              if (socket.readyState !== WebSocket.OPEN) return;
+              await send({ type: 'event', event }); cursor = event.seq;
+            }
+            await yieldToIO();
+          }
+        })().catch(() => socket.close(4002, 'Replay failed'));
       } catch { socket.close(4002, 'Invalid authentication'); }
     });
     socket.on('close', () => { clearTimeout(timer); unsubscribe?.(); });

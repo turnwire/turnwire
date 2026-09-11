@@ -155,9 +155,15 @@ it('counts live background agents so a restart is not mistaken for a safe point'
   await expect(runtime.busy()).resolves.toBe(1);
   expect(host.calls.some(c => c.path === '/api/subagents/list' && c.args.parentSessionId === 's')).toBe(true);
 });
-it('reports no background agents rather than failing when the Host cannot answer', async () => {
+it('does not report idle when the Host cannot answer activity queries', async () => {
   const host = await dshHost({ childrenError: true }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
-  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);  await expect(runtime.busy()).resolves.toBe(0);
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1); await expect(runtime.busy()).rejects.toThrow();
+});
+it('counts running grandchildren even when their parent is inactive', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);
+  host.setChildren([{ id: 'child', activity: 'inactive', hasChildren: true }, { id: 'grandchild', parent: 'child', activity: 'running' }]);
+  await expect(runtime.busy()).resolves.toBe(1);
 });
 it('describes the agents under a session, nested ones included, for the progress view', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());

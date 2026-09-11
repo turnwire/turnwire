@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, copyFile, writeFile, readFile, rm } from 'node:fs/promi
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const keys = ['TURNWIRE_HOME','TURNWIRE_CONFIG_HOME','TURNWIRE_DATA_HOME','TURNWIRE_CACHE_HOME','DSH_HOME','DSH_ENV_FILE','DSH_ENTRY','TURNWIRE_NODE','TURNWIRE_UNITS_DIR'];
@@ -10,7 +11,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'turnwire-paths-')); roots.push(root);
   await mkdir(join(root, 'scripts')); await mkdir(join(root, 'home')); await mkdir(join(root, 'mock'));
   for (const name of ['host-paths.sh','install-host-service.mjs']) await copyFile(resolve('scripts', name), join(root, 'scripts', name));
-  const env = { PATH: `${root}/mock:/usr/bin:/bin`, HOME: join(root, 'home') };
+  const env = hermeticEnv(root, { PATH: `${root}/mock:/usr/bin:/bin` });
   const paths = (extra: Record<string,string> = {}) => {
     const result = spawnSync('/bin/bash', ['-c', 'source "$1/scripts/host-paths.sh"; turnwire_resolve_paths "$1"; shift; for key; do printf "%s\\0" "${!key}"; done','paths',root,...keys], { env: {...env,...extra}, encoding:'utf8' });
     expect(result.status,result.stderr).toBe(0);

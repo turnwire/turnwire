@@ -13,6 +13,7 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
 state=""; dsh_home=""; watch="no"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,7 +77,7 @@ chmod 600 "$units/turnwire-dev-reload.path"
 
 cat > "$units/turnwire-dev-reload.service" <<UNIT
 [Unit]
-Description=Rebuild and reload the development host
+Description=Publish changed frontend assets (backend updates require operator)
 [Service]
 Type=oneshot
 Environment=TURNWIRE_HOME=$state
@@ -84,13 +85,27 @@ ExecStart=$root/scripts/host-reload.sh
 UNIT
 chmod 600 "$units/turnwire-dev-reload.service"
 
+# Path watches are not recursive; the timer also catches nested edits.
+cat > "$units/turnwire-dev-reload.timer" <<UNIT
+[Unit]
+Description=Check frontend content for development asset publication
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=30s
+Unit=turnwire-dev-reload.service
+[Install]
+WantedBy=timers.target
+UNIT
+chmod 600 "$units/turnwire-dev-reload.timer"
 systemctl --user daemon-reload
+# Always stop both triggers, including a timer left over from an older install.
+systemctl --user disable --now turnwire-dev-reload.timer turnwire-dev-reload.path
+systemctl --user stop turnwire-dev-reload.service
 if [ "$watch" = "yes" ]; then
-  systemctl --user enable --now turnwire-dev-reload.path
-  echo "automatic reload: enabled"
+  systemctl --user enable --now turnwire-dev-reload.timer turnwire-dev-reload.path
+  echo "automatic frontend publication: enabled; backend and DSH remain manual"
 else
-  systemctl --user disable turnwire-dev-reload.path >/dev/null 2>&1 || true
-  echo "automatic reload: disabled (enable with: systemctl --user enable --now turnwire-dev-reload.path)"
+  echo "automatic frontend publication: disabled (timer and path stopped)"
 fi
-echo "Wrote turnwire-dev.service, turnwire-dev-reload.path and turnwire-dev-reload.service."
-echo "Nothing was started. The development host only runs when you switch to it."
+echo "Wrote development host, reload service, timer and path units."
+echo "The host was not started or restarted. --enable-watch starts only the reload triggers."

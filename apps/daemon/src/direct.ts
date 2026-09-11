@@ -67,7 +67,12 @@ export class DirectController {
                 const device = this.core.store.devices().find(d => d.clientId === auth.clientId);
                 if (!device || device.v !== 2 || !equalSecret(auth.token, device.token)) { socket.close(4401); return; }
                 id = auth.clientId; this.peers.get(id)?.socket.close(4001); this.peers.get(id)?.peer.close();
-                peer = new RemotePeer(this.core, id, payload => { if (socket.readyState !== WebSocket.OPEN) return; if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.terminate(); return; } socket.send(JSON.stringify({ type: 'payload', payload })); }, () => socket.close(4002), this.presence, () => this.endpoints());
+                peer = new RemotePeer(this.core, id, payload => {
+                  if (socket.readyState !== WebSocket.OPEN) throw new Error('Direct socket closed');
+                  const frame = JSON.stringify({ type: 'payload', payload });
+                  if (socket.bufferedAmount + Buffer.byteLength(frame) > 4 * 1024 * 1024) { socket.terminate(); throw new Error('Direct write overload'); }
+                  return new Promise<void>((resolve, reject) => socket.send(frame, error => error ? reject(error) : resolve()));
+                }, () => socket.close(4002), this.presence, () => this.endpoints());
                 this.peers.set(id, { socket, peer }); clearTimeout(timer); socket.send(JSON.stringify({ type: 'ready', online: true })); return;
               }
               if (frame.type !== 'payload') throw new Error('Invalid payload'); peer.receive(frame.payload);

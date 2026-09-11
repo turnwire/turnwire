@@ -106,7 +106,7 @@ it('provides English and Chinese help, localized limits, and metadata-only summa
 });
 it('acknowledges image-only live messages while attached', async () => {
   const { request, log, close, dispatch } = setup();
-  request.mockResolvedValueOnce({ sessions: [{ id: 's' }] }).mockResolvedValueOnce({ events: [], cursor: 0, hasMore: false });
+  request.mockResolvedValueOnce({ sessions: [{ id: 's' }] }).mockResolvedValueOnce({ events: [], cursor: 0, hasMore: false, nextBefore: null });
   const unsubscribe = vi.fn();
   vi.spyOn(LocalClient.prototype, 'subscribe').mockImplementation(handler => {
     setImmediate(() => {

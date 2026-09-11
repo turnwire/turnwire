@@ -2,11 +2,15 @@
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { chromium, expect } from '@playwright/test';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
+const temporary = await mkdtemp(join(tmpdir(), 'turnwire-image-browser-'));
 const root = resolve(import.meta.dirname, '..');
 const server = await createServer({ configFile: false, root, optimizeDeps: { include: ['react', 'react-dom/client', 'zod'] }, plugins: [react(), { name: 'image-fixture', configureServer(server) { server.middlewares.use('/image-fixture', (_req, res) => { res.setHeader('content-type', 'text/html'); res.setHeader('Content-Security-Policy', "img-src 'self' data:"); res.end('<div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh"; RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => type => type; window.__vite_plugin_react_preamble_installed__ = true;</script><script type="module" src="/tests/fixtures/image-input.tsx"></script>'); }); } }], resolve: { alias: { '@turnwire/sdk': resolve(root, 'packages/sdk/src/index.ts'), '@turnwire/protocol': resolve(root, 'packages/protocol/src/index.ts') } }, server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({ channel: 'chrome', headless: true, env: hermeticEnv(temporary) });
 const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const image = { name: 'tiny.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6R9sAAAAASUVORK5CYII=', 'base64') };
@@ -40,4 +44,4 @@ try {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
   console.log('Image browser fixture passed: picker, image-only, removal, RPC failure preservation, limits/types, paste, session reset, lazy received data URL, unsupported feedback, mobile width.');
-} finally { await browser.close(); await server.close(); }
+} finally { await browser.close(); await server.close(); await rm(temporary, { recursive: true, force: true }); }

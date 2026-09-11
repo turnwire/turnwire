@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, copyFile, writeFile, readFile, rm, symlink, stat, chmod
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -33,7 +34,7 @@ esac`);
   for (const name of ['curl', 'tar', 'xz', 'sha256sum']) await command(`mock/${name}`, `echo '${name}' >> "$FIXTURE/calls"; exit 90`);
   const run = (args: string[] = [], env: Record<string, string> = {}) => {
     const result = spawnSync('/bin/bash', [join(root, 'scripts/start-host.sh'), ...args], {
-      env: { PATH: `${root}/mock:/usr/bin:/bin`, HOME: join(root, 'home'), FIXTURE: root, ...env }, encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      env: hermeticEnv(root, { PATH: `${root}/mock:/usr/bin:/bin`, FIXTURE: root, ...env }), encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { ...result, output: result.stdout + result.stderr };
   };

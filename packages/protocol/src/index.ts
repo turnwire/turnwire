@@ -104,11 +104,11 @@ export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('question.resolved'), question: questionSchema }),
 ]);
 export type EventData = z.infer<typeof eventDataSchema>;
-export const eventSchema = z.object({ seq: z.number().int().nonnegative(), time: z.string(), originSeq: z.number().int().nonnegative().optional(), data: eventDataSchema });
+export const eventSchema = z.object({ seq: z.number().int().nonnegative(), time: z.string(), originSeq: z.number().int().nonnegative().optional(), data: eventDataSchema, truncation: z.object({ originalBytes: z.number().int().nonnegative(), reason: z.literal('transport-preview') }).optional() });
 export type TurnwireEvent = z.infer<typeof eventSchema>;
 export interface RuntimeInfo { id: string; name: string; online: boolean; message: string; capabilities: RuntimeCapabilities;
   /** Background agents the runtime still owns; restarting the host would kill them. */
-  busy?: number }
+  busy?: number; busyKnown?: boolean }
 /**
  * One background agent under a session, as the runtime describes it. A delegation tool returns as
  * soon as it hands work to a child, so the parent's own transcript cannot say what the child is
@@ -210,6 +210,7 @@ export const methodSchemas = {
   /** Delegate or reclaim this session's approvals. Enabling it also settles what is already waiting. */
   'session.autoApprove': z.object({ sessionId: idSchema, enabled: z.boolean() }).strict(),
   'history.page': z.object({ sessionId: idSchema, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(100).default(40) }).strict(),
+  'history.record': z.object({ sessionId: idSchema, originSeq: z.number().int().nonnegative(), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(65_536).default(65_536), cursor: z.number().int().nonnegative().optional() }).strict(),
   'events.list': z.object({ after: z.number().int().nonnegative().default(0), sessionId: idSchema.optional(), limit: z.number().int().min(1).max(1000).default(500) }).strict(),
   /** Live background agents under one session. A read, so clients may poll it like a snapshot. */
   'subagent.list': z.object({ sessionId: idSchema }).strict(),
@@ -329,7 +330,8 @@ export type RelayAuth = z.infer<typeof relayAuthSchema>;
 export { deploymentConfigSchema, deploymentStatusSchema } from './deployment.js';
 export type { DeploymentConfig, DeploymentStatus } from './deployment.js';
 
-export { eventSessionId, historyKey, historyOrder, reduceHistory, HistoryBuffer } from './history.js';
+export { projectHistoryEvent, HISTORY_EVENT_BYTES, HISTORY_PAGE_BYTES, HISTORY_TRUNCATION_MARKER, eventSessionId, historyKey, historyOrder, reduceHistory, HistoryBuffer } from './history.js';
 export type { HistoryPage } from './history.js';
+export * from './rpc-contract.js';
 
 export interface InboxPage { items: Array<{ position: number; approval: Approval; sessionTitle: string }>; nextBefore: number | null; cursor: number }
