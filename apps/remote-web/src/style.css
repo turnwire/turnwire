@@ -132,11 +132,14 @@
 .composer-attachments { min-width: 0; max-height: 35dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .composer-attachments .approval-panel { min-width: 0; overflow-wrap: anywhere; }
 .agent-list { display: grid; gap: 4px; min-width: 0; max-height: 26dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
-.agent-heading { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: #7d8ca3; }
+.agent-strip-toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 32px; padding: 2px; border: 0; background: transparent; color: #55647a; font-size: 11px; line-height: 1.4; text-align: left; }
+.agent-strip-toggle .agent-caret { margin-left: auto; }
+.agent-strip-toggle[aria-expanded="true"] .agent-caret { transform: rotate(90deg); }
+.agent-strip-toggle:hover { background: #e9eef7; }
 .agent-row { display: grid; grid-template-columns: minmax(0, 1fr); }
 /* The row is the control that opens the child's own plan, so it keeps the strip's flat look while
    being a button: full width, left aligned, and never wider than the strip it lives in. */
-.agent-item { display: flex; align-items: baseline; gap: 7px; font-size: 11px; color: #55647a; width: 100%; min-width: 0; border: 0; background: transparent; padding: 3px 2px; text-align: left; justify-content: flex-start; border-radius: 6px; }
+.agent-item { display: flex; align-items: center; line-height: 1.4; gap: 7px; font-size: 11px; color: #55647a; width: 100%; min-width: 0; border: 0; background: transparent; padding: 3px 2px; text-align: left; justify-content: flex-start; border-radius: 6px; }
 .agent-item:hover { background: #e9eef7; border-color: transparent; }
 .agent-dot { flex-shrink: 0; align-self: center; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: agent-pulse 1.6s ease-in-out infinite; }
 .agent-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

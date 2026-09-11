@@ -26,6 +26,7 @@ const todoKey = { pending: 'agents.todoPending', in_progress: 'agents.todoInProg
  */
 export function AgentStrip({ agents, client, sessionId, connected }: { agents: SubagentView[]; client?: TurnwireClient; sessionId: string; connected: boolean }) {
   useLocale();
+  const [expandedStrip, setExpandedStrip] = useState(false);
   const [open, setOpen] = useState<string>();
   const [all, setAll] = useState(false);
   const [inactive, setInactive] = useState(false);
@@ -37,7 +38,8 @@ export function AgentStrip({ agents, client, sessionId, connected }: { agents: S
   const shown = [...running.filter((agent, index) => all || index < MAX_AGENT_ROWS || agent.id === open), ...resting.filter(agent => inactive || agent.id === open)];
   const byId = new Map(agents.map(agent => [agent.id, agent]));
   return <div className="agent-strip" role="status" aria-label={translate('agents.aria')}>
-    {running.length > 0 && <div className="agent-heading">{translate('agents.running', { count: running.length })}</div>}
+    <button type="button" className="agent-strip-toggle" aria-expanded={expandedStrip} onClick={() => setExpandedStrip(value => !value)}><span className="agent-dot" data-activity={running.length ? 'running' : 'inactive'} aria-hidden="true" /><span>{translate('agents.running', { count: running.length })}</span><span className="agent-caret" aria-hidden="true">›</span></button>
+    {expandedStrip && <>
     {resting.length > 0 && <button type="button" className="agent-more" aria-expanded={inactive} onClick={() => setInactive(value => !value)}>{translate(inactive ? 'agents.inactiveHide' : 'agents.inactiveShow', { count: resting.length })}</button>}
     <div className="agent-list">{shown.map(agent => {
       const expanded = open === agent.id;
@@ -69,5 +71,6 @@ export function AgentStrip({ agents, client, sessionId, connected }: { agents: S
       </div>;
     })}</div>
     {running.length > MAX_AGENT_ROWS && <button type="button" className="agent-more" aria-expanded={all} onClick={() => setAll(value => !value)}>{all ? translate('agents.collapse') : translate('agents.showAll', { count: running.length })}</button>}
+    </>}
   </div>;
 }

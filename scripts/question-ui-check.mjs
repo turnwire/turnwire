@@ -206,10 +206,19 @@ try {
     await expect(pendingCard).toHaveCount(0);
   }
 
-  // Opening a child shows its own plan, with the status column aligned down the list.
+  // The footer starts compact and only mounts child readers after explicit expansion.
+  const stripToggle = page.locator('.agent-strip-toggle');
+  await expect(stripToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.agent-item')).toHaveCount(0);
+  await stripToggle.click();
+  await expect(stripToggle).toHaveAttribute('aria-expanded', 'true');
   const row = page.locator('.agent-item').first();
   await expect(row).toHaveAttribute('aria-expanded', 'false');
   await expect(row).toHaveAccessibleName(/Review the queue strip/);
+  expect(await row.evaluate(element => { const dot = element.querySelector('.agent-dot').getBoundingClientRect(); const text = element.querySelector('.agent-label').getBoundingClientRect(); return Math.abs(dot.y + dot.height / 2 - text.y - text.height / 2); })).toBeLessThan(1);
+  await stripToggle.click();
+  await expect(page.locator('.agent-item')).toHaveCount(0);
+  await stripToggle.click();
   await expect(page.locator('.agent-detail')).toHaveCount(0);
   await row.click();
   await expect(row).toHaveAttribute('aria-expanded', 'true');
@@ -321,6 +330,8 @@ try {
   // Latest bounded history can omit the turn boundary; do not guess from catalog timestamps.
   await expect(page.locator('.agent-strip')).toHaveCount(0);
   await page.getByRole('button', { name: 'Load earlier records' }).click();
+  await expect(stripToggle).toHaveAttribute('aria-expanded', 'false');
+  await stripToggle.click();
   await expect(page.locator('.agent-item')).toHaveCount(3);
   await expect(page.locator('.agent-detail')).toHaveCount(0);
   await expect(page.locator('.agent-more')).toHaveAttribute('aria-expanded', 'false');
