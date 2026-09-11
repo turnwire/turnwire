@@ -6,6 +6,8 @@ One agent session, continued across a Mac, a terminal, and a phone: **the host d
 
 ### How it fits together
 
+![Turnwire architecture: local clients and the phone connect to one host, which stores shared state and runs tasks through DSH.](docs/architecture.svg)
+
 - **Clients:** CLI, interactive terminal (TUI), native Mac app, and phone PWA — all access the same host and session state.
 - **Remote connection:** The phone reaches the host through a Relay or a configured tunnel. Paired session traffic is encrypted; the Relay forwards ciphertext.
 - **Host and state:** `turnwire-host` runs Turnwire Core. SQLite stores metadata, cached events, approvals, and command receipts.
