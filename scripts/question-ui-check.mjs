@@ -271,7 +271,16 @@ try {
     expect(await page.locator('.agent-list').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
     const toolbar = page.locator('.composer-bottom');
     const before = await toolbar.locator(':scope > div').boundingBox();
-    await toolbar.locator('.composer-path > span').evaluate(el => { el.textContent = '/workspace/' + 'very-long-directory-'.repeat(50); });
+    await toolbar.locator('.composer-path bdi').evaluate(el => { el.textContent = '/workspace/' + 'very-long-directory-'.repeat(50) + '/leaf'; });
+    await expect(toolbar.locator('.composer-path > span')).toHaveCSS('direction', 'rtl');
+    await expect(toolbar.locator('.composer-path bdi')).toHaveCSS('direction', 'ltr');
+    const leafVisible = await toolbar.locator('.composer-path > span').evaluate(el => {
+      const text = el.querySelector('bdi').firstChild;
+      const range = document.createRange(); range.setStart(text, text.textContent.length - 4); range.setEnd(text, text.textContent.length);
+      const leaf = range.getBoundingClientRect(); const box = el.getBoundingClientRect();
+      return leaf.left >= box.left && leaf.right <= box.right + 1;
+    });
+    expect(leafVisible).toBe(true);
     const after = await toolbar.locator(':scope > div').boundingBox();
     expect(after.width).toBeCloseTo(before.width, 1);
     expect(after.x).toBeCloseTo(before.x, 1);
