@@ -17,7 +17,6 @@ export function InlineChild({ agent, client, sessionId, connected, tool }: { age
         <span className="agent-caret" aria-hidden="true">›</span>
       </button>
       {open && <div className="inline-child-interaction">
-        {tool}
         <ChildExecution key={agent.id} client={client} sessionId={sessionId} subagentId={agent.id} connected={connected} running={agent.activity === 'running'} />
       </div>}
     </>}

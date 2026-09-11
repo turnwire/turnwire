@@ -223,14 +223,13 @@ try {
   await row.click();
   await expect(row).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 1');
-  await page.locator('[data-record-id="child-tool"] summary').click();
-  await expect(page.getByText('Child tool result body', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-record-id="child-tool"] .tool-status')).toHaveText('Returned');
+  await expect(page.locator('.child-tool details, .child-tool pre, .child-user')).toHaveCount(0);
+  await expect(page.getByText('Child tool result body', { exact: true })).toHaveCount(0);
   runtime.historyVersion = 2;
   await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 2');
-  await page.getByRole('button', { name: 'Older page', exact: true }).click();
-  await expect(page.getByText('Older child request', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Return to latest (reset)', exact: true }).click();
-  await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 2');
+  await expect(page.getByRole('button', { name: 'Older page', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Return to latest (reset)', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Refresh latest', exact: true })).toHaveCount(0);
   runtime.historyFailure = true;
   await expect(page.locator('.child-execution [role="alert"]')).toContainText('Stale execution');
@@ -244,12 +243,12 @@ try {
   await expect(plan.nth(1)).toHaveAttribute('data-status', 'in_progress');
   await expect(page.locator('.agent-meta')).toContainText('Can continue');
   const compact = await page.locator('.agent-detail').evaluate(detail => ({
-    heading: getComputedStyle(detail.querySelector('.child-execution-heading strong')).fontSize,
+    headings: detail.querySelectorAll('.child-execution-heading').length,
     body: getComputedStyle(detail.querySelector('.child-record .message-text')).fontSize,
     nestedScroll: getComputedStyle(detail).overflowY,
     recordsScroll: getComputedStyle(detail.querySelector('.child-records')).overflowY,
   }));
-  expect(compact).toEqual({ heading: '12px', body: '12px', nestedScroll: 'visible', recordsScroll: 'visible' });
+  expect(compact).toEqual({ headings: 0, body: '12px', nestedScroll: 'visible', recordsScroll: 'visible' });
   const columns = await page.evaluate(() => {
     const strip = document.querySelector('.agent-strip'); const bounds = strip.getBoundingClientRect();
     const rows = [...document.querySelectorAll('.agent-plan>li')].map(li => [...li.children].map(child => child.getBoundingClientRect().left));

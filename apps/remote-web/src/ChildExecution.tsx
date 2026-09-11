@@ -1,10 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { MessageBody, ToolCall } from './MessagePresentation';
+import { MessageBody, ToolHeading } from './MessagePresentation';
 import { loadSubagentHistoryPage, type TurnwireClient } from '@turnwire/sdk';
 import type { SubagentHistoryPage } from '@turnwire/protocol';
 import { t, useLocale } from './i18n';
 
-/** A bounded snapshot window. Older pages replace this window; they never merge with live data. */
+/** A bounded latest snapshot, refreshed without moving the reader's scroll position. */
 interface ChildExecutionProps { client?: TurnwireClient; sessionId: string; subagentId: string; running: boolean; connected: boolean }
 export function ChildExecution(props: ChildExecutionProps) {
   const identity = useRef({ client: props.client, sessionId: props.sessionId, subagentId: props.subagentId, generation: 0 });
@@ -17,24 +17,20 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
   const [page, setPage] = useState<SubagentHistoryPage>();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [window, setWindow] = useState<{ before?: number; cursor?: number; revision: number }>({ revision: 0 });
+  const [revision, setRevision] = useState(0);
   const viewport = useRef<HTMLDivElement>(null);
-  const pendingScroll = useRef<'latest' | 'older' | undefined>('latest');
-  const older = window.before !== undefined;
+  const pendingScroll = useRef(true);
+  // Delegated prompts remain in source history, but aren't a child conversation participant.
+  const records = page?.records.filter(record => record.role !== 'user');
   useLayoutEffect(() => {
-    const records = viewport.current;
-    if (!pendingScroll.current || !page?.records.length || !records) return;
+    const element = viewport.current;
+    if (!pendingScroll.current || !records?.length || !element) return;
     // AgentStrip has one shared scroll container; inline readers scroll their own records.
     // Never scroll the conversation or document, and never reset a reader during polling.
-    const latest = pendingScroll.current === 'latest';
-    const list = records.closest<HTMLElement>('.agent-list');
-    if (list) {
-      const edge = latest ? 'bottom' : 'top';
-      list.scrollTop += records.getBoundingClientRect()[edge] - list.getBoundingClientRect()[edge];
-    } else {
-      records.scrollTop = latest ? records.scrollHeight : 0;
-    }
-    pendingScroll.current = undefined;
+    const list = element.closest<HTMLElement>('.agent-list');
+    if (list) list.scrollTop += element.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom;
+    else element.scrollTop = element.scrollHeight;
+    pendingScroll.current = false;
   }, [page]);
   useEffect(() => {
     let active = true;
@@ -44,7 +40,7 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
     const load = async () => {
       if (firstRead) setLoading(true);
       try {
-        const result = await loadSubagentHistoryPage(client, { sessionId, subagentId, limit: 50, before: window.before, cursor: window.cursor });
+        const result = await loadSubagentHistoryPage(client, { sessionId, subagentId, limit: 50 });
         if (!active) return;
         setPage(result); setError('');
       } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -52,29 +48,27 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
         if (active) {
           firstRead = false;
           setLoading(false);
-          if (running && !older) timer = setTimeout(() => void load(), 2000);
+          if (running) timer = setTimeout(() => void load(), 2000);
         }
       }
     };
     void load();
     return () => { active = false; if (timer) clearTimeout(timer); };
-  }, [client, sessionId, subagentId, running, connected, window, older]);
+  }, [client, sessionId, subagentId, running, connected, revision]);
   return <section className="child-execution" aria-label={t('execution.aria')}>
-    <div className="child-execution-heading"><strong>{t('execution.title')}</strong><span>{t(older ? 'execution.olderStatus' : running ? 'execution.liveStatus' : 'execution.inactiveStatus')}</span></div>
+    {page?.hasMore && <small>{t('execution.latestOutput')}</small>}
     {!connected && <p role="status">{t('execution.offline')}</p>}
-    {error && <p role="alert">{t(page ? 'execution.stale' : 'execution.loadError', { error })} <button type="button" disabled={!connected || loading} onClick={() => setWindow(value => ({ ...value, revision: value.revision + 1 }))}>{t('execution.retry')}</button></p>}
+    {error && <p role="alert">{t(page ? 'execution.stale' : 'execution.loadError', { error })} <button type="button" disabled={!connected || loading} onClick={() => setRevision(value => value + 1)}>{t('execution.retry')}</button></p>}
     {loading && <p role="status">{t('execution.loading')}</p>}
-    {page && !page.records.length && <p>{t('execution.empty')}</p>}
-    <div className="child-records" ref={viewport}>{page?.records.map(record => <div key={record.id} className={`child-record child-${record.role}`} data-record-id={record.id}>
-      {record.role === 'tool' ? <ToolCall message={{ ...record, input: record.input ?? '', output: record.output ?? (record.complete ? record.text : t(running && !older ? 'execution.pendingResult' : 'tool.noResult')) }} running={running && !older} /> : <MessageBody
-        message={{ ...record, id: `${instanceId}-${record.id}` }} userLabel={t('execution.role.user')} authorLabel={t(`execution.role.${record.role}`)}
-        streaming={!record.complete && running && !older} status={!record.complete ? t(running && !older ? 'execution.inProgress' : 'tool.noResult') : undefined}
-      />}
+    {records && !records.length && <p>{t('execution.empty')}</p>}
+    <div className="child-records" ref={viewport}>{records?.map(record => <div key={record.id} className={`child-record child-${record.role}`} data-record-id={record.id}>
+      {record.role === 'tool' ? <>
+        <div className="child-tool-summary"><ToolHeading message={{ ...record, output: undefined, text: '' }} /><span className="tool-status">{t(record.isError ? 'tool.failed' : record.complete ? 'tool.returned' : running ? 'tool.running' : 'tool.noResult')}</span></div>
+        {record.isError && <p className="child-tool-error">{record.output ?? record.text}</p>}
+      </> : <>
+        <MessageBody message={{ ...record, id: `${instanceId}-${record.id}` }} lead={false} streaming={!record.complete && running} />
+        {!record.complete && !running && <span className="message-status">{t('tool.noResult')}</span>}
+      </>}
     </div>)}</div>
-    <div className="child-execution-actions">
-      {page?.hasMore && page.nextBefore !== null && <button type="button" disabled={!connected || loading} onClick={() => { pendingScroll.current = 'older'; setWindow(value => ({ before: page.nextBefore!, cursor: page.cursor, revision: value.revision + 1 })); }}>{t('execution.older')}</button>}
-      {older && <button type="button" disabled={!connected || loading} onClick={() => { pendingScroll.current = 'latest'; setWindow(value => ({ revision: value.revision + 1 })); }}>{t('execution.latestReset')}</button>}
-    </div>
-    <small>{t('execution.pagingHint')}</small>
   </section>;
 }

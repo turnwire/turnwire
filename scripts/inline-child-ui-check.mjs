@@ -16,7 +16,11 @@ class Fixture extends DemoRuntime {
   async listSubagents() { return ['b', 'a'].map(id => ({ id, parentId: 'runtime-root', depth: 1, label: `Child ${id.toUpperCase()}`, mode: 'continuable', activity: this.active ? 'running' : 'inactive', todos: [] })); }
   async subagentHistory(sessionId, subagent) {
     this.calls.push({ sessionId, subagentId: subagent.id });
-    return { subagent, cursor: 1, hasMore: false, nextBefore: null, records: [{ id: `answer-${subagent.id}`, role: 'assistant', text: `Execution belonging only to ${subagent.id}`, time: '2026-01-01', complete: true }] };
+    return { subagent, cursor: 3, hasMore: false, nextBefore: null, records: [
+      { id: `prompt-${subagent.id}`, role: 'user', text: 'Hidden delegated launch prompt', time: '2026-01-01', complete: true },
+      { id: `tool-${subagent.id}`, role: 'tool', tool: 'read', input: 'child.ts', output: 'Hidden child tool return', text: 'Read source', time: '2026-01-01', complete: true },
+      { id: `answer-${subagent.id}`, role: 'assistant', text: `Execution belonging only to ${subagent.id}\n\n**Markdown retained**\n\n${'Scrollable output\n\n'.repeat(40)}`, time: '2026-01-01', complete: true },
+    ] };
   }
 }
 const runtime = new Fixture();
@@ -68,10 +72,22 @@ try {
   await a.getByRole('button', { name: /Details for Child A/ }).click();
   await b.getByRole('button', { name: /Details for Child B/ }).click();
   await expect(a.locator(':scope > .tool-message')).toHaveCount(0);
-  await expect(a.locator('.inline-child-interaction > .tool-message')).toHaveCount(1);
+  await expect(a.locator('.inline-child-interaction > .tool-message')).toHaveCount(0);
+  await expect(a.locator('.child-user, .child-tool details, .child-tool pre')).toHaveCount(0);
+  await expect(a).not.toContainText('started subagent a');
+  await expect(a.getByRole('button', { name: 'Older page', exact: true })).toHaveCount(0);
   await expect(a.locator('.inline-child-interaction > .child-execution')).toBeVisible();
   await expect(a).toContainText('Execution belonging only to a');
   await expect(b).toContainText('Execution belonging only to b');
+  await expect(a).not.toContainText('Hidden delegated launch prompt');
+  await expect(a).not.toContainText('Hidden child tool return');
+  await expect(a.locator('.markdown-body strong')).toHaveText('Markdown retained');
+  await expect.poll(() => a.locator('.child-records').evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(2);
+  await a.locator('.child-records').evaluate(el => { el.scrollTop = 30; });
+  const position = await a.locator('.child-records').evaluate(el => el.scrollTop);
+  const calls = runtime.calls.length;
+  await expect.poll(() => runtime.calls.length).toBeGreaterThan(calls);
+  expect(await a.locator('.child-records').evaluate(el => el.scrollTop)).toBe(position);
   expect(runtime.calls).toEqual(expect.arrayContaining([{ sessionId: session.id, subagentId: 'a' }, { sessionId: session.id, subagentId: 'b' }]));
   // A new human turn clears the footer even if old children still report running.
   core.publish({ type: 'message.user', sessionId: session.id, messageId: 'next-turn', text: 'New turn without delegation' });

@@ -36,7 +36,7 @@ async function setup() {
   await writeFile(join(directory, 'client.json'), JSON.stringify({ url, token }), { mode: 0o600 });
   const local = new LocalClient(url, token); cleanup.push(() => local.close());
   const cli = async (...args: string[]) => {
-    const result = await run(process.execPath, ['--import', 'tsx', resolve('apps/cli/src/main.ts'), '--json', ...args], { env: { ...process.env, TURNWIRE_HOME: directory }, timeout: 12000 });
+    const result = await run(process.execPath, ['--import', 'tsx', resolve('apps/cli/src/main.ts'), '--json', ...args], { env: { ...process.env, TURNWIRE_HOME: directory, TURNWIRE_CONFIG_HOME: directory, TURNWIRE_DATA_HOME: directory, TURNWIRE_CACHE_HOME: directory }, timeout: 12000 });
     return JSON.parse(result.stdout) as unknown;
   };
   return { core, remote, local, cli, url, token, stopped: () => stopped };

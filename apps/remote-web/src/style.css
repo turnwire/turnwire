@@ -12,7 +12,12 @@
 .child-record .message-author { gap: 6px; margin-bottom: 6px; font-size: 11px; flex-wrap: wrap; }
 .child-record .message-author img, .child-record .message-author .avatar { width: 18px; height: 18px; font-size: 8px; }
 .child-record .message-author time, .child-record .message-status { font-size: 10px; color: var(--muted); }
-.child-record .message-text { padding-left: 24px; font-size: 12px; line-height: 1.5; }
+.child-record .message-text { padding-left: 0; font-size: 12px; line-height: 1.5; }
+.child-tool-summary { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; line-height: 1.4; color: var(--muted); }
+.child-tool-summary .tool-name { flex-shrink: 0; }
+.child-tool-summary .tool-action { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.child-tool-summary .tool-status { margin-left: auto; flex-shrink: 0; font-size: 10px; }
+.child-tool-error { margin-top: 4px; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: #95483d; }
 .child-record .markdown-body { font-size: 12px; line-height: 1.5; }
 .child-record .tool-message { margin: 0 0 4px 24px; }
 .child-record .tool-message pre { font-size: 10.5px; line-height: 1.45; max-height: 24dvh; }

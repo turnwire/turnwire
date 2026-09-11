@@ -12,8 +12,10 @@ const client = {
     fixture.calls.push({ method, ...args });
     await new Promise(resolve => setTimeout(resolve, fixture.delay));
     if (fixture.fail) throw new Error('Fixture history failure');
-    return { subagent: child, cursor: args.cursor ?? 60, hasMore: args.before === undefined, nextBefore: args.before === undefined ? 11 : null,
-      records: fixture.empty ? [] : args.before !== undefined ? [{ id: 'old', role: 'user', text: 'Older execution request', time: '2026-01-01', complete: true }] : [
+    return { subagent: child, cursor: 60, hasMore: true, nextBefore: 11,
+      records: fixture.empty ? [] : [
+        { id: 'prompt', role: 'user', text: 'Delegated prompt stays in history', time: '2026-01-01', complete: true },
+        { id: 'failed', role: 'tool', text: 'Read failed', tool: 'read', input: '/workspace/missing.ts', output: 'Readable child error', isError: true, time: '2026-01-01', complete: true },
         { id: 'answer', role: 'assistant', text: `Execution snapshot ${fixture.version}\n\n${markdown}${'Long body\n\n'.repeat(40)}`, time: '2026-01-01', complete: false },
         { id: 'tool', role: 'tool', text: 'Read files', tool: 'read', input: '/workspace/example.ts', output: 'actual tool output', time: '2026-01-01', complete: true },
         { id: 'pending', role: 'tool', text: 'Pending read', tool: 'read', input: '/workspace/pending.ts', time: '2026-01-01', complete: false },
