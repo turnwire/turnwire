@@ -30,6 +30,10 @@ Honest up front, so you do not discover them halfway through:
 
 ## Getting started
 
+### One-command Linux setup
+
+From the source checkout, run `bash scripts/start-host.sh` (or `npm start` with Node/npm installed). First run prepares the host and prompts privately for the model key; repeated runs leave an active matching service alone or start an installed stopped service. Public phone access remains an explicit configuration step. See [one-command startup](docs/QUICKSTART.md) for prerequisites, safety boundaries and verification status.
+
 ### Step 1: Get the host running
 
 The fastest way to see the whole picture is the offline Demo (no model credentials required):

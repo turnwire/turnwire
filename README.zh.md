@@ -30,6 +30,10 @@ Phone PWA ─ Relay ┘     SQLite
 
 ## 开始使用
 
+### Linux 一命令启动
+
+在源码目录运行 `bash scripts/start-host.sh`（已装 Node/npm 时也可 `npm start`）。首次自动准备主机并隐藏输入模型密钥；再次运行不打断正在运行的同目录服务，已安装但停止的服务直接启动。手机公网连接仍需明确配置。前置条件、安全边界及验证状态见[一命令启动](docs/QUICKSTART.zh.md)。
+
 ### 第 1 步：主机跑起来
 
 最快看到全貌的方式是用离线 Demo（不需要任何模型凭据）：
