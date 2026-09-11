@@ -243,6 +243,13 @@ try {
   await expect(plan.nth(0)).toHaveAttribute('data-status', 'completed');
   await expect(plan.nth(1)).toHaveAttribute('data-status', 'in_progress');
   await expect(page.locator('.agent-meta')).toContainText('Can continue');
+  const compact = await page.locator('.agent-detail').evaluate(detail => ({
+    heading: getComputedStyle(detail.querySelector('.child-execution-heading strong')).fontSize,
+    body: getComputedStyle(detail.querySelector('.child-record-text')).fontSize,
+    nestedScroll: getComputedStyle(detail).overflowY,
+    recordsScroll: getComputedStyle(detail.querySelector('.child-records')).overflowY,
+  }));
+  expect(compact).toEqual({ heading: '12px', body: '12px', nestedScroll: 'visible', recordsScroll: 'visible' });
   const columns = await page.evaluate(() => {
     const strip = document.querySelector('.agent-strip'); const bounds = strip.getBoundingClientRect();
     const rows = [...document.querySelectorAll('.agent-plan>li')].map(li => [...li.children].map(child => child.getBoundingClientRect().left));
