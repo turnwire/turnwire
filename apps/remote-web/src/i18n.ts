@@ -164,6 +164,7 @@ const en = {
   'queue.edit': 'Edit',
   'queue.editLabel': 'Edit the queued message',
   'queue.save': 'Save',
+  'queue.cancelEdit': 'Cancel editing',
   'queue.remove': 'Cancel',
   'queue.steer': 'Jump the queue',
 
@@ -505,6 +506,7 @@ const zh: Catalog = {
   'queue.edit': '编辑',
   'queue.editLabel': '编辑排队中的消息',
   'queue.save': '保存',
+  'queue.cancelEdit': '取消编辑',
   'queue.remove': '取消',
   'queue.steer': '插队',
 

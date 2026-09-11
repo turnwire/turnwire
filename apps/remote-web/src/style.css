@@ -136,7 +136,10 @@
 .queued-strip { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 0 2px 8px; padding: 9px 11px; border: 1px dashed #c3d2ef; border-radius: 10px; background: #f5f8fd; max-height: 32vh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .queued-item { display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 11px; color: #55647a; }
 .queued-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queued-edit { flex: 1; min-width: 0; border: 1px solid #c3d2ef; border-radius: 7px; padding: 5px 7px; background: white; color: var(--ink); font: inherit; font-size: 11px; }
+.queued-item.editing { flex-direction: column; align-items: stretch; gap: 8px; }
+.queued-edit { width: 100%; min-width: 0; min-height: 104px; max-height: 24dvh; border: 1px solid #c3d2ef; border-radius: 7px; padding: 9px 10px; background: white; color: var(--ink); font-size: 14px; line-height: 1.5; resize: vertical; }
+.queued-item.editing .queued-buttons { justify-content: flex-end; }
+.queued-item.editing .queued-buttons button { min-height: 36px; padding: 6px 12px; font-size: 12px; }
 .queued-buttons { flex-shrink: 0; display: flex; gap: 5px; }
 .queued-buttons button { border: 0; border-radius: 7px; padding: 5px 8px; background: #eaf0fd; color: var(--accent); font-size: 10.5px; }
 .queued-buttons button:disabled { opacity: .5; }

@@ -98,11 +98,24 @@ try {
   // Typing does not grow a second set of controls: the row is the only place they exist.
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('另一条草稿');
   await expect(page.getByRole('button', { name: 'Jump the queue', exact: true })).toHaveCount(1);
-  // Edit opens the row in place, and the same three slots stay in the same order.
+  // Editing gets a full-width multiline field and only safe edit actions.
   await queuedRow.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true })).toHaveValue(queuedText);
-  await expect(queuedRow.getByRole('button')).toHaveText(['Save', 'Cancel', 'Jump the queue']);
-  await queuedRow.getByRole('textbox', { name: 'Edit the queued message', exact: true }).press('Escape');
+  await expect(queuedRow.getByRole('button')).toHaveText(['Cancel editing', 'Save']);
+  const editor = queuedRow.locator('textarea.queued-edit');
+  await editor.fill('First line');
+  await editor.press('End'); await editor.press('Enter'); await editor.press('a');
+  await expect(editor).toHaveValue('First line\na');
+  await page.setViewportSize({ width: 320, height: 740 });
+  const editBounds = await editor.boundingBox();
+  expect(editBounds.height).toBeGreaterThanOrEqual(104);
+  expect(editBounds.width).toBeGreaterThan(220);
+  await queuedRow.getByRole('button', { name: 'Cancel editing', exact: true }).click();
+  await expect(queuedRow.locator('.queued-text')).toHaveText(queuedText);
+  await queuedRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(editor).toHaveValue(queuedText);
+  await editor.press('Escape');
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(queuedRow.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('');
   // A queue of many messages scrolls inside its own box instead of taking the screen: the bound is
