@@ -146,6 +146,8 @@ const en = {
   'queue.steer': 'Jump the queue',
 
   // Background agents: a delegation returns at once, so this is where a child's progress shows.
+  'inlineChild.running': 'Child running',
+  'inlineChild.inactive': 'Child inactive',
   'agents.inactiveShow': 'Inactive agents ({count}) — show',
   'agents.inactiveHide': 'Inactive agents ({count}) — hide',
   'execution.aria': 'Child execution',
@@ -457,6 +459,8 @@ const zh: Catalog = {
   'queue.remove': '取消',
   'queue.steer': '插队',
 
+  'inlineChild.running': '子代理运行中',
+  'inlineChild.inactive': '子代理非活跃',
   'agents.inactiveShow': '非活跃子代理（{count}）— 展开',
   'agents.inactiveHide': '非活跃子代理（{count}）— 收起',
   'execution.aria': '子代理执行记录',

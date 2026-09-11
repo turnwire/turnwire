@@ -202,3 +202,12 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
 .choose-folder[aria-busy="true"] { opacity: .65; }
 .folder-picker footer { display: flex; gap: 8px; justify-content: flex-end; }
 .folder-picker footer button { font-size: 11.5px; }
+
+/* Durable launch entries belong to the transcript, not the transient composer strip. */
+.inline-child { margin: 10px 0; border-left: 2px solid var(--line); padding-left: 10px; min-width: 0; }
+.inline-child-toggle { display: flex; width: 100%; align-items: center; gap: 8px; padding: 9px 6px; border: 0; background: transparent; text-align: left; }
+.inline-child-toggle strong { min-width: 0; overflow-wrap: anywhere; flex: 1; font-size: 12px; }
+.inline-child-activity { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.inline-child-toggle[aria-expanded="true"] .agent-caret { transform: rotate(90deg); }
+.inline-child > .tool-message { margin-top: 0; }
+.inline-child .child-execution { margin: 4px 0 10px; }

@@ -8,6 +8,8 @@ import { TurnwireError, eventSessionId } from '@turnwire/protocol';
 import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { AgentStrip } from './AgentStrip';
+import { InlineChild } from './InlineChild';
+import { conversationRows, launchChild, type ConversationRowData } from './inlineChild';
 import { ModelPicker } from './ModelPicker';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
@@ -165,16 +167,16 @@ export function App() {
   const visible = useMemo(() => pending.length ? messages.filter(message => !pending.some(item => item.id === message.id)) : messages, [messages, pending]);
   /**
    * Background agents the session has delegated to. A delegation returns at once, so the transcript
-   * goes quiet while children work; this is the only place their progress shows. Polled while the
+   * goes quiet while children work. Shared by launch entries and the footer strip. Polled while the
    * session runs, and once more when it settles so the last state is not left half-read.
    */
   const [agents, setAgents] = useState<{ sessionId: string; children: SubagentView[] }>();
   // Scope during render, not in an effect: even the first frame of a session switch must not show
-  // another session's children. The strip keeps inactive children discoverable too.
-  const scopedAgents = useMemo(() => agents && agents.sessionId === selected && !session?.archived ? agents.children : [], [agents, selected, session?.archived]);
+  // another session's children. Archived transcript entries remain readable too.
+  const scopedAgents = useMemo(() => agents && agents.sessionId === selected ? agents.children : [], [agents, selected]);
   useEffect(() => {
     const client = clientRef.current;
-    if (!selected || !session || session.archived || !client) return;
+    if (!selected || !session || !client) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
@@ -223,17 +225,7 @@ export function App() {
    * opens a run carries the name, avatar and time; repeating that on every reply is chrome the
    * conversation pays for on a phone.
    */
-  const rows = useMemo(() => {
-    const output: Array<{ key: string; tools?: ConversationMessage[]; message?: ConversationMessage; lead: boolean }> = [];
-    for (const message of visible) {
-      const author = message.role === 'user' ? 'user' : 'assistant';
-      const last = output[output.length - 1];
-      const lastAuthor = last === undefined ? undefined : last.tools !== undefined || last.message?.role !== 'user' ? 'assistant' : 'user';
-      if (message.role === 'tool' && last?.tools !== undefined) { last.tools.push(message); continue; }
-      output.push({ key: message.id, ...(message.role === 'tool' ? { tools: [message] } : { message }), lead: lastAuthor !== author });
-    }
-    return output;
-  }, [visible]);
+  const rows = useMemo(() => conversationRows(visible), [visible]);
   // The model panel hangs off the chip, so it closes the way a menu does: a tap anywhere else, or Esc.
   useEffect(() => {
     if (!showModel) return;
@@ -417,13 +409,13 @@ export function App() {
             {!loading && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
             {/* The wire history does not say that the last assistant message summarizes its predecessors.
                 Keep every received answer visible; only explicit tool details are collapsible. */}
-            {rows.map(row => <ConversationRow key={row.key} row={row} running={turnRunning} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
+            {rows.map(row => <ConversationRow key={`${session.id}:${row.key}`} row={row} running={turnRunning} agents={scopedAgents} client={clientRef.current} sessionId={session.id} connected={connected} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
             <div ref={bottom} /></div></section>
           <footer className="composer-area"><div className="composer-width"><div className="composer-attachments">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
-          <AgentStrip key={session.id} agents={scopedAgents} client={clientRef.current} sessionId={session.id} connected={connected} />
+          <AgentStrip key={session.id} agents={session.archived ? [] : scopedAgents} client={clientRef.current} sessionId={session.id} connected={connected} />
           {pending.length > 0 && <div className="queued-strip" role="status" aria-label={t('queue.aria')}>{pending.map(item => <div className="queued-item" key={item.id}>{editingQueued === item.id ? <input className="queued-edit" aria-label={t('queue.editLabel')} value={queuedDraft} autoFocus onChange={event => setQueuedDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (queuedDraft.trim()) void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() }); } if (event.key === 'Escape') setEditingQueued(undefined); }} /> : <span className="queued-text" title={item.text}>{item.text}</span>}<span className="queued-buttons">{editingQueued === item.id ? <button type="button" disabled={!connected || busy || !queuedDraft.trim()} onClick={() => void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() })}>{t('queue.save')}</button> : <button type="button" disabled={!connected || busy} onClick={() => { setEditingQueued(item.id); setQueuedDraft(item.text); }}>{t('queue.edit')}</button>}<button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'remove' })}>{t('queue.remove')}</button><button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'steer' })}>{t('queue.steer')}</button></span></div>)}</div>}
           </div><form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim()) return; submit(prompt, false); }}>
               <textarea aria-label={t('composer.messageAria')} placeholder={t('composer.placeholder')} value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} disabled={!connected || session.archived || ['interrupted', 'error'].includes(session.status)} onKeyDown={event => { if (event.key !== 'Enter') return; if (event.altKey) { event.preventDefault(); submit(prompt, true); } else if (event.metaKey || event.ctrlKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
@@ -483,8 +475,9 @@ function ToolCall({ message }: { message: ConversationMessage }) {
 }
 
 /** One row of the conversation: a message, or a run of tool calls. */
-function ConversationRow({ row, running, pendingQuestions, disabled, onAnswer }: { row: { key: string; tools?: ConversationMessage[]; message?: ConversationMessage; lead: boolean }; running: boolean; pendingQuestions?: Set<string>; disabled?: boolean; onAnswer?: (question: Question, answers: QuestionAnswerItem[]) => void }) {
+function ConversationRow({ row, running, agents, client, sessionId, connected, pendingQuestions, disabled, onAnswer }: { row: ConversationRowData; running: boolean; agents: SubagentView[]; client?: TurnwireClient; sessionId: string; connected: boolean; pendingQuestions?: Set<string>; disabled?: boolean; onAnswer?: (question: Question, answers: QuestionAnswerItem[]) => void }) {
   const t = useLocale();
+  if (row.launch) return <InlineChild agent={launchChild(row.launch, agents)} client={client} sessionId={sessionId} connected={connected} tool={<ToolCall message={row.launch} />} />;
   if (row.tools) return <ToolRun items={row.tools} running={running} />;
   const message = row.message!;
   if (message.role === 'question' && message.question) return <QuestionCard question={message.question} pending={pendingQuestions?.has(message.question.id) === true} disabled={disabled === true} onAnswer={answers => onAnswer?.(message.question!, answers)} />;
