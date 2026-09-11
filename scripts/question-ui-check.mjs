@@ -269,6 +269,14 @@ try {
     expect(bounds.y).toBeGreaterThanOrEqual(0);
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(640);
     expect(await page.locator('.agent-list').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+    const toolbar = page.locator('.composer-bottom');
+    const before = await toolbar.locator(':scope > div').boundingBox();
+    await toolbar.locator('.composer-path > span').evaluate(el => { el.textContent = '/workspace/' + 'very-long-directory-'.repeat(50); });
+    const after = await toolbar.locator(':scope > div').boundingBox();
+    expect(after.width).toBeCloseTo(before.width, 1);
+    expect(after.x).toBeCloseTo(before.x, 1);
+    expect(await toolbar.locator('.composer-path > span').evaluate(el => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis')).toBe(true);
+    expect(await toolbar.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   }
   // Delay the new session's list: old children must disappear before that request resolves.
   const second = await core.handle({ v: 1, id: crypto.randomUUID(), method: 'session.create', params: { runtimeId: 'demo', title: 'Empty session', cwd: process.cwd() } });
