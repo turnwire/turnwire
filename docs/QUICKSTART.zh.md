@@ -14,7 +14,7 @@ bash scripts/start-host.sh
 
 已经安装 Node/npm 时，也可以运行 `npm start`，两者是同一入口。Bash 入口可以自行准备固定版本 Node。首次下载/构建耗时取决于网络和 CPU；「一命令」不代表无需前置条件或瞬间安装。
 
-脚本检查环境、准备 Node 与依赖、构建 PWA/主机、隐藏输入模型密钥，并调用已有 Linux 安装器注册常驻服务。默认受管主机需要 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，不因此新增或注册模型。已有私有 `config/dsh.env.json` 会保留。不要把密钥放进命令行参数、公开部署文件或截图。
+脚本检查环境、准备 Node 与依赖、构建 PWA/主机、隐藏输入模型密钥，并调用已有 Linux 安装器注册常驻服务。默认受管主机需要 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，不因此新增或注册模型。新安装的配置、状态、运行时和下载缓存分别进入 XDG config/state/data/cache 目录。已有源码目录内的私有 `config/dsh.env.json` 和既有布局保持不变，不自动迁移，详见 [XDG 目录规则](XDG.zh.md)。不要把密钥放进命令行参数、公开部署文件或截图。
 
 需要 Bash、正常工作的 systemd 用户服务及下载/解压 Node 所需工具，不以 root 运行。安装路径使用不含空格的简单路径，与既有服务安装器限制一致。该入口仅支持 Linux；Mac 使用原生/源码安装说明，不会假装安装 Linux 服务。
 

@@ -101,9 +101,9 @@ npm run turnwire -- devices pair --name 我的手机
 
 ## Linux 无头主机与 TUI
 
-无头主机运行与桌面安装相同的 DSH 适配器、daemon、CLI/TUI 和加密远程控制协议。可配置的安装目录包含 `apps`、`packages`、`config`、私有的 `state`、独立的 `dsh-state` 和 `runtime`。复制之前先构建发布产物。`scripts/install-linux-host.sh` 安装经校验和验证的 Node 运行时、锁定后的生产依赖，以及由 `config/dsh-runtime` 固定的 DSH 运行时，然后注册用户服务。不要把 macOS 上平台相关的 `node_modules` 复制到 Linux。
+无头主机运行与桌面安装相同的 DSH 适配器、daemon、CLI/TUI 和加密远程控制协议。新安装目录保留 `apps`、`packages` 及源码配置，外部配置/状态/运行时/缓存使用 [XDG 目录](XDG.zh.md)。已有源码目录内的 `state`、`dsh-state`、`runtime` 及私有配置保持兼容，不自动迁移。复制之前先构建发布产物。`scripts/install-linux-host.sh` 安装经校验和验证的 Node 运行时、锁定后的生产依赖，以及由 `config/dsh-runtime` 固定的 DSH 运行时，然后注册用户服务。不要把 macOS 上平台相关的 `node_modules` 复制到 Linux。
 
-把 DSH 环境映射放进 `config/dsh.env.json`，权限 0600；其中包含 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` 环境变量。该私有文件在目标机器上提供，绝不包含在发布归档中。受管启动器只把它的值传给 DSH。Turnwire 收到的是短期有效的本机回环 DSH 连接 URL；模型值和 URL token 会从服务日志中脱敏。
+首次推荐使用 `bash scripts/start-host.sh` 配置凭据。手动新安装时，把 DSH 环境映射放进 XDG Turnwire 配置目录的 `dsh.env.json`，权限 0600（旧安装仍使用 `config/dsh.env.json`）；其中包含 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` 环境变量。该私有文件在目标机器上提供，绝不包含在发布归档中。受管启动器只把它的值传给 DSH。Turnwire 收到的是短期有效的本机回环 DSH 连接 URL；模型值和 URL token 会从服务日志中脱敏。
 
 在安装目录中运行：
 

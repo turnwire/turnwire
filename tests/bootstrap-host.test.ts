@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, copyFile, writeFile, readFile, rm, symlink, stat, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, copyFile, writeFile, readFile, rm, symlink, stat, chmod, rename } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,6 +10,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'turnwire-bootstrap-')); roots.push(root);
   for (const dir of ['scripts', 'config', 'mock', 'runtime/node/bin', 'home']) await mkdir(join(root, dir), { recursive: true });
   await copyFile(resolve('scripts/start-host.sh'), join(root, 'scripts/start-host.sh'));
+  await copyFile(resolve('scripts/host-paths.sh'), join(root, 'scripts/host-paths.sh'));
   await writeFile(join(root, 'package-lock.json'), '{}');
   const command = async (name: string, body: string) => writeFile(join(root, name), `#!/bin/bash\nset -eu\n[[ -z \${TURNWIRE_HARNESS_DEEPSEEK_API_KEY-} ]] || { echo SECRET_LEAK; exit 99; }\n${body}\n`, { mode: 0o755 });
   await command('mock/id', 'echo 1000');
@@ -20,7 +21,7 @@ case "$2" in
  show) if [[ \${UNIT:-missing} == missing ]]; then echo LoadState=not-found; else
  echo LoadState=loaded
  echo "WorkingDirectory=\${WORK:-$FIXTURE}"
- echo "ExecStart={ path=$FIXTURE/runtime/node/bin/node ; argv[]=$FIXTURE/runtime/node/bin/node $FIXTURE/\${ENTRY:-apps/daemon/dist/host-service.mjs} ; }"
+ echo "ExecStart={ path=\${SERVICE_NODE:-$FIXTURE/runtime/node/bin/node} ; argv[]=\${SERVICE_NODE:-$FIXTURE/runtime/node/bin/node} $FIXTURE/\${ENTRY:-apps/daemon/dist/host-service.mjs} ; }"
  fi ;;
  is-active) [[ \${UNIT:-missing} == active ]] ;;
  start) exit "\${START_FAIL:-0}" ;;
@@ -49,6 +50,18 @@ it.each(['active', 'stopped'])('reuses matching %s service without build or cred
   const f = await fixture(); const result = f.run([], { UNIT: unit }); expect(result.status).toBe(0);
   const calls = await f.calls(); expect(calls).not.toMatch(/npm|install|curl/);
   expect(calls.includes('--user start turnwire-host.service')).toBe(unit === 'stopped');
+});
+it('restarts an installed XDG service using its recorded Node path without reinstalling', async () => {
+  const f = await fixture(); const result = f.run([], { UNIT: 'stopped', SERVICE_NODE: `${f.root}/old-data/runtime/node/bin/node`, XDG_DATA_HOME: `${f.root}/new-data` });
+  expect(result.status, result.output).toBe(0); expect(await f.calls()).toContain('--user start turnwire-host.service'); expect(await f.calls()).not.toMatch(/npm|install|curl/);
+});
+it('fresh bootstrap writes XDG credentials without creating repository runtime or state', async () => {
+  const f = await fixture(); const data = `${f.root}/home/data`;
+  await mkdir(`${data}/turnwire`, { recursive: true }); await rename(`${f.root}/runtime`, `${data}/turnwire/runtime`);
+  const result = f.run([], { XDG_DATA_HOME: data, XDG_CONFIG_HOME: `${f.root}/home/config`, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'private' });
+  expect(result.status, result.output).toBe(0);
+  expect(JSON.parse(await readFile(`${f.root}/home/config/turnwire/dsh.env.json`, 'utf8'))).toEqual({ TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'private' });
+  for (const path of ['runtime', 'state', 'dsh-state', 'config/dsh.env.json']) await expect(stat(join(f.root, path))).rejects.toThrow();
 });
 it('rejects another checkout or development unit without touching service', async () => {
   const f = await fixture();

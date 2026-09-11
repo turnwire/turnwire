@@ -2,6 +2,8 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+New local installations use [XDG directories](XDG.md). Daemon and CLI share one Node-only resolver; native local connection discovery also honors explicit config/home overrides, the existing legacy home, and the XDG config default. Saved native Keychain/UserDefaults connections and remote wire contracts are unchanged. Native discovery changes require macOS compilation/testing (not available in the Linux validation environment).
+
 Per-session auto-approval choices are stored by Core, not in client-local preferences. The shared command and authoritative snapshot preserve an explicit choice across reconnects and host restarts; this does not depend on keeping any client open. New sessions default off; disabling or archiving clears it, and old event journals do not restore prior transient authorization.
 
 [Image messages](IMAGES.md): PWA supports image selection/paste, prepared previews/removal and explicit sending; CLI/TUI use `send <session> [text] --image <path...>` through the SDK. Native code includes a local image picker and reference reads, but macOS compilation/live UI verification remains pending. Runtime `imageInput` advertises transport only: the selected model may reject images. History and text exports retain reference metadata, not embedded bytes. Images do not grant host-administration access.

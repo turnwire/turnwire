@@ -11,4 +11,4 @@ export interface NamedTunnelOptions {
   /** Transport for the tunnel connection. `auto` lets the provider choose. */
   protocol: 'auto' | 'http2' | 'quic';
 }
-export interface TunnelOptions { directory: string; port: number; signal: AbortSignal; progress(message: string): void; exited(): void; token?: string; namedTunnel?: NamedTunnelOptions; changed?(url: string): void }
+export interface TunnelOptions { directory: string; toolsDirectory?: string; port: number; signal: AbortSignal; progress(message: string): void; exited(): void; token?: string; namedTunnel?: NamedTunnelOptions; changed?(url: string): void }

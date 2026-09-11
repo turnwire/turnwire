@@ -19,6 +19,8 @@ case ${1-} in
 esac
 [[ $# -le 1 ]] || fail 'Expected at most one argument; use --help.'
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/scripts/host-paths.sh"
+turnwire_resolve_paths "$root"
 [[ $root =~ ^[A-Za-z0-9_./-]+$ ]] || fail 'Installation path may contain only letters, digits, underscores, dots, dashes and slashes.'
 [[ $(uname -s) == Linux ]] || fail 'Production startup requires Linux with systemd; use a Linux host (not macOS).'
 [[ $(id -u) != 0 ]] || fail 'Run as the non-root account that will own the systemd user service, not sudo/root.'
@@ -37,7 +39,7 @@ show_connection() {
   printf '%s\n' 'Service activation is not a readiness check; if still initializing, inspect status before connecting.'
 }
 if [[ $load != not-found ]]; then
-  [[ $load == loaded && $work == "$root" && $exec_start == *"$root/runtime/node/bin/node"* && $exec_start == *"$root/apps/daemon/dist/host-service.mjs"* ]] || fail 'Existing turnwire-host.service does not match this checkout production host (WorkingDirectory/ExecStart). Refusing to modify, stop or replace it; choose its owning checkout or resolve the conflict manually.'
+  [[ $load == loaded && $work == "$root" && $exec_start =~ path=([^\;]+/node)[[:space:]]*\; && $exec_start == *"$root/apps/daemon/dist/host-service.mjs"* ]] || fail 'Existing turnwire-host.service does not match this checkout production host (WorkingDirectory/ExecStart). Refusing to modify, stop or replace it; choose its owning checkout or resolve the conflict manually.'
   if [[ $mode == check ]]; then show_connection 'matching installation (check only)'; exit 0; fi
   if systemctl --user is-active --quiet "$unit"; then
     show_connection 'already active; nothing changed'
@@ -47,17 +49,18 @@ if [[ $load != not-found ]]; then
   fi
   exit 0
 fi
-[[ ! -e "$HOME/.config/systemd/user/$unit" && ! -L "$HOME/.config/systemd/user/$unit" ]] || fail 'An unloaded user unit already exists; inspect it and reload systemd manually before retrying.'
+[[ ! -e "$TURNWIRE_UNITS_DIR/$unit" && ! -L "$TURNWIRE_UNITS_DIR/$unit" && ! -e "$HOME/.config/systemd/user/$unit" && ! -L "$HOME/.config/systemd/user/$unit" ]] || fail 'An unloaded user unit already exists; inspect it and reload systemd manually before retrying.'
 [[ -f "$root/package-lock.json" && -f "$root/scripts/install-linux-host.sh" ]] || fail 'Run from a complete source checkout with package-lock.json and the Linux installer.'
-[[ ! -L "$root/config" && ! -L "$root/config/dsh.env.json" ]] || fail 'Refusing a symlinked credential file or config directory.'
-[[ ! -e "$root/config/dsh.env.json" || -f "$root/config/dsh.env.json" ]] || fail 'Credential path must be a regular private JSON file.'
+config_dir=$(dirname -- "$DSH_ENV_FILE")
+[[ ! -L "$config_dir" && ! -L "$DSH_ENV_FILE" ]] || fail 'Refusing a symlinked credential file or config directory.'
+[[ ! -e "$DSH_ENV_FILE" || -f "$DSH_ENV_FILE" ]] || fail 'Credential path must be a regular private JSON file.'
 for tool in curl tar xz sha256sum awk mktemp; do command -v "$tool" >/dev/null || fail "Required command missing: $tool"; done
 case $(uname -m) in x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) fail 'Supported Linux architectures are x86_64 and arm64.' ;; esac
 if [[ $mode == check ]]; then
   printf '%s\n' 'Local preflight passed; no changes made. Network, npm access and credential JSON are validated on first start.'
   exit 0
 fi
-if [[ ! -f "$root/config/dsh.env.json" && -z $credential ]]; then
+if [[ ! -f "$DSH_ENV_FILE" && -z $credential ]]; then
   if ! { exec 3<>/dev/tty; } 2>/dev/null; then fail 'No credential available. Set TURNWIRE_HARNESS_DEEPSEEK_API_KEY or run from a terminal to enter it privately.'; fi
   printf 'DeepSeek API key (hidden): ' >&3
   IFS= read -rs credential <&3 || fail 'Credential input cancelled.'
@@ -69,29 +72,31 @@ if [[ ! -f "$root/config/dsh.env.json" && -z $credential ]]; then
   unset confirmation
 fi
 version=22.23.2
-if [[ ! -x "$root/runtime/node/bin/node" ]]; then
-  [[ ! -e "$root/runtime/node" && ! -L "$root/runtime/node" ]] || fail 'Existing runtime/node is unusable; repair it manually.'
-  mkdir -p "$root/runtime"
-  stage=$(mktemp -d "$root/runtime/.node-bootstrap.XXXXXX")
+if [[ ! -x "$TURNWIRE_RUNTIME_DIR/node/bin/node" ]]; then
+  [[ ! -e "$TURNWIRE_RUNTIME_DIR/node" && ! -L "$TURNWIRE_RUNTIME_DIR/node" ]] || fail 'Existing runtime/node is unusable; repair it manually.'
+  mkdir -p "$TURNWIRE_RUNTIME_DIR" "$TURNWIRE_CACHE_DIR"
+  stage=$(mktemp -d "$TURNWIRE_CACHE_DIR/.node-bootstrap.XXXXXX")
   trap 'rm -rf -- "$stage"' EXIT
   archive="node-v${version}-linux-${arch}.tar.xz"
   curl -fsSL --retry 2 "https://nodejs.org/dist/v${version}/SHASUMS256.txt" -o "$stage/SHASUMS256.txt"
   curl -fsSL --retry 2 "https://nodejs.org/dist/v${version}/$archive" -o "$stage/$archive"
   (cd "$stage"; awk -v name="$archive" '$2==name' SHASUMS256.txt | sha256sum --check --status) || fail 'Node checksum verification failed; nothing installed.'
   tar -xJf "$stage/$archive" -C "$stage"
-  [[ ! -e "$root/runtime/node-v${version}-linux-${arch}" ]] || fail 'Node version directory already exists; inspect it before retrying.'
-  mv -- "$stage/node-v${version}-linux-${arch}" "$root/runtime/"
-  ln -s "node-v${version}-linux-${arch}" "$root/runtime/node"
+  [[ ! -e "$TURNWIRE_RUNTIME_DIR/node-v${version}-linux-${arch}" ]] || fail 'Node version directory already exists; inspect it before retrying.'
+  mv -- "$stage/node-v${version}-linux-${arch}" "$TURNWIRE_RUNTIME_DIR/"
+  ln -s "node-v${version}-linux-${arch}" "$TURNWIRE_RUNTIME_DIR/node"
 fi
-export PATH="$root/runtime/node/bin:$PATH"
+export PATH="$TURNWIRE_RUNTIME_DIR/node/bin:$PATH"
 node -e 'const [a,b]=process.versions.node.split(".").map(Number); if(a<22 || (a===22 && b<13)) process.exit(1)' || fail 'Managed Node must be version 22.13 or newer.'
-[[ -x "$root/runtime/node/bin/npm" ]] || fail 'Managed Node installation is missing npm.'
+[[ -x "$TURNWIRE_RUNTIME_DIR/node/bin/npm" ]] || fail 'Managed Node installation is missing npm.'
 # stdin, not argv or environment, transports the secret to the JSON encoder.
 # O_EXCL and O_NOFOLLOW ensure a raced-in file cannot be overwritten.
 printf '%s' "$credential" | node --input-type=module -e '
 import fs from "node:fs";
-const dir=process.argv[1]+"/config", file=dir+"/dsh.env.json";
+import path from "node:path";
+const file=process.argv[1], dir=path.dirname(file);
 try {
+  fs.mkdirSync(dir,{recursive:true,mode:0o700});
   if (fs.lstatSync(dir).isSymbolicLink()) throw new Error();
   if (fs.existsSync(file) || (()=>{try{return fs.lstatSync(file).isSymbolicLink()}catch{return false}})()) {
     const s=fs.lstatSync(file);
@@ -105,7 +110,7 @@ try {
     try { fs.writeFileSync(fd,JSON.stringify({TURNWIRE_HARNESS_DEEPSEEK_API_KEY:key},null,2)+"\n"); } finally {fs.closeSync(fd);}
   }
 } catch { console.error("Credential configuration rejected: use an owned regular mode-600 config/dsh.env.json containing a JSON string map with a nonempty TURNWIRE_HARNESS_DEEPSEEK_API_KEY. Existing files are never overwritten."); process.exit(1); }
-' "$root"
+' "$DSH_ENV_FILE"
 unset credential
 cd -- "$root"
 npm ci --no-audit --no-fund

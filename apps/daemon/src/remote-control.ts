@@ -27,7 +27,7 @@ export interface RemoteAccess {
   deviceStatus?(id: string): Pick<PairedDevice, 'connection' | 'lastConfirmedAt' | 'latencyMs'>;
 }
 interface Options {
-  directory: string; webRoot: string;
+  directory: string; toolsDirectory?: string; webRoot: string;
   initialRelay?: { relayUrl: string; remoteUrl?: string; token: string };
   startTunnel?: (options: TunnelOptions) => Promise<TunnelHandle>;
   notices?: string[];
@@ -123,7 +123,7 @@ export class RemoteController implements RemoteAccess {
           bridgeUrl = 'ws://127.0.0.1:' + this.relay.port + '/relay';
           aborter.signal.throwIfAborted();
           this.tunnel = await startTunnel({
-            directory: this.options.directory, port: this.relay.port, signal: aborter.signal, ...(provider === 'cpolar' ? { token: preferences.cpolarToken } : {}), ...(preferences.namedTunnel ? { namedTunnel: preferences.namedTunnel } : {}),
+            directory: this.options.directory, toolsDirectory: this.options.toolsDirectory, port: this.relay.port, signal: aborter.signal, ...(provider === 'cpolar' ? { token: preferences.cpolarToken } : {}), ...(preferences.namedTunnel ? { namedTunnel: preferences.namedTunnel } : {}),
             changed: url => { if (!aborter.signal.aborted && this.active) { this.active = { remoteUrl: url, relayUrl: url.replace(/^http/, 'ws') + '/relay' }; } },
             progress: message => { if (!aborter.signal.aborted) this.message = message; },
             exited: () => {

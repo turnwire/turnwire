@@ -10,7 +10,8 @@ const run = promisify(execFile);
 // Official probezy/homebrew-core Formula/cpolar.rb, version 3.3.18.
 const digests: Record<string, string> = { arm64: 'f733f2bfa09e3428254d2239121bdd4dd7fe301b4b1c901cb0a89ddbe71bf01f', x64: '524aea23e8f59e0f1acb1c71bf2ec56e571193d7b470a336934857a58f3f015e' };
 export async function cpolarBinary(options: TunnelOptions): Promise<string> {
-  const binary = join(options.directory, 'tools', 'cpolar');
+  const toolsDirectory = options.toolsDirectory ?? join(options.directory, 'tools');
+  const binary = join(toolsDirectory, 'cpolar');
   for (const path of [process.env.TURNWIRE_CPOLAR_PATH, binary, ...(process.env.PATH ?? '').split(delimiter).map(p => join(p, 'cpolar'))]) {
     if (path) { try { await access(path, constants.X_OK); return path; } catch {} }
   }
@@ -24,8 +25,8 @@ export async function cpolarBinary(options: TunnelOptions): Promise<string> {
   try { while (true) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > 128 * 1024 * 1024) { await reader.cancel(); throw new Error('Unexpected cpolar download size'); } chunks.push(value); } } finally { reader.releaseLock(); }
   const bytes = Buffer.concat(chunks);
   if (createHash('sha256').update(bytes).digest('hex') !== digests[process.arch]) throw new Error('cpolar component verification failed; try again');
-  await mkdir(join(options.directory, 'tools'), { recursive: true, mode: 0o700 });
-  const temporary = await mkdtemp(join(options.directory, 'tools', 'cpolar-download-'));
+  await mkdir(toolsDirectory, { recursive: true, mode: 0o700 });
+  const temporary = await mkdtemp(join(toolsDirectory, 'cpolar-download-'));
   try { const zip = join(temporary, 'release.zip'); await writeFile(zip, bytes, { mode: 0o600 }); await run('/usr/bin/unzip', ['-o', zip, 'cpolar', '-d', temporary], { signal, env: providerEnvironment() }); options.signal.throwIfAborted(); await chmod(join(temporary, 'cpolar'), 0o700); await rename(join(temporary, 'cpolar'), binary); }
   finally { await rm(temporary, { recursive: true, force: true }); }
   return binary;

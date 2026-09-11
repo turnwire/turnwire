@@ -12,8 +12,8 @@ export const cloudflareNamedNotice = 'A named tunnel points at a tunnel and host
 const run = promisify(execFile);
 
 async function executable(path: string) { try { await access(path, constants.X_OK); return true; } catch { return false; } }
-async function cloudflared(directory: string, signal: AbortSignal, progress: (message: string) => void) {
-  const binary = join(directory, 'tools', 'cloudflared');
+async function cloudflared(directory: string, signal: AbortSignal, progress: (message: string) => void, toolsDirectory = join(directory, 'tools')) {
+  const binary = join(toolsDirectory, 'cloudflared');
   const candidates = [process.env.TURNWIRE_CLOUDFLARED_PATH, binary, ...(process.env.PATH ?? '').split(delimiter).map(path => join(path, 'cloudflared'))];
   for (const candidate of candidates) if (candidate && await executable(candidate)) return candidate;
   const arch = process.arch === 'x64' ? 'amd64' : process.arch === 'arm64' ? 'arm64' : undefined;
@@ -38,8 +38,8 @@ async function cloudflared(directory: string, signal: AbortSignal, progress: (me
   } } finally { reader.releaseLock(); }
   const bytes = Buffer.concat(chunks);
   if (`sha256:${createHash('sha256').update(bytes).digest('hex')}` !== asset.digest) throw new Error('Tunnel component verification failed; try again');
-  await mkdir(join(directory, 'tools'), { recursive: true, mode: 0o700 });
-  const temporary = await mkdtemp(join(directory, 'tools', 'download-'));
+  await mkdir(toolsDirectory, { recursive: true, mode: 0o700 });
+  const temporary = await mkdtemp(join(toolsDirectory, 'download-'));
   try {
     const downloaded = join(temporary, process.platform === 'darwin' ? 'release.tgz' : 'cloudflared');
     await writeFile(downloaded, bytes, { mode: 0o600 });
@@ -53,7 +53,7 @@ async function cloudflared(directory: string, signal: AbortSignal, progress: (me
 
 export async function startCloudflareTunnel(options: TunnelOptions): Promise<TunnelHandle> {
   const { directory, port, signal, progress, exited } = options;
-  const binary = await cloudflared(directory, signal, progress);
+  const binary = await cloudflared(directory, signal, progress, options.toolsDirectory);
   signal.throwIfAborted();
   await mkdir(join(directory, 'tunnel'), { recursive: true, mode: 0o700 });
   const config = join(directory, 'tunnel', 'config.yml');
@@ -107,7 +107,7 @@ export async function startCloudflareNamedTunnel(options: TunnelOptions): Promis
   const { directory, port, signal, progress, exited, namedTunnel } = options;
   if (!namedTunnel) throw new Error('A named tunnel requires a tunnel name, public hostname, and credentials file first');
   const { name, hostname, credentialsFile, protocol } = namedTunnel;
-  const binary = await cloudflared(directory, signal, progress);
+  const binary = await cloudflared(directory, signal, progress, options.toolsDirectory);
   signal.throwIfAborted();
   await mkdir(join(directory, 'tunnel'), { recursive: true, mode: 0o700 });
   const slug = name.replace(/[^A-Za-z0-9_.-]/g, '_');

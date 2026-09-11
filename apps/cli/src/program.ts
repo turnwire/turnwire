@@ -1,6 +1,6 @@
 import { Command, InvalidArgumentError } from 'commander';
 import { readFile, writeFile, chmod, rename } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { resolveTurnwirePaths } from '../../../packages/sdk/src/node-paths.js';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
@@ -37,7 +37,7 @@ async function config(): Promise<Config> {
   const opts = program.opts();
   if (opts.url && opts.token) return { url: String(opts.url), token: String(opts.token) };
   let saved: Config;
-  try { saved = JSON.parse(await readFile(join(process.env.TURNWIRE_HOME ?? join(homedir(), '.turnwire'), 'client.json'), 'utf8')) as Config; }
+  try { saved = JSON.parse(await readFile(resolveTurnwirePaths().clientConfig, 'utf8')) as Config; }
   catch { throw localizedError('CLI_MISSING_CONFIG'); }
   return { url: opts.url as string ?? saved.url, token: opts.token as string ?? saved.token };
 }

@@ -5,14 +5,16 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveManagedHostPaths } from '../../../packages/sdk/src/node-paths.js';
 
 /** Turnwire's own secrets: neither child may inherit these, whatever a configuration file says. */
 const TURNWIRE_SECRETS = ['TURNWIRE_RELAY_TOKEN', 'TURNWIRE_DSH_TOKEN', 'TURNWIRE_DSH_URL'];
 
 export async function runManagedHost() {
   const root = resolve(process.env.TURNWIRE_INSTALL_DIR ?? fileURLToPath(new URL('../../../', import.meta.url)));
-  const directory = resolve(process.env.TURNWIRE_HOME ?? join(root, 'state'));
-  const dshHome = resolve(process.env.TURNWIRE_DSH_HOME ?? join(root, 'dsh-state'));
+  const paths = resolveManagedHostPaths(root);
+  const directory = paths.state;
+  const dshHome = paths.dshHome;
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await mkdir(dshHome, { recursive: true, mode: 0o700 });
   // The private file is the DSH environment, not one slot for one key: a deployment may register
@@ -20,7 +22,7 @@ export async function runManagedHost() {
   // it holds is therefore forwarded to DSH — and only to DSH, because model credentials never
   // belong in a client or in the daemon. Turnwire's own secrets are never forwarded, whatever the
   // file says, and every forwarded value is kept out of the logs.
-  const envFile = process.env.TURNWIRE_DSH_ENV_FILE ?? join(root, 'config/dsh.env.json');
+  const envFile = paths.dshEnvFile;
   let values: Record<string, unknown> = {};
   try { values = JSON.parse(await readFile(envFile, 'utf8')) as Record<string, unknown>; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`Cannot read the DSH environment file ${envFile}`); }
@@ -28,13 +30,13 @@ export async function runManagedHost() {
   for (const [name, value] of Object.entries(values)) if (typeof value === 'string' && !TURNWIRE_SECRETS.includes(name)) forwarded[name] = value;
   const key = process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY || forwarded.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   if (!key) throw new Error('Configure TURNWIRE_HARNESS_DEEPSEEK_API_KEY in the DSH environment file');
-  const base: NodeJS.ProcessEnv = { ...process.env, TURNWIRE_HOME: directory };
+  const base: NodeJS.ProcessEnv = { ...process.env, TURNWIRE_HOME: directory, TURNWIRE_CONFIG_HOME: paths.config, TURNWIRE_DATA_HOME: paths.data, TURNWIRE_CACHE_HOME: paths.cache };
   // The model credentials belong to DSH alone: the daemon drives the runtime, it never holds a key.
   for (const name of [...TURNWIRE_SECRETS, 'TURNWIRE_HARNESS_DEEPSEEK_API_KEY']) delete base[name];
   // Redact the model credentials and anything else long enough to be one: a short value in that
   // file is configuration, and replacing it everywhere would mangle unrelated log text.
   const secrets = [...new Set([key, ...Object.values(forwarded)])].filter((secret): secret is string => typeof secret === 'string' && (secret === key || secret.length >= 8));
-  const dshEntry = resolve(process.env.TURNWIRE_DSH_ENTRY ?? join(root, 'runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'));
+  const dshEntry = paths.dshEntry;
   const daemonEntry = resolve(process.env.TURNWIRE_DAEMON_ENTRY ?? join(root, 'apps/daemon/dist/main.js'));
   const port = process.env.TURNWIRE_DSH_PORT ?? '3080';
   if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error('Invalid TURNWIRE_DSH_PORT');

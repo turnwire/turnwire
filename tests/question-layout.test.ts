@@ -48,5 +48,7 @@ it('lines up the columns of a revealed plan', () => {
   const plan = rule('.agent-plan>li');
   expect(plan).toContain('display:grid');
   expect(plan).toMatch(/grid-template-columns:\s*12px minmax\(58px, auto\) minmax\(0, 1fr\)/);
-  expect(rule('.agent-detail')).toContain('max-height');
+  expect(rule('.agent-list')).toContain('max-height');
+  expect(rule('.agent-detail')).not.toContain('overflow-y:auto');
+  expect(rule('.agent-detail .child-records')).toContain('overflow:visible');
 });
