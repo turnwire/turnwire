@@ -161,7 +161,12 @@ export function applyEvent(snapshot: Snapshot, event: TurnwireEvent): Snapshot {
   if (event.seq <= snapshot.cursor) return snapshot;
   const d = event.data;
   let sessions = snapshot.sessions, approvals = snapshot.approvals;
-  if ('session' in d) sessions = [d.session, ...sessions.filter(s => s.id !== d.session.id)];
+  if ('session' in d) {
+    const previous = sessions.find(s => s.id === d.session.id);
+    // Delegation is host-memory state announced separately, not part of persisted status updates.
+    const session = d.session.autoApprove === undefined && previous?.autoApprove !== undefined ? { ...d.session, autoApprove: previous.autoApprove } : d.session;
+    sessions = [session, ...sessions.filter(s => s.id !== d.session.id)];
+  }
   if (d.type === 'session.autoApprove') sessions = sessions.map(s => s.id === d.sessionId ? { ...s, ...(d.auto ? { autoApprove: true } : { autoApprove: undefined }) } : s);
   if ('approval' in d) approvals = d.approval.status === 'pending' ? [...approvals.filter(a => a.id !== d.approval.id), d.approval] : approvals.filter(a => a.id !== d.approval.id);
   let questions = snapshot.questions;
