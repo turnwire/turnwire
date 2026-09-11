@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { pushSubscriptionSchema, clientHelloSchema, serverHelloSchema, sessionPayloadSchema } from './connection.js';
 export * from './connection.js';
 export * from './images.js';
+export * from './maintenance.js';
 import { imageInputSchema, imageAttachmentSchema, MAX_IMAGES, MAX_TOTAL_IMAGE_BYTES, MAX_IMAGE_TEXT_LENGTH, MAX_IMAGE_CHUNK_LENGTH, MAX_IMAGE_BASE64_LENGTH, base64Bytes } from './images.js';
 
 export const PROTOCOL_VERSION = 1 as const;
@@ -301,7 +302,21 @@ export const remoteConfigurationSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('relay'), serverUrl: z.string().trim().min(1).max(2000), token: z.string().trim().min(32).max(500).optional() }).strict(),
 ]);
 export type RemoteConfiguration = z.infer<typeof remoteConfigurationSchema>;
+/** Host observations are separate from public reachability and verified device presence. */
+export const remoteHealthStateSchema = z.enum(['unknown', 'ready', 'off', 'error']);
+export const remoteHealthSchema = z.object({
+  /** Ready only after the relay acknowledges host registration (possibly over loopback). */
+  relayRegistration: remoteHealthStateSchema,
+  /** Ready means the provider returned a live handle, not that public ingress was verified. */
+  tunnelProcess: remoteHealthStateSchema,
+  /** Unknown unless a separate explicit public diagnostic supplies evidence; status never probes. */
+  publicReachability: remoteHealthStateSchema,
+  /** Ready when at least one paired device has a fresh encrypted acknowledgement on relay or direct. */
+  deviceConfirmed: remoteHealthStateSchema,
+});
+export type RemoteHealth = z.infer<typeof remoteHealthSchema>;
 export const remoteStatusSchema = z.object({
+  health: remoteHealthSchema.optional(),
   mode: remoteModeSchema, state: z.enum(['off', 'starting', 'online', 'offline', 'error']), message: z.string(),
   relayUrl: z.string().optional(), remoteUrl: z.string().optional(), relayServerUrl: z.string().optional(), hasRelayToken: z.boolean(),
   notices: z.array(z.string()).default([]),

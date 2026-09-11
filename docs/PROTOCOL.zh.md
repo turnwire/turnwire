@@ -6,6 +6,10 @@
 
 仅限本地的 `/deployment` 端点支持经过认证的 `GET` 状态与 `POST` 部署配置。形状定义在 `packages/protocol/src/deployment.ts`。POST 立即返回一个处于 `running` 状态的任务；客户端轮询 GET 直到 `succeeded`、`failed` 或 `interrupted`。配置包含 runtime 的 SSH/地址/安装设置，绝不包含原始私钥、登录密码或 Relay 凭据。daemon 持久化最新任务并拒绝并发启动。远程 RPC 方法不暴露部署管理。服务器安装完成后仍可能报告本地连接错误；其公网 URL 和 release 仍然可用于恢复。
 
+## 本机维护
+
+`GET /maintenance`、`PUT /maintenance` 仅允许认证的 loopback 本机管理，不属于远程 RPC。请求为 `{action:"begin",token?}` 或 `{action:"cancel"|"compact",token}`，状态为 `{state:"accepting"|"draining"|"ready",scope:"turnwire-managed",token?,inFlight,busy:number|null,reason?}`。持久令牌控制租约归属，状态仅限本机读取，CLI 显示会隐藏令牌。开启时原子关闭新变更接纳，取消任务和处理已有审批/问题仍可执行并被追踪。运行时查询失败或变化不允许就绪；整理存储只在稳定就绪租约下执行，保留全部 journal 和回执身份。取消必须匹配令牌。它只控制 Turnwire 托管入口，不控制其他 DSH 客户端；daemon-only 部署保留 DSH 进程，验证身份后才重新开放提交。
+
 ## 命令
 
 本地客户端向 `/rpc` 发起 POST，并带上 `Authorization: Bearer <local-token>`。请求：

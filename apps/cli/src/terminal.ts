@@ -11,6 +11,7 @@ export function safe(text: string) { return text.replace(/[\x00-\x08\x0b-\x1f\x7
 export function printRemote(status: RemoteStatus) {
   console.log(`${status.mode}${status.mode === 'temporary' ? ' / ' + (status.provider ?? 'cloudflare') : ''} · ${status.state}\n${safe(status.message)}`);
   if (status.remoteUrl) console.log(t('terminal.entry', { url: safe(status.remoteUrl) }));
+  if (status.health) for (const [stage, state] of Object.entries(status.health)) console.log(`${stage}: ${safe(state)}`);
   for (const notice of status.notices) console.log(safe(notice));
 }
 export interface TerminalIO {

@@ -8,7 +8,7 @@ import type { TurnwireCore } from '@turnwire/core';
 import type { Pairing } from '@turnwire/protocol';
 import { pairDeviceSchema, revokeDeviceSchema, projectHistoryEvent } from '@turnwire/protocol';
 import { setImmediate as yieldToIO } from 'node:timers/promises';
-import { encodePairing, validateEndpoint } from '@turnwire/sdk';
+import { encodePairing, validateEndpoint } from '@turnwire/wire';
 import type { RemoteAccess } from './remote-control.js';
 import type { DeploymentAccess } from './deployment.js';
 
@@ -37,10 +37,17 @@ export function startDaemonServer(options: DaemonServerOptions) {
       if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' }); res.end(); return; }
       const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"status":"ok","protocol":1}'); return; }
-      if (url.pathname === '/rpc' || url.pathname === '/devices' || url.pathname === '/remote' || url.pathname === '/deployment' || url.pathname === '/direct' || url.pathname === '/notifications') {
+      if (url.pathname === '/rpc' || url.pathname === '/devices' || url.pathname === '/remote' || url.pathname === '/deployment' || url.pathname === '/maintenance' || url.pathname === '/direct' || url.pathname === '/notifications') {
         res.setHeader('cache-control', 'no-store');
         if (!authorized(req)) { res.writeHead(401); res.end('Unauthorized'); return; }
         res.setHeader('content-type', 'application/json');
+        if (url.pathname === '/maintenance') {
+          // Host headers and credentials alone must not turn a proxied request into local admin.
+          if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '') || req.headers.forwarded || req.headers['x-forwarded-for'] || req.headers['x-forwarded-host']) { res.writeHead(403); res.end(JSON.stringify({ error: 'Maintenance administration is local-only' })); return; }
+          if (req.method === 'GET') { res.end(JSON.stringify(await core.maintenanceStatus())); return; }
+          if (req.method === 'PUT') { res.end(JSON.stringify(await core.configureMaintenance(await body(req)))); return; }
+          res.writeHead(405); res.end(); return;
+        }
         if (url.pathname === '/notifications') {
           if (!options.remoteAccess?.notificationStatus || !options.remoteAccess.configureNotifications) throw new Error('Notifications are not configured on this host');
           if (req.method === 'GET') { res.end(JSON.stringify(options.remoteAccess.notificationStatus())); return; }

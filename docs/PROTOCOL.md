@@ -6,6 +6,10 @@ English · [中文](PROTOCOL.zh.md)
 
 The local-only `/deployment` endpoint supports authenticated `GET` status and `POST` deployment configuration. Shapes are defined in `packages/protocol/src/deployment.ts`. POST immediately returns a job in `running` state; clients poll GET until `succeeded`, `failed` or `interrupted`. Configuration contains runtime SSH/address/installation settings, never raw private keys, login passwords or Relay credentials. The daemon persists the latest job and rejects concurrent starts. Remote RPC methods do not expose deployment administration. A completed server installation may still report a local connection error; its public URL and release remain available for recovery.
 
+## Local maintenance
+
+`GET /maintenance` and `PUT /maintenance` are loopback-only authenticated administration, never remote RPC. The request is `{action:"begin",token?}` or `{action:"cancel"|"compact",token}`. Status is `{state:"accepting"|"draining"|"ready",scope:"turnwire-managed",token?,inFlight,busy:number|null,reason?}`. The durable token controls ownership; status is local/private and CLI display redacts it. Begin atomically closes new mutation admission. Cancellation and resolution of existing approvals/questions remain allowed and tracked. A failed or changing runtime observation cannot return ready. Compact is permitted only under a stable ready lease and preserves all journal/receipt identities. Cancel requires the matching token. This controls Turnwire-managed intake, not other DSH clients; daemon-only deployment preserves the DSH process and validates runtime identity before reopening intake.
+
 ## Commands
 
 Local clients POST `/rpc` with `Authorization: Bearer <local-token>`. Request:

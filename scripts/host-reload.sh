@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Developer-only frontend publication. Backend/DSH changes always require an operator.
+# Developer-only frontend publication or explicit --daemon maintenance deployment. Never stops DSH.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"

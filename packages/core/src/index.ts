@@ -6,6 +6,7 @@ import { TurnwireError, errorResponse, methodSchemas, requestSchema, queueItemVi
 import type { EventData, TurnwireEvent, Question, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData, WorkspaceEntry } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent } from '@turnwire/runtime';
 import { Store } from './store.js';
+import { MaintenanceGate } from './maintenance.js';
 export { Store } from './store.js';
 
 export interface NotificationService { status(clientId?: string): NotificationStatus; subscribe(clientId: string, value: PushSubscriptionData): Promise<NotificationStatus>; unsubscribe(clientId: string): Promise<NotificationStatus> }
@@ -31,8 +32,40 @@ export class TurnwireCore {
   /** Questions the agent is blocked on, keyed by approval-style id `${sessionId}:${requestId}`. */
   private questions = new Map<string, Question>();
   private runtimes: Map<string, AgentRuntime>;
-  constructor(readonly store: Store, runtimes: AgentRuntime[], readonly device: { id: string; name: string }) { this.runtimes = new Map(runtimes.map(runtime => [runtime.id, runtime])); }
+  private maintenance: MaintenanceGate;
+  constructor(readonly store: Store, runtimes: AgentRuntime[], readonly device: { id: string; name: string }) {
+    this.runtimes = new Map(runtimes.map(runtime => [runtime.id, runtime]));
+    this.maintenance = new MaintenanceGate(store, () => this.managedActivity());
+  }
+  maintenanceStatus() { return this.maintenance.status(); }
+  configureMaintenance(value: unknown) { return this.maintenance.configure(value); }
+  private async managedActivity(): Promise<number> {
+    let busy = 0;
+    const sessions = this.store.sessions();
+    for (const session of sessions) if (!this.runtimes.has(session.runtimeId)) throw new Error('Managed runtime unavailable');
+    for (const runtime of this.runtimes.values()) {
+      const managed = sessions.filter(session => session.runtimeId === runtime.id);
+      if (!runtime.busy || !(await runtime.health()).online) throw new Error('Runtime activity unknown');
+      const children = await runtime.busy(managed.map(session => session.runtimeSessionId));
+      if (!Number.isSafeInteger(children) || children < 0) throw new Error('Invalid activity count');
+      busy += children;
+      const actual = await runtime.listSessions();
+      for (const session of managed) {
+        const row = actual.find(row => row.id === session.runtimeSessionId);
+        if (!row || !['idle', 'running', 'waiting_approval', 'interrupted', 'error'].includes(row.status)) throw new Error('Managed session activity unknown');
+        if (row.status === 'running' || row.status === 'waiting_approval') busy++;
+        if (runtime.listQueue) busy += (await runtime.listQueue(row.id)).length;
+      }
+    }
+    busy += this.store.approvals().filter(approval => approval.status === 'pending').length;
+    busy += [...this.questions.values()].filter(question => question.status === 'pending').length;
+    return busy;
+  }
   async start() {
+    // A deployment hold survives daemon replacement. Never resume runtime work implicitly.
+    if (this.maintenance.held) { for (const session of this.store.sessions()) this.bind(session); return; }
+    const leave = this.maintenance.enter(false);
+    try {
     // Interactive approvals belong to a live runtime connection and expire across daemon restarts.
     for (const approval of this.store.approvals()) if (approval.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'cancelled' } });
     for (const session of this.store.sessions()) {
@@ -41,6 +74,7 @@ export class TurnwireCore {
       try { const resumed = await this.runtime(session.runtimeId).resumeSession({ id: session.runtimeSessionId, cwd: session.cwd }); this.update(session.id, { status: resumed.status }); }
       catch (error) { this.publish({ type: 'session.error', sessionId: session.id, message: error instanceof Error ? error.message : 'Resume failed' }); }
     }
+    } finally { leave(); }
   }
   async snapshot(): Promise<Snapshot> {
     // A read that is about to report whether anything is running repairs a status left behind first.
@@ -67,7 +101,11 @@ export class TurnwireCore {
       if (saved.fingerprint !== fingerprint) return errorResponse(request.id, new TurnwireError('REQUEST_CONFLICT', 'Request ID is already used by another command'));
       return saved.result ?? this.inFlight.get(request.id) ?? errorResponse(request.id, new TurnwireError('OUTCOME_UNKNOWN', 'The daemon was interrupted while handling this request; check session state before sending a new request'));
     }
-    this.store.reserveRequest(request.id, fingerprint);
+    // Admit before any await or runtime invocation. Replays above never create new work.
+    let leave: () => void;
+    try { leave = this.maintenance.enter(['session.cancel', 'approval.decide', 'question.answer'].includes(request.method)); }
+    catch (error) { return errorResponse(request.id, error); }
+    try { this.store.reserveRequest(request.id, fingerprint); } catch (error) { leave(); return errorResponse(request.id, error); }
     const task = (async (): Promise<RpcResponse> => {
       let result: RpcResponse;
       try { result = { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; }
@@ -75,7 +113,7 @@ export class TurnwireCore {
       this.store.finishRequest(request.id, result); return result;
     })();
     this.inFlight.set(request.id, task);
-    try { return await task; } finally { this.inFlight.delete(request.id); }
+    try { return await task; } finally { this.inFlight.delete(request.id); leave(); }
   }
   private async execute(request: RpcRequest, context?: { clientId: string }): Promise<unknown> {
     switch (request.method) {
@@ -92,17 +130,7 @@ export class TurnwireCore {
       case 'history.record': {
         const p = methodSchemas['history.record'].parse(request.params);
         this.session(p.sessionId);
-        const events = this.store.historyRecord(p.sessionId, p.originSeq);
-        if (!events?.length) throw new TurnwireError('HISTORY_NOT_FOUND', 'History record does not belong to this session');
-        const cursor = Math.max(...events.map(event => event.seq));
-        if (p.cursor !== undefined && p.cursor !== cursor) throw new TurnwireError('HISTORY_CHANGED', 'History record changed while being read; restart from offset zero');
-        const serialized = JSON.stringify(events);
-        if (p.offset > serialized.length) throw new TurnwireError('INVALID_CURSOR', 'History offset exceeds record size');
-        let end = Math.min(serialized.length, p.offset + p.limit);
-        // Chunks cross JSON strings, so do not divide a Unicode surrogate pair between frames.
-        if (end < serialized.length && /[\uD800-\uDBFF]/.test(serialized.charAt(end - 1))) end--;
-        if (end <= p.offset && end < serialized.length) throw new TurnwireError('INVALID_REQUEST', 'Chunk limit is too small for the next character');
-        return { data: serialized.slice(p.offset, end), cursor, nextOffset: end < serialized.length ? end : null };
+        return this.store.historyRecordChunk(p.sessionId, p.originSeq, p.offset, p.limit, p.cursor);
       }
       case 'session.image': {
         const p = methodSchemas['session.image'].parse(request.params);
@@ -333,6 +361,8 @@ export class TurnwireCore {
    * answered — which here is the delegation itself, marked `auto`.
    */
   private async grantPending(sessionId: string) {
+    const leave = this.maintenance.enter(true);
+    try {
     for (const approval of this.store.approvals().filter(a => a.sessionId === sessionId && a.status === 'pending')) {
       await this.lock(`approval:${approval.id}`, async () => {
         const session = this.store.session(sessionId);
@@ -344,6 +374,7 @@ export class TurnwireCore {
         if (this.store.approval(approval.id)?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'approved', auto: true } });
       });
     }
+    } finally { leave(); }
   }
   private runtime(id: string) { const runtime = this.runtimes.get(id); if (!runtime) throw new TurnwireError('RUNTIME_UNAVAILABLE', `Runtime ${id} is not configured`); return runtime; }
   /** The runtime a client sees a model catalog for when it does not name one. */
@@ -430,6 +461,7 @@ export class TurnwireCore {
     this.subscriptions.set(session.id, runtime.subscribe(session.runtimeSessionId, event => this.accept(session.id, event)));
   }
   private accept(sessionId: string, event: RuntimeEvent) {
+    this.maintenance.changed();
     if (event.type === 'status') {
       const previous = this.store.session(sessionId)?.status;
       const status = event.status === 'running' && this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending') ? 'waiting_approval' : event.status;

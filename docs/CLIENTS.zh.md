@@ -2,6 +2,12 @@
 
 # 能力对等与代码归属
 
+本机 CLI/TUI 和原生主机管理共用认证的 `/maintenance` 状态、开启、取消和整理操作。持有者令牌绑定的持久租约阻止 Turnwire 新任务提交，但保留取消任务、处理已有审批/问题。只有已接纳操作及托管运行时根会话、后代和队列都已知空闲才能就绪，未知时拒绝。它不限制独立 DSH 客户端或无关会话。租约跨 daemon 重启保留，必须显式释放。`maintenance compact` 仅清理可重建导出缓存并执行 SQLite checkpoint/vacuum，永久保留 journal 序号和命令回执以维护恢复与幂等语义。
+
+可选 `RemoteStatus.health` 以 `unknown|ready|off|error` 分别报告 Relay 注册、隧道进程、公网可达性和设备确认。CLI/TUI 与原生本机管理显示同样字段。没有独立证据时公网可达性保持未知，不主动探测外部 URL，也不向已配对 PWA 授予主机管理权限。
+
+产品 TypeScript 调用已迁移到由方法推导参数/结果的 SDK 接口。加密、端点校验和退避原语归入独立的 `@turnwire/wire` 包，服务端不再依赖客户端 SDK 总入口。记录导出在 SQLite 内生成版本固定缓存并向 Node 提供有界 UTF-8 分块；SQLite 内部仍可能物化整条实体，不能宣称数据库全程固定内存。
+
 PWA 和原生应用中的“收件箱”统一更名为 **审批中心**（英文 **Approvals**），CLI/TUI 帮助说明同步使用审批术语。现有 `inbox` 命令、`inbox.page` RPC、通知路由和持久记录保持不变。
 
 本机新安装使用 [XDG 目录](XDG.zh.md)。daemon 与 CLI 共享 Node-only 路径解析器；原生本机连接发现同步支持显式配置/主目录覆盖、已有旧目录及 XDG 配置默认值。原生 Keychain/UserDefaults 已保存连接与远程协议不变。原生发现改动仍需 macOS 编译测试，当前 Linux 验证环境不具备该条件。

@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { eventSessionId, historyKey, reduceHistory, projectHistoryEvent, HISTORY_PAGE_BYTES } from '@turnwire/protocol';
+import { StringDecoder } from 'node:string_decoder';
+import { eventSessionId, historyKey, reduceHistory, projectHistoryEvent, HISTORY_PAGE_BYTES, TurnwireError } from '@turnwire/protocol';
 import type { HistoryPage } from '@turnwire/protocol';
 import type { ImageAttachment, Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session } from '@turnwire/protocol';
 
@@ -21,6 +22,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS history_session ON history(session_id, first_seq);
       CREATE TABLE IF NOT EXISTS history_deltas (key TEXT NOT NULL, seq INTEGER NOT NULL PRIMARY KEY);
       CREATE INDEX IF NOT EXISTS history_delta_key ON history_deltas(key, seq);
+      CREATE TABLE IF NOT EXISTS history_export (key TEXT PRIMARY KEY, revision INTEGER NOT NULL, units INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS history_export_chunks (key TEXT NOT NULL, start INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(key,start));
       CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, body TEXT NOT NULL);
@@ -76,6 +79,8 @@ export class Store {
   }
   private project(event: TurnwireEvent) {
     const key = historyKey(event); if (!key) return;
+    this.db.prepare('DELETE FROM history_export_chunks WHERE key=?').run(key);
+    this.db.prepare('DELETE FROM history_export WHERE key=?').run(key);
     const sessionId = eventSessionId(event.data);
     const row = event.data.type === 'message.delta'
       ? this.db.prepare('SELECT first_seq FROM history WHERE key=?').get(key)
@@ -110,6 +115,78 @@ export class Store {
   historyRecord(sessionId: string, originSeq: number): TurnwireEvent[] | undefined {
     const row = this.db.prepare('SELECT key,body FROM history WHERE session_id=? AND first_seq=?').get(sessionId, originSeq);
     return row ? this.materialize(String(row.key), String(row.body)) : undefined;
+  }
+  /** Export without transferring a complete entity from SQLite into Node.
+   * SQLite still materializes JSON/concatenation internally: this is a Node allocation bound,
+   * not a bound on SQLite's working memory. The rebuild is synchronous and proportional to
+   * entity size, once per revision. The journal and projection remain the source of truth.
+   */
+  historyRecordChunk(sessionId: string, originSeq: number, offset: number, limit: number, cursor?: number): { data: string; cursor: number; nextOffset: number | null } {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 65_536) throw new TurnwireError('INVALID_REQUEST', 'Invalid history chunk range');
+    const row = this.db.prepare(`SELECT h.key, COALESCE((SELECT MAX(seq) FROM history_deltas WHERE key=h.key),
+      (SELECT MAX(json_extract(value,'$.seq')) FROM json_each(h.body))) AS revision
+      FROM history h WHERE session_id=? AND first_seq=?`).get(sessionId, originSeq);
+    if (!row || row.revision === null) throw new TurnwireError('HISTORY_NOT_FOUND', 'History record does not belong to this session');
+    const key = String(row.key); const revision = Number(row.revision);
+    if (cursor !== undefined && cursor !== revision) throw new TurnwireError('HISTORY_CHANGED', 'History record changed while being read; restart from offset zero');
+    let cached = this.db.prepare('SELECT units FROM history_export WHERE key=? AND revision=?').get(key, revision);
+    if (!cached) {
+      // Keep the giant serialized value inside SQLite. JSON string fragments are concatenated
+      // *escaped*, so NUL, backslashes and lone/split surrogate escapes survive exactly.
+      this.db.exec('SAVEPOINT history_export_build');
+      try {
+        this.db.exec('CREATE TEMP TABLE IF NOT EXISTS history_export_build (body TEXT NOT NULL); DELETE FROM history_export_build');
+        this.db.prepare(`INSERT INTO history_export_build(body)
+          SELECT CASE WHEN EXISTS(SELECT 1 FROM history_deltas WHERE key=h.key) THEN
+            '[{"seq":' || e.seq || ',"time":' || COALESCE(h.body -> '$[0].time', json_quote(e.time)) ||
+            ',"originSeq":' || COALESCE(h.body -> '$[0].originSeq', h.body -> '$[0].seq',
+              (SELECT MIN(seq) FROM history_deltas WHERE key=h.key)) ||
+            ',"data":' || substr(json_remove(e.body,'$.text'),1,length(json_remove(e.body,'$.text'))-1) ||
+            ',"text":"' || COALESCE(substr(h.body -> '$[0].data.text',2,length(h.body -> '$[0].data.text')-2),'') ||
+            COALESCE((SELECT group_concat(fragment,'') FROM
+              (SELECT substr(j.body -> '$.text',2,length(j.body -> '$.text')-2) AS fragment
+               FROM history_deltas d JOIN events j ON j.seq=d.seq WHERE d.key=h.key ORDER BY d.seq)), '') || '"}}]'
+          ELSE h.body END
+          FROM history h LEFT JOIN events e ON e.seq=(SELECT MAX(seq) FROM history_deltas WHERE key=h.key)
+          WHERE h.key=?`).run(key);
+        this.db.prepare('DELETE FROM history_export_chunks WHERE key=?').run(key);
+        // Store UTF-8 as a BLOB once: TEXT substr rescans preceding codepoints on every
+        // call. BLOB ranges use byte offsets; a streaming decoder carries split UTF-8 bytes.
+        this.db.exec('UPDATE history_export_build SET body=CAST(body AS BLOB)');
+        const read = this.db.prepare('SELECT substr(body,?,8192) AS body FROM history_export_build');
+        const insert = this.db.prepare('INSERT INTO history_export_chunks VALUES(?,?,?)');
+        const decoder = new StringDecoder('utf8');
+        let bytes = 1; let units = 0;
+        while (true) {
+          const encoded = read.get(bytes)!.body as Uint8Array;
+          if (!encoded.length) break;
+          const part = decoder.write(Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength));
+          if (part.length) { insert.run(key, units, part); units += part.length; }
+          bytes += encoded.length;
+        }
+        const tail = decoder.end();
+        if (tail.length) { insert.run(key, units, tail); units += tail.length; }
+        // The public cursor remains UTF-16 units, never SQLite codepoints or UTF-8 bytes.
+        this.db.prepare('INSERT OR REPLACE INTO history_export VALUES(?,?,?)').run(key, revision, units);
+        this.db.exec('DELETE FROM history_export_build; RELEASE history_export_build');
+        cached = { units };
+      } catch (error) {
+        this.db.exec('ROLLBACK TO history_export_build; RELEASE history_export_build');
+        throw error;
+      }
+    }
+    const units = Number(cached.units);
+    if (offset > units) throw new TurnwireError('INVALID_CURSOR', 'History offset exceeds record size');
+    let data = '';
+    const chunks = this.db.prepare(`SELECT start,body FROM history_export_chunks WHERE key=? AND start>=
+      (SELECT MAX(start) FROM history_export_chunks WHERE key=? AND start<=?) AND start<? ORDER BY start`).iterate(key, key, offset, offset + limit);
+    for (const chunk of chunks) {
+      const start = Number(chunk.start);
+      data += String(chunk.body).slice(Math.max(0, offset - start), offset + limit - start);
+    }
+    if (offset + data.length < units && /[\uD800-\uDBFF]/.test(data.charAt(data.length - 1))) data = data.slice(0, -1);
+    if (!data.length && offset < units) throw new TurnwireError('INVALID_REQUEST', 'Chunk limit is too small for the next character');
+    return { data, cursor: revision, nextOffset: offset + data.length < units ? offset + data.length : null };
   }
   history(sessionId: string, limit: number, before = Number.MAX_SAFE_INTEGER, preview = false): HistoryPage {
     const rows = this.db.prepare('SELECT key,first_seq FROM history WHERE session_id=? AND first_seq<? ORDER BY first_seq DESC LIMIT ?').all(sessionId, before, limit + 1);

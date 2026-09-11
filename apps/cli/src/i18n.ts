@@ -49,6 +49,8 @@ const en = {
   'option.json': 'machine-readable output',
   'option.lang': 'UI language: en or zh',
 
+  'command.maintenance': 'Drain managed work before maintenance (local authorization required)',
+  'maintenance.token': 'maintenance owner token (not the daemon authorization token)',
   'command.status': 'Show daemon, device and runtime status',
   'command.ls': 'List shared sessions',
   'command.rename': 'Rename a shared session',
@@ -251,6 +253,8 @@ const zh: Record<keyof typeof en, string> = {
   'option.json': '机器可读输出',
   'option.lang': '界面语言：en 或 zh',
 
+  'command.maintenance': '维护前排空托管任务（仅限本机授权）',
+  'maintenance.token': '维护所有者令牌（不是 daemon 授权令牌）',
   'command.status': '显示 daemon、设备与运行时状态',
   'command.ls': '列出共享会话',
   'command.rename': '重命名共享会话',

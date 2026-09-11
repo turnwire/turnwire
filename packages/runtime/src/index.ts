@@ -27,9 +27,10 @@ export interface AgentRuntime {
    * Background agents this runtime still owns. A non-zero count means a restart is not a safe
    * point: those agents live inside the runtime process and would be killed with it. This is a
    * live query rather than a cached counter, so a missed or replayed lifecycle frame cannot
-   * leave it stale, and it must resolve 0 instead of throwing when the runtime cannot answer.
+   * leave it stale. Unknown activity MUST reject, never resolve zero. Explicit roots let a
+   * restarted daemon inspect its managed domain without resuming or claiming runtime work.
    */
-  busy?(): Promise<number>;
+  busy?(sessionIds?: string[]): Promise<number>;
   /**
    * Background agents under one session, direct children first, for a progress view. A runtime that
    * cannot enumerate them leaves this out, and clients then render no agents at all.

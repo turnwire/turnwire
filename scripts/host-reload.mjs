@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Only frontend publication is automated. No idle snapshot is a drain gate.
+// Only frontend publication is automatic. Explicit --daemon uses a durable maintenance lease.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync, rmSync, copyFileSync } from 'node:fs';
@@ -116,6 +116,10 @@ export async function reload(root, { frontend = false, checkHealth = () => healt
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.some(arg => arg !== '--frontend') || args.length > 1) { console.error('usage: scripts/host-reload.sh [--frontend] (never restarts backend or DSH)'); process.exitCode = 1; }
-  else await reload(resolve(dirname(fileURLToPath(import.meta.url)), '..'), { frontend: args.includes('--frontend') }).catch(error => { console.error(error.message); process.exitCode = 1; });
+  if (new Set(args).size !== args.length || args.some(arg => !['--frontend', '--daemon', '--dry-run'].includes(arg)) || (args.includes('--frontend') && args.includes('--daemon')) || (args.includes('--dry-run') && !args.includes('--daemon'))) { console.error('usage: scripts/host-reload.sh [--frontend | --daemon [--dry-run]] (never restarts DSH)'); process.exitCode = 1; }
+  else {
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+    const operation = args.includes('--daemon') ? import('./host-reload-daemon.mjs').then(({ deployDaemon }) => deployDaemon(root, { dryRun: args.includes('--dry-run') })) : reload(root, { frontend: args.includes('--frontend') });
+    void operation.catch(() => { console.error('Reload failed; inspect private deployment state. Any maintenance lease remains operator-owned.'); process.exitCode = 1; });
+  }
 }

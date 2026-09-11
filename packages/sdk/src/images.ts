@@ -1,13 +1,13 @@
 import { base64Bytes, imageChunkSchema, isCanonicalBase64, MAX_IMAGE_BASE64_LENGTH, MAX_IMAGE_CHUNK_LENGTH, methodSchemas } from '@turnwire/protocol';
 import type { ImageAttachment, ImageInput } from '@turnwire/protocol';
-import type { RpcClient } from './index.js';
+import { call, type RpcClient } from './index.js';
 
 export interface LoadImageArgs { sessionId: string; attachmentId: string }
 export interface SendImageMessageArgs { sessionId: string; text: string; images: ImageInput[]; steer?: boolean }
 
 /** Shared across local and encrypted remote transports; validate before sending bytes. */
-export function sendImageMessage<T = unknown>(client: RpcClient, args: SendImageMessageArgs): Promise<T> {
-  return client.request<T>('session.message', methodSchemas['session.message'].parse(args));
+export function sendImageMessage(client: RpcClient, args: SendImageMessageArgs) {
+  return call(client, 'session.message', args);
 }
 
 /** Explicit, bounded retrieval. Transcript/history projections never fetch image bytes. */
@@ -17,7 +17,7 @@ export async function loadImage(client: RpcClient, args: LoadImageArgs): Promise
   let attachment: ImageAttachment | undefined;
   let offset = 0;
   for (;;) {
-    const chunk = imageChunkSchema.parse(await client.request('session.image', { sessionId: scope.sessionId, attachmentId: scope.attachmentId, offset, limit: MAX_IMAGE_CHUNK_LENGTH }));
+    const chunk = imageChunkSchema.parse(await call(client, 'session.image', { sessionId: scope.sessionId, attachmentId: scope.attachmentId, offset, limit: MAX_IMAGE_CHUNK_LENGTH }));
     if (chunk.attachment.attachmentId !== scope.attachmentId) throw new Error('Image response identity mismatch');
     if (attachment && (chunk.attachment.mediaType !== attachment.mediaType || chunk.attachment.bytes !== attachment.bytes || chunk.attachment.width !== attachment.width || chunk.attachment.height !== attachment.height || chunk.attachment.name !== attachment.name)) throw new Error('Image response metadata changed');
     attachment ??= chunk.attachment;

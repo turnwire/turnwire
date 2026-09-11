@@ -72,10 +72,21 @@ export class DshRuntime implements AgentRuntime {
   }
   capabilities(): RuntimeCapabilities { return { approvals: true, streaming: true, resume: true, shell: true, diff: false, fileEdits: true, toolCalls: true, backgroundTasks: false, modelSelection: true, imageInput: true }; }
   /** Count descendants of followed sessions. Unknown or bounded-out reads must never mean idle. */
-  async busy(): Promise<number> {
+  async busy(sessionIds?: string[]): Promise<number> {
     await this.connect();
     let count = 0;
-    const queue = [...this.sessions.keys()].map(id => ({ id, depth: 0 }));
+    // Maintenance supplies durable managed roots, including roots not followed since restart.
+    // Count every queued prompt, not just prompts carrying Turnwire RPC identities.
+    if (sessionIds?.length) {
+      const value = z.object({ items: z.array(sessionInboxSchema) }).parse(await this.rpc('session/list', { _request: {} }));
+      for (const id of sessionIds) {
+        const row = value.items.find(row => row.sessionId === id);
+        const inbox = row?.projections?.values?.inbox;
+        if (!inbox) throw new Error('Managed queue activity is unknown');
+        count += inbox['next-turn'].length + inbox['next-step'].length;
+      }
+    }
+    const queue = (sessionIds ?? [...this.sessions.keys()]).map(id => ({ id, depth: 0 }));
     const seen = new Set(queue.map(item => item.id));
     let examined = 0;
     while (queue.length) {
@@ -84,6 +95,7 @@ export class DshRuntime implements AgentRuntime {
         if (seen.has(entry.id)) continue;
         seen.add(entry.id);
         if (++examined > MAX_SUBAGENTS) throw new Error('Runtime activity cannot be fully verified within the catalog limit');
+        if (entry.activity !== 'running' && entry.activity !== 'inactive') throw new Error('Child activity is unknown');
         if (entry.activity === 'running') count++;
         if (entry.hasChildren) {
           if (parent.depth + 1 >= MAX_SUBAGENT_DEPTH) throw new Error('Runtime activity cannot be fully verified within the depth limit');

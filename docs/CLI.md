@@ -7,6 +7,10 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | Command | Purpose |
 | --- | --- |
 | `turnwire status` | Show device and runtime status |
+| `turnwire maintenance status` | Inspect local managed-session maintenance state without revealing its lease |
+| `turnwire maintenance begin` | Acquire a durable local maintenance lease and print its owner token; new task submissions are blocked |
+| `turnwire maintenance cancel --lease-token OWNER_TOKEN` | Release the matching lease and reopen submissions |
+| `turnwire maintenance compact --lease-token OWNER_TOKEN` | While ready, compact storage and discard derived export caches without deleting history or command receipts |
 | `turnwire ls --search KEYWORD` / `--archived` / `--all` | Search sessions and working directories; view archived ones |
 | `turnwire rename SESSION_ID TITLE` | Rename a shared session |
 | `turnwire archive SESSION_ID` / `turnwire unarchive SESSION_ID` | Archive and unarchive while keeping history |

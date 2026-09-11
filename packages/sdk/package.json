@@ -11,6 +11,7 @@
     }
   },
   "dependencies": {
-    "@turnwire/protocol": "*"
+    "@turnwire/protocol": "*",
+    "@turnwire/wire": "*"
   }
 }

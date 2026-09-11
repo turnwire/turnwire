@@ -2,6 +2,12 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+Local CLI/TUI and native host management share authenticated `/maintenance` status/begin/cancel/compact operations. A durable owner-token lease blocks new Turnwire task mutations while allowing cancellation and resolving pending approvals/questions. Readiness requires all admitted operations and managed runtime roots/descendants/queues to be known idle; unknown fails closed. This does not gate independent DSH clients or unrelated runtime sessions. A ready lease survives daemon restart until explicitly released. `maintenance compact` removes only rebuildable export cache, checkpoints and vacuums SQLite; journal sequences and all command receipts are retained indefinitely to preserve replay/idempotency. Daemon authentication retains its existing `--token` flag; the distinct maintenance owner flag is `--lease-token`.
+
+Optional `RemoteStatus.health` exposes `relayRegistration`, `tunnelProcess`, `publicReachability`, and `deviceConfirmed` as `unknown|ready|off|error`. CLI/TUI and native local management render the same fields. Public reachability remains unknown without independent evidence; no unsolicited external probe runs. Paired PWA clients are not granted these host-administration operations.
+
+Product TypeScript callsites use method-derived SDK calls. Shared encryption, endpoint validation and retry primitives now live in the independent `@turnwire/wire` package, not a server dependency on the client SDK barrel. Record export builds revision-pinned caches inside SQLite and reads bounded UTF-8 slices into Node; SQLite can still materialize a complete entity internally, so this is not a global database-memory bound.
+
 The approval inbox is labeled **Approvals** in the PWA and native app (**审批中心** in Chinese); CLI/TUI help uses the same terminology. The existing `inbox` command, `inbox.page` RPC, notification routing and persisted records are unchanged.
 
 New local installations use [XDG directories](XDG.md). Daemon and CLI share one Node-only resolver; native local connection discovery also honors explicit config/home overrides, the existing legacy home, and the XDG config default. Saved native Keychain/UserDefaults connections and remote wire contracts are unchanged. Native discovery changes require macOS compilation/testing (not available in the Linux validation environment).

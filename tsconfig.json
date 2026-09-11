@@ -16,6 +16,7 @@
     "baseUrl": ".",
     "paths": {
       "@turnwire/protocol": ["packages/protocol/src/index.ts"],
+      "@turnwire/wire": ["packages/wire/src/index.ts"],
       "@turnwire/runtime": ["packages/runtime/src/index.ts"],
       "@turnwire/core": ["packages/core/src/index.ts"],
       "@turnwire/runtime-dsh": ["packages/runtime-dsh/src/index.ts"],

@@ -7,6 +7,10 @@
 | 命令 | 用途 |
 | --- | --- |
 | `turnwire status` | 查看设备和 runtime 状态 |
+| `turnwire maintenance status` | 查看本机托管会话的维护状态，不显示租约令牌 |
+| `turnwire maintenance begin` | 获取持久维护租约并输出持有者令牌，阻止提交新任务 |
+| `turnwire maintenance cancel --lease-token OWNER_TOKEN` | 使用匹配令牌释放租约，恢复任务提交 |
+| `turnwire maintenance compact --lease-token OWNER_TOKEN` | 就绪时整理存储、清理可重建导出缓存，不删除历史和命令回执 |
 | `turnwire ls --search 关键词` / `--archived` / `--all` | 搜索会话与工作目录，查看归档 |
 | `turnwire rename SESSION_ID 标题` | 重命名共享会话 |
 | `turnwire archive SESSION_ID` / `turnwire unarchive SESSION_ID` | 归档与取消归档，保留历史 |

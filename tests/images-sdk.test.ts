@@ -57,11 +57,11 @@ describe('shared image helpers', () => {
   });
 
   it('validates and sends image-only steer messages through a generic client', async () => {
-    const c = client({ accepted: true });
+    const c = client({ accepted: true, messageId: 'message' });
     const input = { sessionId: args.sessionId, text: '', images: [{ mediaType: 'image/png' as const, data: chunk.data, name: attachment.name }], steer: true };
-    expect(await sendImageMessage(c, input)).toEqual({ accepted: true });
+    expect(await sendImageMessage(c, input)).toEqual({ accepted: true, messageId: 'message' });
     expect(c.request).toHaveBeenCalledWith('session.message', input);
-    expect(() => sendImageMessage(c, { ...input, images: [{ ...input.images[0]!, data: 'invalid' }] })).toThrow();
+    await expect(sendImageMessage(c, { ...input, images: [{ ...input.images[0]!, data: 'invalid' }] })).rejects.toThrow();
     expect(c.request).toHaveBeenCalledTimes(1);
   });
 });

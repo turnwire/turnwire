@@ -4,7 +4,8 @@ export { acceptClientHandshake, createClientHandshake, SessionChannel } from './
 export { retryDelay } from './retry.js';
 import { retryDelay } from './retry.js';
 import { historyOrder, connectionPongSchema, eventSchema, TurnwireError, pairingSchema, responseSchema, remoteConfigurationSchema, remoteStatusSchema, pairedDeviceSchema, pairingResultSchema, pairDeviceSchema, revokeDeviceSchema, deploymentConfigSchema, deploymentStatusSchema } from '@turnwire/protocol';
-import type { DeploymentConfig, DeploymentStatus } from '@turnwire/protocol';
+import type { DeploymentConfig, DeploymentStatus, MaintenanceRequest, MaintenanceStatus } from '@turnwire/protocol';
+import { maintenanceRequestSchema, maintenanceStatusSchema } from '@turnwire/protocol';
 import type { Method, TurnwireEvent, Pairing, RpcResponse, Snapshot, RemoteConfiguration, RemoteStatus, PairedDevice, PairingResult, Session, HistoryPage } from '@turnwire/protocol';
 import { SecureChannel, secureMessage } from './crypto.js';
 export { HistoryBuffer } from '@turnwire/protocol';
@@ -21,7 +22,8 @@ export interface TypedRpcClient {
 /** Typed adapter also supports existing lightweight request-only clients and mocks. */
 export async function call<M extends Method>(client: RpcClient, method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> {
   const [params = {}, id] = args;
-  return parseMethodResult(method, await client.request(method, methodSchemas[method].parse(params), id));
+  const parsed = methodSchemas[method].parse(params);
+  return parseMethodResult(method, await (id === undefined ? client.request(method, parsed) : client.request(method, parsed, id)));
 }
 export interface TurnwireClient {
   /** @deprecated Use concrete client.call() or the typed call(client, method, params) adapter. Results are runtime validated. */
@@ -30,12 +32,8 @@ export interface TurnwireClient {
   close(): void;
 }
 function unwrap<T>(response: ReturnType<typeof responseSchema.parse>): T { if (!response.ok) throw new TurnwireError(response.error.code, response.error.message); return response.result as T; }
-export function validateEndpoint(value: string, websocket = false): URL {
-  const url = new URL(value);
-  if (!(websocket ? ['ws:', 'wss:'] : ['http:', 'https:']).includes(url.protocol) || url.username || url.password) throw new Error('Invalid connection URL');
-  if ((url.protocol === 'http:' || url.protocol === 'ws:') && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Remote connections require HTTPS / WSS');
-  return url;
-}
+import { validateEndpoint } from '@turnwire/wire';
+export { validateEndpoint, encodePairing, decodePairing } from '@turnwire/wire';
 
 export class LocalClient implements TurnwireClient {
   private url: URL; private socket?: WebSocket; private timer?: ReturnType<typeof setTimeout>;
@@ -51,6 +49,9 @@ export class LocalClient implements TurnwireClient {
     }
     return response.json();
   }
+  /** Local administration only: drain managed work without exposing control to paired devices. */
+  async maintenanceStatus(): Promise<MaintenanceStatus> { return maintenanceStatusSchema.parse(await this.administration('/maintenance', 'GET')); }
+  async configureMaintenance(value: MaintenanceRequest): Promise<MaintenanceStatus> { return maintenanceStatusSchema.parse(await this.administration('/maintenance', 'PUT', maintenanceRequestSchema.parse(value))); }
   async notificationStatus(): Promise<NotificationStatus> { return notificationStatusSchema.parse(await this.administration('/notifications', 'GET')); }
   async configureNotifications(enabled: boolean): Promise<NotificationStatus> { return notificationStatusSchema.parse(await this.administration('/notifications', 'PUT', { enabled })); }
   async directStatus(): Promise<DirectStatus> { return directStatusSchema.parse(await this.administration('/direct', 'GET')); }
@@ -101,11 +102,6 @@ export class LocalClient implements TurnwireClient {
 export { RemoteClient } from './remote-client.js';
 export type { ConnectionHealth, RemoteClientOptions } from './remote-client.js';
 
-export function encodePairing(pairing: Pairing): string { return btoa(unescape(encodeURIComponent(JSON.stringify(pairing)))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''); }
-export function decodePairing(value: string): Pairing {
-  const input = value.trim().includes('#pair=') ? value.trim().split('#pair=')[1]! : value.trim();
-  return pairingSchema.parse(JSON.parse(decodeURIComponent(escape(atob(input.replaceAll('-', '+').replaceAll('_', '/'))))));
-}
 export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'error' | 'question'; text: string; time: string; tool?: string; complete: boolean; input?: string; output?: string; endedAt?: string; isError?: boolean; queued?: boolean; steer?: boolean;
   /** Set on a `question` row: what the agent asked, and what was answered. */
   question?: Question;
@@ -173,7 +169,7 @@ export async function loadHistoryPage(client: RpcClient, sessionId: string, befo
 export interface SubagentHistoryArgs { sessionId: string; subagentId: string; before?: number; cursor?: number; limit?: number }
 /** Child records are snapshots, not parent journal events or text deltas. */
 export async function loadSubagentHistoryPage(client: TurnwireClient, args: SubagentHistoryArgs) {
-  const page = subagentHistoryPageSchema.parse(await client.request('subagent.history', args));
+  const page = subagentHistoryPageSchema.parse(await call(client, 'subagent.history', args));
   if (page.subagent.id !== args.subagentId) throw new Error('Child history response scope mismatch');
   if (new Set(page.records.map(record => record.id)).size !== page.records.length) throw new Error('Duplicate child history record IDs');
   return page;

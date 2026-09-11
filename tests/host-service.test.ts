@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,6 +9,14 @@ const key = 'fixture-model-secret';
 const gateway = 'fixture-gateway-secret';
 const token = 'fixture-launch-secret';
 const dshScript = `import {writeFileSync,appendFileSync} from 'node:fs';
+import {createServer} from 'node:http';
+createServer(async(req,res)=>{
+ if(req.url==='/?token=${token}') {res.writeHead(303,{'set-cookie':'fixture=authenticated; HttpOnly',location:'/'});res.end();return;}
+ if(req.url==='/api/session/list' && req.headers.cookie==='fixture=authenticated') {
+ let body='';for await(const part of req)body+=part;const value=JSON.parse(body);
+ res.setHeader('content-type','application/json');res.end(JSON.stringify({type:'server-response',rpcId:value.rpcId,result:{ok:true,value:{items:[]}}}));return;
+ }res.writeHead(401);res.end();
+}).listen(43081,'127.0.0.1');
 writeFileSync('dsh.json',JSON.stringify({pid:process.pid,env:process.env,argv:process.argv}));
 console.log('dsh web: http://127.0.0.1:43081/?token=${token}');
 console.log('credential diagnostic ${key} ${gateway}');
@@ -37,6 +45,11 @@ it('isolates ambient and custom provider credentials, keeps operational paths, r
   const f = await fixture(undefined, undefined, { ARBITRARY_PROVIDER_PASSWORD: 'ambient-secret', OPENAI_API_KEY: 'ambient-openai', TURNWIRE_HARNESS_OTHER_KEY: 'ambient-other', TURNWIRE_RELAY_TOKEN: 'ambient-relay', TURNWIRE_ALLOWED_ORIGINS: 'https://fixture.invalid', TURNWIRE_SSH_PATH: '/fixture/ssh' });
   try {
     await expect.poll(async () => (await f.starts()).length).toBe(1);
+    const recordPath = join(f.root, 'state/run/host-readiness.json');
+    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    expect(record.ready).toBe(true); expect(record.supervisorPid).toBe(f.child.pid);
+    expect((await stat(recordPath)).mode & 0o777).toBe(0o600);
+    expect(JSON.stringify(record)).not.toContain(token); expect(JSON.stringify(record)).not.toContain(key);
     const daemon = (await f.starts())[0];
     const dsh = JSON.parse(await readFile(join(f.root, 'dsh.json'), 'utf8'));
     for (const name of ['ARBITRARY_PROVIDER_PASSWORD', 'OPENAI_API_KEY', 'TURNWIRE_HARNESS_OTHER_KEY', 'TURNWIRE_RELAY_TOKEN', 'TURNWIRE_DSH_TOKEN', 'TURNWIRE_NOT_A_STRING']) {
@@ -66,6 +79,25 @@ it('restarts a crashed daemon without terminating healthy DSH', async () => {
     expect((await f.starts())[1].pid).not.toBe((await f.starts())[0].pid);
     expect(process.kill(dsh.pid, 0)).toBe(true);
     await expect(readFile(join(f.root, 'stops'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await f.cleanup(); }
+});
+
+it('resumes a backoff restart after transient readiness loss without consuming more budget', async () => {
+  const script = dshScript.replace("import {createServer}", "import {existsSync} from 'node:fs';\nimport {createServer}").replace(" if(req.url==='/?token=", " if(existsSync('unready')) {res.writeHead(503);res.end();return;}\n if(req.url==='/?token=");
+  const f = await fixture(script, undefined, { TURNWIRE_HOST_RESTART_DELAY_MS: '1500', TURNWIRE_HOST_RESTART_MAX_DELAY_MS: '1500', TURNWIRE_HOST_RESTART_LIMIT: '1' });
+  try {
+    await expect.poll(async () => (await f.starts()).length).toBe(1);
+    await writeFile(join(f.root, 'unready'), '');
+    await expect.poll(async () => JSON.parse(await readFile(join(f.root, 'state/run/host-readiness.json'), 'utf8')).ready).toBe(false);
+    process.kill((await f.starts())[0].pid, 'SIGKILL');
+    await expect.poll(() => f.logs()).toContain('in 1500ms');
+    // Wait past backoff through observable heartbeat rather than assuming the timer fired.
+    const began = Date.now();
+    await expect.poll(() => Date.now() - began, { timeout: 3000 }).toBeGreaterThan(1700);
+    expect((await f.starts()).length).toBe(1);
+    await rm(join(f.root, 'unready'));
+    await expect.poll(async () => (await f.starts()).length, { timeout: 3000 }).toBe(2);
+    expect(f.logs()).not.toContain('budget exhausted');
   } finally { await f.cleanup(); }
 });
 
@@ -110,6 +142,18 @@ it('DSH death stops the dependent daemon and exits for deliberate supervisor rec
 it('fails promptly when DSH exits before readiness without starting the daemon', async () => {
   const f = await fixture('process.exit(2)');
   try { expect(await f.stopped).toBe(1); expect(await f.starts()).toEqual([]); }
+  finally { await f.cleanup(); }
+});
+
+it('stdout alone cannot start the daemon', async () => {
+  const f = await fixture(`console.log('dsh web: http://127.0.0.1:43081/?token=${token}');setInterval(()=>{},1000)`, undefined, { TURNWIRE_HOST_START_TIMEOUT_MS: '150' });
+  try { expect(await f.stopped).toBe(1); expect(await f.starts()).toEqual([]); }
+  finally { await f.cleanup(); }
+});
+
+it('stale launch authentication fails closed even with a reachable HTTP listener', async () => {
+  const f = await fixture(dshScript.replace("req.url==='/?token=fixture-launch-secret'", "req.url==='/?token=other'"), undefined, { TURNWIRE_HOST_START_TIMEOUT_MS: '250' });
+  try { expect(await f.stopped).toBe(1); expect(await f.starts()).toEqual([]); expect(f.logs()).not.toContain(token); }
   finally { await f.cleanup(); }
 });
 

@@ -8,9 +8,11 @@ vi.mock('../apps/relay/src/server.js', () => ({ startRelay: vi.fn(async () => ({
 vi.mock('../apps/daemon/src/remote.js', () => ({ RemoteBridge: class {
   constructor(_core: unknown, _url: string, _token: string, presence: { confirm(id: string, latency: number): void }) { confirmPhone = () => presence.confirm('phone', 4); }
   get connected() { return mocks.connected; }
+  get health() { return mocks.connected ? 'ready' : 'unknown'; }
   start() {} close = mocks.bridgeClose; refreshDevices() {}
 } }));
 vi.mock('../apps/daemon/src/direct.js', () => ({ DirectController: class {
+  presence = { get: () => ({ connection: 'unconfirmed' }) };
   start() {} async close() {} endpoints() { return []; }
 } }));
 vi.mock('../apps/daemon/src/notifications.js', () => ({ NotificationController: class {
@@ -103,9 +105,13 @@ it('warns honestly about temporary address rotation and retries startup failures
 it('distinguishes local readiness from fresh device confirmation and expires confirmation', async () => {
   const { controller } = fixture(); controller.configure(named); await flush();
   expect(controller.status().message).toContain('unverified');
+  expect(controller.status().health).toEqual({ relayRegistration: 'ready', tunnelProcess: 'ready', publicReachability: 'unknown', deviceConfirmed: 'unknown' });
   confirmPhone(); expect(controller.status().message).toContain('paired device confirmed');
+  expect(controller.status().health?.deviceConfirmed).toBe('ready');
+  expect(controller.status().health?.publicReachability).toBe('unknown');
   await vi.advanceTimersByTimeAsync(25_000);
   expect(controller.status().message).toContain('unverified');
+  expect(controller.status().health?.deviceConfirmed).toBe('unknown');
 });
 it('fences an exit arriving before the provider start promise resolves', async () => {
   const { controller, start, close } = fixture();

@@ -3,11 +3,11 @@ import { readFile, writeFile, chmod, rename } from 'node:fs/promises';
 import { resolveTurnwirePaths } from '../../../packages/sdk/src/node-paths.js';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
+import { call, LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
 import type { TurnwireClient } from '@turnwire/sdk';
 import { eventSessionId, tunnelProviderSchema, methodSchemas, MAX_IMAGE_TEXT_LENGTH } from '@turnwire/protocol';
 import { readImageInputs, imageSummary } from './images.js';
-import type { TurnwireEvent, Session, Snapshot, ModelCatalog, SubagentView, WorkspaceListing } from '@turnwire/protocol';
+import type { TurnwireEvent, Session } from '@turnwire/protocol';
 import { safe, printRemote, printPairing, remoteMenu, runTui, deploymentMenu, watchDeployment, directMenu, notificationsMenu } from './terminal.js';
 import { detectLocale, isLocale, localeFromArgv, localizedError, padEnd, setLocale, t, textIn } from './i18n.js';
 import type { Locale } from './i18n.js';
@@ -46,29 +46,29 @@ function print(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
 /** How long an agent has been working, rounded the way a person reads a stopwatch. */
 function duration(ms: number) { const seconds = Math.round(ms / 1000); return seconds < 60 ? t('agents.seconds', { value: seconds }) : t('agents.minutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 }); }
 async function withClient(action: (client: TurnwireClient) => Promise<void>) { const c = await client(); try { await action(c); } finally { c.close(); } }
-program.command('status').description(t('command.status')).action(() => withClient(async c => { const snapshot = await c.request<Snapshot>('system.snapshot'); if (program.opts().json) print(snapshot); else { console.log(t('status.summary', { device: snapshot.device.name, count: snapshot.sessions.length })); for (const runtime of snapshot.runtimes) console.log(`${runtime.online ? '●' : '○'} ${runtime.name}: ${safe(runtime.message)}`); } }));
+program.command('status').description(t('command.status')).action(() => withClient(async c => { const snapshot = await call(c, 'system.snapshot'); if (program.opts().json) print(snapshot); else { console.log(t('status.summary', { device: snapshot.device.name, count: snapshot.sessions.length })); for (const runtime of snapshot.runtimes) console.log(`${runtime.online ? '●' : '○'} ${runtime.name}: ${safe(runtime.message)}`); } }));
 program.command('ls').description(t('command.ls')).option('--archived', t('option.archived')).option('--all', t('option.all')).option('--search <query>', t('option.search')).action((options: { archived?: boolean; all?: boolean; search?: string }) => withClient(async c => {
-  const snapshot = await c.request<Snapshot>('system.snapshot'); const query = options.search?.toLocaleLowerCase();
+  const snapshot = await call(c, 'system.snapshot'); const query = options.search?.toLocaleLowerCase();
   const sessions = snapshot.sessions.filter(s => (options.all || !!s.archived === !!options.archived) && (!query || (s.title + ' ' + s.cwd).toLocaleLowerCase().includes(query)));
   if (program.opts().json) print(sessions); else for (const s of sessions) console.log(`${s.id}  ${padEnd(s.archived ? t('session.archived') : s.status, 17)} ${safe(s.title)}  ${safe(s.cwd)}`);
 }));
-program.command('rename <session> <title>').description(t('command.rename')).action((sessionId: string, title: string) => withClient(async c => print(await c.request('session.rename', { sessionId, title }))));
-for (const archived of [true, false]) program.command(`${archived ? 'archive' : 'unarchive'} <session>`).description(archived ? t('command.archive') : t('command.unarchive')).action((sessionId: string) => withClient(async c => print(await c.request('session.archive', { sessionId, archived }))));
+program.command('rename <session> <title>').description(t('command.rename')).action((sessionId: string, title: string) => withClient(async c => print(await call(c, 'session.rename', { sessionId, title }))));
+for (const archived of [true, false]) program.command(`${archived ? 'archive' : 'unarchive'} <session>`).description(archived ? t('command.archive') : t('command.unarchive')).action((sessionId: string) => withClient(async c => print(await call(c, 'session.archive', { sessionId, archived }))));
 program.command('new [prompt]').description(t('command.new')).option('--cwd <path>', t('option.cwd'), process.cwd()).option('--title <title>', t('option.title'), t('new.title.default')).option('--runtime <id>', t('option.runtime'), 'dsh').option('--model <provider/model>', t('option.model')).option('--effort <id>', t('option.effort')).action((prompt: string | undefined, options: { cwd: string; title: string; runtime: string; model?: string; effort?: string }) => withClient(async c => {
-  const s = await c.request<Session>('session.create', { cwd: resolve(options.cwd), title: options.title, runtimeId: options.runtime, ...(options.model ? { model: modelSelection(options.model, options.effort) } : {}) });
-  if (prompt) await c.request('session.message', { sessionId: s.id, text: prompt });
+  const s = await call(c, 'session.create', { cwd: resolve(options.cwd), title: options.title, runtimeId: options.runtime, ...(options.model ? { model: modelSelection(options.model, options.effort) } : {}) });
+  if (prompt) await call(c, 'session.message', { sessionId: s.id, text: prompt });
   if (program.opts().json) print(s); else console.log(t('new.success', { id: s.id, model: showModel(s) }));
 }));
 /** The terminal's half of the phone's folder picker: list one level of the host, then `new --cwd`. */
 program.command('dirs [path]').description(t('command.dirs')).option('--mkdir <name>', t('option.mkdir')).action((path: string | undefined, options: { mkdir?: string }) => withClient(async c => {
   const listing = options.mkdir !== undefined
-    ? await c.request<WorkspaceListing>('workspace.mkdir', { parent: path ? resolve(path) : (await c.request<WorkspaceListing>('workspace.list', {})).path, name: options.mkdir })
-    : await c.request<WorkspaceListing>('workspace.list', path ? { path: resolve(path) } : {});
+    ? await call(c, 'workspace.mkdir', { parent: path ? resolve(path) : (await call(c, 'workspace.list', {})).path, name: options.mkdir })
+    : await call(c, 'workspace.list', path ? { path: resolve(path) } : {});
   if (program.opts().json) print(listing);
   else { console.log(safe(listing.path)); if (!listing.entries.length) console.log(t('dirs.empty')); else for (const entry of listing.entries) console.log(`  ${safe(entry.name)}`); }
 }));
 program.command('models').description(t('command.models')).action(() => withClient(async c => {
-  const catalog = await c.request<ModelCatalog>('model.catalog', {});
+  const catalog = await call(c, 'model.catalog', {});
   if (program.opts().json) { print(catalog); return; }
   console.log(t('models.default', { model: `${catalog.default.provider}/${catalog.default.model}${catalog.default.reasoningEffort ? ' · ' + catalog.default.reasoningEffort : ''}` }));
   for (const group of catalog.groups) {
@@ -83,7 +83,7 @@ program.command('models').description(t('command.models')).action(() => withClie
 }));
 program.command('model <session> <spec>').description(t('command.model')).option('--effort <id>', t('option.effort')).action((sessionId: string, spec: string, options: { effort?: string }) => withClient(async c => {
   // The daemon returns what the runtime resolved, which can differ from the request.
-  const updated = await c.request<Session>('session.setModel', { sessionId, ...modelSelection(spec, options.effort) });
+  const updated = await call(c, 'session.setModel', { sessionId, ...modelSelection(spec, options.effort) });
   if (program.opts().json) print(updated); else console.log(`${updated.id} · ${showModel(updated)}`);
 }));
 function historyInteger(flag: string, minimum: number, maximum = Number.MAX_SAFE_INTEGER) {
@@ -119,7 +119,7 @@ program.command('agents <session>').description(t('command.agents'))
     if (page.hasMore && page.nextBefore !== null) console.log(`turnwire agents ${safe(sessionId)} --detail ${safe(options.detail)} --before ${page.nextBefore} --limit ${options.limit ?? 50}`);
     return;
   }
-  const { subagents } = await c.request<{ subagents: SubagentView[] }>('subagent.list', { sessionId });
+  const { subagents } = await call(c, 'subagent.list', { sessionId });
   if (program.opts().json) { print(subagents); return; }
   if (!subagents.length) { console.log(t('agents.empty')); return; }
   const byId = new Map(subagents.map(agent => [agent.id, agent]));
@@ -157,7 +157,7 @@ program.command('history <session>').description(t('command.history'))
     }
   }));
 program.command('export <session>').description(t('command.export')).requiredOption('--output <path>', t('option.output')).action((sessionId: string, options: { output: string }) => withClient(async c => {
-  const snapshot = await c.request<Snapshot>('system.snapshot'); const session = snapshot.sessions.find(s => s.id === sessionId); if (!session) throw localizedError('SESSION_NOT_FOUND');
+  const snapshot = await call(c, 'system.snapshot'); const session = snapshot.sessions.find(s => s.id === sessionId); if (!session) throw localizedError('SESSION_NOT_FOUND');
   const messages = conversation(await loadHistory(c, sessionId), sessionId); const path = resolve(options.output);
   await writeFile(path, transcriptMarkdown(session, messages), { flag: 'wx', mode: 0o600 }); print({ path });
 }));
@@ -171,41 +171,41 @@ program.command('send <session> [text]').description(t('command.send')).option('
     methodSchemas['session.message'].parse(params);
     await withClient(async c => {
       if (images.length) {
-        const snapshot = await c.request<Snapshot>('system.snapshot');
+        const snapshot = await call(c, 'system.snapshot');
         const session = snapshot.sessions.find(s => s.id === sessionId);
         if (!session) throw localizedError('SESSION_NOT_FOUND');
         if (!snapshot.runtimes.find(runtime => runtime.id === session.runtimeId)?.capabilities.imageInput) throw new Error(t('images.unsupported'));
       }
-      print(await c.request('session.message', params));
+      print(await call(c, 'session.message', params));
     });
   });
-program.command('resume <session>').description(t('command.resume')).action((sessionId: string) => withClient(async c => print(await c.request('session.resume', { sessionId }))));
-program.command('stop <session>').description(t('command.stop')).action((sessionId: string) => withClient(async c => print(await c.request('session.cancel', { sessionId }))));
-program.command('result <id>').description(t('command.result')).action((requestId: string) => withClient(async c => print(await c.request('request.result', { requestId }))));
-program.command('inbox').description(t('command.inbox')).option('--all', t('option.inboxAll')).option('--before <cursor>', t('option.inboxBefore'), Number).action((options: { all?: boolean; before?: number }) => withClient(async c => print(await c.request('inbox.page', { status: options.all ? 'all' : 'pending', before: options.before }))));
-program.command('approvals').description(t('command.approvals')).action(() => withClient(async c => print((await c.request<Snapshot>('system.snapshot')).approvals)));
-for (const decision of ['approve', 'reject'] as const) program.command(`${decision} <approval>`).description(decision === 'approve' ? t('command.approve') : t('command.reject')).action((approvalId: string) => withClient(async c => print(await c.request('approval.decide', { approvalId, decision: decision === 'approve' ? 'approved' : 'rejected' }))));
+program.command('resume <session>').description(t('command.resume')).action((sessionId: string) => withClient(async c => print(await call(c, 'session.resume', { sessionId }))));
+program.command('stop <session>').description(t('command.stop')).action((sessionId: string) => withClient(async c => print(await call(c, 'session.cancel', { sessionId }))));
+program.command('result <id>').description(t('command.result')).action((requestId: string) => withClient(async c => print(await call(c, 'request.result', { requestId }))));
+program.command('inbox').description(t('command.inbox')).option('--all', t('option.inboxAll')).option('--before <cursor>', t('option.inboxBefore'), Number).action((options: { all?: boolean; before?: number }) => withClient(async c => print(await call(c, 'inbox.page', { status: options.all ? 'all' : 'pending', before: options.before }))));
+program.command('approvals').description(t('command.approvals')).action(() => withClient(async c => print((await call(c, 'system.snapshot')).approvals)));
+for (const decision of ['approve', 'reject'] as const) program.command(`${decision} <approval>`).description(decision === 'approve' ? t('command.approve') : t('command.reject')).action((approvalId: string) => withClient(async c => print(await call(c, 'approval.decide', { approvalId, decision: decision === 'approve' ? 'approved' : 'rejected' }))));
 program.command('questions').description(t('command.questions')).action(() => withClient(async c => {
-  const snapshot = await c.request<Snapshot>('system.snapshot');
+  const snapshot = await call(c, 'system.snapshot');
   if (program.opts().json) print(snapshot.questions);
   else if (!snapshot.questions.length) console.log(t('questions.none'));
   else for (const question of snapshot.questions) for (const item of question.questions) console.log(`${question.id}  ${safe(item.question)}${item.options ? '  [' + item.options.map(option => option.label).join(' | ') + ']' : ''}`);
 }));
 program.command('answer <question> <option...>').description(t('command.answer')).option('--text <answer>', t('option.answerText')).action((questionId: string, options: string[], flags: { text?: string }) => withClient(async c => {
-  const snapshot = await c.request<Snapshot>('system.snapshot');
+  const snapshot = await call(c, 'system.snapshot');
   const question = snapshot.questions.find(candidate => candidate.id === questionId);
   if (!question) throw localizedError('QUESTION_EXPIRED');
   // The runtime answers a batch at once, so each question in it takes the options it was given,
   // falling back to the same labels for every question when only one was named.
   const answers = question.questions.map((item, index) => ({ id: item.id, selected: question.questions.length === 1 ? options : (options[index] === undefined ? [] : [options[index]!]), ...(flags.text === undefined ? {} : { custom: flags.text }) }));
-  print(await c.request('question.answer', { questionId, answers }));
+  print(await call(c, 'question.answer', { questionId, answers }));
 }));
 program.command('approve-for-me <session>').description(t('command.autoApprove')).option('--off', t('option.off')).action((sessionId: string, options: { off?: boolean }) => withClient(async c => {
-  const result = await c.request<{ enabled: boolean }>('session.autoApprove', { sessionId, enabled: options.off !== true });
+  const result = await call(c, 'session.autoApprove', { sessionId, enabled: options.off !== true });
   if (program.opts().json) print(result); else console.log(result.enabled ? t('autoApprove.on') : t('autoApprove.off'));
 }));
 program.command('attach <session>').description(t('command.attach')).action(async (sessionId: string) => {
-  const c = await client(); const snapshot = await c.request<Snapshot>('system.snapshot');
+  const c = await client(); const snapshot = await call(c, 'system.snapshot');
   if (!snapshot.sessions.some(s => s.id === sessionId)) { c.close(); throw localizedError('SESSION_NOT_FOUND'); }
   const page = await loadHistoryPage(c, sessionId); const history = page.events;
   if (page.hasMore && !program.opts().json) console.log(t('history.earlier', { session: sessionId, cursor: page.nextBefore ?? '' }));
@@ -228,19 +228,33 @@ program.command('attach <session>').description(t('command.attach')).action(asyn
     if (d.type === 'session.error') console.error(safe(d.message));
   }, state => { if (!program.opts().json) process.stderr.write(`[${state}]\n`); }, cursor);
   const input = process.stdin.isTTY && !program.opts().json ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
-  input?.on('line', line => { if (!line.trim()) return; void c.request('session.message', { sessionId, text: line }).catch(error => console.error(safe(String(error)))); });
+  input?.on('line', line => { if (!line.trim()) return; void call(c, 'session.message', { sessionId, text: line }).catch(error => console.error(safe(String(error)))); });
   await new Promise<void>(done => {
     const detach = () => { process.off('SIGINT', detach); process.off('SIGTERM', detach); input?.off('close', detach); done(); };
     process.once('SIGINT', detach); process.once('SIGTERM', detach); input?.once('close', detach);
   });
   unsubscribe(); input?.close(); c.close();
 });
-program.command('connection').description(t('command.connection')).action(() => withClient(async c => { if (c instanceof RemoteClient) print(await c.checkConnection()); else { const started = Date.now(); const snapshot = await c.request<Snapshot>('system.snapshot'); print({ phase: 'connected', message: textIn('en', 'connection.verified'), hostId: snapshot.device.id, latencyMs: Date.now() - started, lastVerifiedAt: new Date().toISOString() }); } }));
+program.command('connection').description(t('command.connection')).action(() => withClient(async c => { if (c instanceof RemoteClient) print(await c.checkConnection()); else { const started = Date.now(); const snapshot = await call(c, 'system.snapshot'); print({ phase: 'connected', message: textIn('en', 'connection.verified'), hostId: snapshot.device.id, latencyMs: Date.now() - started, lastVerifiedAt: new Date().toISOString() }); } }));
 program.command('connect').description(t('command.connect')).action(async () => print(await config()));
 async function localClient(): Promise<LocalClient> {
   if (program.opts().pairing) throw localizedError('CLI_LOCAL_CONNECTION_REQUIRED');
   const c = await config(); return new LocalClient(c.url, c.token);
 }
+const maintenance = program.command('maintenance').description(t('command.maintenance'));
+maintenance.command('status').action(async () => {
+  const c = await localClient();
+  try { const { token: _token, ...status } = await c.maintenanceStatus(); print(status); } finally { c.close(); }
+});
+maintenance.command('begin').option('--lease-token <token>', t('maintenance.token')).action(async (options: { leaseToken?: string }) => {
+  const c = await localClient();
+  // Only this explicit local operation prints the owner token needed to retry or cancel.
+  try { print(await c.configureMaintenance({ action: 'begin', ...(options.leaseToken === undefined ? {} : { token: options.leaseToken }) })); } finally { c.close(); }
+});
+for (const action of ['cancel', 'compact'] as const) maintenance.command(action).requiredOption('--lease-token <token>', t('maintenance.token')).action(async (options: { leaseToken: string }) => {
+  const c = await localClient();
+  try { const { token: _token, ...status } = await c.configureMaintenance({ action, token: options.leaseToken }); print(status); } finally { c.close(); }
+});
 const devices = program.command('devices').description(t('command.devices'));
 devices.command('list').option('--watch', t('option.watchDevices')).action(async (options: { watch?: boolean }) => { const c = await localClient(); let stopped = false; const stop = () => { stopped = true; }; process.once('SIGINT', stop); try { do { print(await c.devices()); if (!options.watch) break; await new Promise(resolve => setTimeout(resolve, 2000)); } while (!stopped); } finally { process.off('SIGINT', stop); c.close(); } });
 devices.command('pair').option('--name <name>', t('option.deviceName'), t('device.defaultName')).option('--qr', t('option.qr')).option('--qr-file <path>', t('option.qrFile')).action(async (options: { name: string; qr?: boolean; qrFile?: string }) => {
@@ -296,7 +310,7 @@ direct.command('off').action(async () => print(await (await localClient()).confi
 direct.command('configure').requiredOption('--config <path>', t('option.jsonConfig')).action(async (options: { config: string }) => print(await (await localClient()).configureDirect(JSON.parse(await readFile(resolve(options.config), 'utf8')))));
 direct.action(async () => { const c = await localClient(); try { if (process.stdin.isTTY && !program.opts().json) await directMenu(c); else print(await c.directStatus()); } finally { c.close(); } });
 const notifications = program.command('notifications').description(t('command.notifications'));
-notifications.command('status').action(() => withClient(async c => print(await c.request('notifications.status'))));
+notifications.command('status').action(() => withClient(async c => print(await call(c, 'notifications.status'))));
 for (const enabled of [true, false]) notifications.command(enabled ? 'on' : 'off').action(async () => print(await (await localClient()).configureNotifications(enabled)));
 notifications.action(async () => { const c = await localClient(); try { if (process.stdin.isTTY && !program.opts().json) await notificationsMenu(c); else print(await c.notificationStatus()); } finally { c.close(); } });
 remote.command('off').description(t('command.remote.off')).action(async () => showRemote(await (await localClient()).configureRemote({ mode: 'off' })));

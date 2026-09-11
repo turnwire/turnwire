@@ -9,7 +9,7 @@
     "@turnwire/protocol": "*",
     "@turnwire/runtime": "*",
     "@turnwire/runtime-dsh": "*",
-    "@turnwire/sdk": "*",
+    "@turnwire/wire": "*",
     "ws": "^8.18.0"
   },
   "bin": {

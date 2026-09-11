@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import type { TurnwireCore } from '@turnwire/core';
-import { validateEndpoint, retryDelay } from '@turnwire/sdk';
+import { validateEndpoint, retryDelay } from '@turnwire/wire';
 import { DevicePresence } from './presence.js';
 import { RemotePeer } from './remote-peer.js';
 
@@ -8,7 +8,9 @@ export class RemoteBridge {
   private socket?: WebSocket; private timer?: ReturnType<typeof setTimeout>; private stopped = false;
   private registered = false; private attempts = 0; private peers = new Map<string, RemotePeer>();
   private connectionMessage = 'Connecting to the remote service…';
+  private registrationFailed = false;
   get connected() { return this.registered; }
+  get health(): 'ready' | 'unknown' | 'error' { return this.registered ? 'ready' : this.registrationFailed ? 'error' : 'unknown'; }
   get statusMessage() { return this.connectionMessage; }
   onControl?: (frame: Record<string, unknown>) => void;
   constructor(private core: TurnwireCore, private url: string, private token: string, private presence = new DevicePresence(), private routes: () => string[] = () => []) { validateEndpoint(url, true); }
@@ -19,14 +21,14 @@ export class RemoteBridge {
     const socket = new WebSocket(this.url, { maxPayload: 3 * 1024 * 1024, handshakeTimeout: 5000 }); this.socket = socket;
     let readyTimeout: ReturnType<typeof setTimeout> | undefined;
     socket.on('open', () => {
-      readyTimeout = setTimeout(() => { this.connectionMessage = 'Relay authentication response timed out'; socket.terminate(); }, 5000);
+      readyTimeout = setTimeout(() => { this.registrationFailed = true; this.connectionMessage = 'Relay authentication response timed out'; socket.terminate(); }, 5000);
       socket.send(JSON.stringify({ kind: 'host', protocol: 2, hostId: this.core.device.id, token: this.token, clients: devices.map(device => ({ id: device.clientId, token: device.token })) }));
     });
     socket.on('message', raw => {
       if (this.socket !== socket) return;
       try {
         const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
-        if (frame.type === 'ready') { clearTimeout(readyTimeout); this.registered = true; this.attempts = 0; this.connectionMessage = 'Remote service connected'; this.onControl?.(frame); return; }
+        if (frame.type === 'ready') { clearTimeout(readyTimeout); this.registered = true; this.registrationFailed = false; this.attempts = 0; this.connectionMessage = 'Remote service connected'; this.onControl?.(frame); return; }
         if (typeof frame.type === 'string' && frame.type.startsWith('push.')) { this.onControl?.(frame); return; }
         const connectionId = frame.connectionId;
         const id = frame.clientId; if (typeof id !== 'string') return;
@@ -45,12 +47,12 @@ export class RemoteBridge {
         peer.receive(frame.payload);
       } catch { socket.close(4002, 'Invalid relay frame'); }
     });
-    socket.on('error', () => { this.connectionMessage = 'Cannot reach the remote service; check the address and network'; });
+    socket.on('error', () => { this.registrationFailed = true; this.connectionMessage = 'Cannot reach the remote service; check the address and network'; });
     socket.on('close', code => {
       clearTimeout(readyTimeout); if (this.socket !== socket) return;
       if (code === 4401) this.connectionMessage = 'Relay authentication failed; check the key or a duplicate host connection';
       else if (this.registered) this.connectionMessage = 'Remote connection lost; reconnecting…';
-      this.registered = false; this.presence.disconnect(); this.socket = undefined;
+      this.registrationFailed = code !== 4001; this.registered = false; this.presence.disconnect(); this.socket = undefined;
       for (const peer of this.peers.values()) peer.close(); this.peers.clear();
       if (!this.stopped && code !== 4401) this.timer = setTimeout(() => { this.timer = undefined; this.start(); }, retryDelay(this.attempts++));
     });

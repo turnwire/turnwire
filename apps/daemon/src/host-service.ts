@@ -2,6 +2,23 @@
 /** Optional headless host supervisor. TUI remains a client of the same daemon. */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFile, mkdir } from 'node:fs/promises';
+import { writeFileSync, renameSync, rmSync, chmodSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+
+/** Pinned 0.1.5-rc.2 launch-cookie + read-only session/list contract; never trusts HTML. */
+export async function probeDsh(launch: string, timeoutMs = 5000) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const login = await fetch(launch, { redirect: 'manual', signal });
+  const cookie = login.headers.get('set-cookie')?.split(';')[0];
+  await login.body?.cancel();
+  if (login.status !== 303 || !cookie) throw new Error('DSH authentication not ready');
+  const rpcId = randomUUID();
+  const response = await fetch(new URL('/api/session/list', launch), { method: 'POST', redirect: 'error', signal,
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId, method: 'session/list', payload: { args: { _request: {} } } }) });
+  const value = await response.json();
+  if (!response.ok || value?.type !== 'server-response' || value.rpcId !== rpcId || value.result?.ok !== true || !Array.isArray(value.result.value?.items)) throw new Error('DSH session endpoint not ready');
+}
 import { createInterface } from 'node:readline';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -50,8 +67,19 @@ export async function runManagedHost() {
   const restartMax = integer('TURNWIRE_HOST_RESTART_MAX_DELAY_MS', 30_000, restartBase, 300_000);
   const restartLimit = integer('TURNWIRE_HOST_RESTART_LIMIT', 5, 0, 100);
   const stableMs = integer('TURNWIRE_HOST_STABLE_MS', 60_000, 1, 3_600_000);
+  const run = join(paths.state, 'run'); await mkdir(run, { recursive: true, mode: 0o700 }); chmodSync(run, 0o700);
+  const readiness = join(run, 'host-readiness.json'); rmSync(readiness, { force: true });
+  let generation = 0; let checkedAt = 0; let probing = false; let ready = false;
+  let heartbeat: NodeJS.Timeout | undefined;
+  const record = () => {
+    const tmp = `${readiness}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify({ version: 1, supervisorPid: process.pid, dshPid: dsh.pid, daemonPid: daemon?.pid ?? null, generation, checkedAt, ready, dshUrl: `http://127.0.0.1:${port}/` }) + '\n', { mode: 0o600, flag: 'wx' });
+      renameSync(tmp, readiness);
+    } finally { rmSync(tmp, { force: true }); }
+  };
   let stopping = false; let launchURL = ''; let daemon: ChildProcess | undefined;
-  let failures = 0; let reloading = false;
+  let failures = 0; let reloading = false; let pendingStart = false;
   let restart: NodeJS.Timeout | undefined; let stable: NodeJS.Timeout | undefined;
   let finish!: (code: number) => void;
   const done = new Promise<number>(ok => { finish = ok; });
@@ -66,7 +94,8 @@ export async function runManagedHost() {
   }
   async function stop(code: number) {
     if (stopping) return;
-    stopping = true; clearTimeout(startup); clearTimeout(restart); clearTimeout(stable);
+    stopping = true; clearTimeout(startup); clearTimeout(restart); clearTimeout(stable); clearInterval(heartbeat);
+    rmSync(readiness, { force: true });
     // Full shutdown only: daemon crash/reload never enters this path while DSH is healthy.
     await terminateChild(daemon);
     await terminateChild(dsh);
@@ -87,13 +116,16 @@ export async function runManagedHost() {
   }
   function startDaemon() {
     if (stopping || !launchURL || alive(daemon)) return;
+    if (!ready || Date.now() - checkedAt > 10_000) { pendingStart = true; return; }
+    pendingStart = false;
     const child = spawn(process.execPath, [daemonEntry], { cwd: root, env: { ...base, TURNWIRE_RUNTIME: 'dsh', TURNWIRE_DSH_URL: launchURL }, stdio: ['ignore', 'pipe', 'pipe'] });
-    daemon = child; logOutput(child);
+    daemon = child; generation++; record(); logOutput(child);
     stable = setTimeout(() => { failures = 0; }, stableMs);
     let ended = false;
     const end = () => {
       if (ended) return; ended = true; clearTimeout(stable);
       if (daemon === child) daemon = undefined;
+      if (!stopping) record();
       scheduleRestart();
     };
     child.once('error', () => { console.error('Turnwire launch failed'); end(); });
@@ -104,25 +136,39 @@ export async function runManagedHost() {
   const reload = () => {
     if (stopping || reloading || !launchURL) return;
     reloading = true; clearTimeout(restart); restart = undefined; clearTimeout(stable);
-    void terminateChild(daemon).then(() => {
+    void probeDsh(launchURL).then(async () => {
+      if (stopping) return;
+      ready = true; checkedAt = Date.now();
+      await terminateChild(daemon);
       reloading = false; failures = 0;
       if (!stopping) startDaemon();
-    });
+    }).catch(() => { reloading = false; ready = false; if (!stopping) record(); console.error('Daemon reload refused: DSH readiness unknown'); });
   };
   const startup = setTimeout(() => { console.error('DSH startup timed out'); void stop(1); }, timeoutMs);
   const dsh = spawn(process.execPath, [paths.dshEntry, '--patch', join(root, 'config/dsh-deepseek.patch.yml'), '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', port], { cwd: root, env: { ...system, ...forwarded, DSH_HOME: paths.dshHome, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: key, DO_NOT_TRACK: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   dsh.once('error', () => { console.error('DSH launch failed'); void stop(1); });
   dsh.once('exit', () => { if (!stopping) { console.error('DSH exited; stopping dependent daemon for supervisor recovery'); void stop(1); } });
-  // Pinned DSH exposes readiness only through its launch line, not a private endpoint-file API.
-  // Limitation: this is coupled to that stdout format (stderr is never trusted as readiness).
-  // Capture only the exact loopback endpoint on the requested port. The bearer URL stays in a
-  // private pipe and daemon environment, never argv or logs; redact even malformed launch lines.
+  // Stdout is bootstrap secret discovery only. Authenticated session API proves readiness.
+  // Probe failure never kills an active DSH; it invalidates the record and blocks daemon starts.
+  const check = async () => {
+    if (stopping || probing || !launchURL) return;
+    probing = true;
+    try {
+      await probeDsh(launchURL, Math.min(timeoutMs, 5000));
+      if (stopping) return;
+      ready = true; checkedAt = Date.now(); record(); clearTimeout(startup);
+      if (!daemon && !restart && (failures === 0 || pendingStart) && !reloading) startDaemon();
+    } catch {
+      if (!stopping) { ready = false; record(); }
+    } finally { probing = false; }
+  };
+  heartbeat = setInterval(() => { void check(); }, 1000);
   createInterface({ input: dsh.stdout! }).on('line', line => {
     if (!launchURL && !stopping) {
       const found = line.match(/^dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9._~%+-]+)\s*$/)?.[1];
       if (found && new URL(found).port === port) {
         launchURL = found; secrets.push(new URL(found).searchParams.get('token')!);
-        clearTimeout(startup); startDaemon();
+        void check();
       }
     }
     console.log(clean(line));

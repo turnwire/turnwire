@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { Store, TurnwireCore } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
 import { LocalClient, RemoteClient, randomSecret } from '@turnwire/sdk';
-import type { Pairing, Session, Snapshot } from '@turnwire/protocol';
+import { remoteStatusSchema, type Pairing, type Session, type Snapshot } from '@turnwire/protocol';
 import { RemoteController } from '../apps/daemon/src/remote-control.js';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
 import { startRelay } from '../apps/relay/src/server.js';
@@ -32,6 +32,21 @@ async function setup(startTunnel?: (options: TunnelOptions) => Promise<TunnelHan
   return { directory, webRoot, core, controller, local, admin, url, token };
 }
 
+it('accepts legacy status responses and validates optional structured health', () => {
+  const legacy = { mode: 'off', state: 'off', message: 'Off', hasRelayToken: false };
+  expect(remoteStatusSchema.parse(legacy).health).toBeUndefined();
+  expect(remoteStatusSchema.safeParse({ ...legacy, health: { relayRegistration: 'ready', tunnelProcess: 'off', publicReachability: 'unknown', deviceConfirmed: 'error' } }).success).toBe(true);
+  expect(remoteStatusSchema.safeParse({ ...legacy, health: { relayRegistration: 'online' } }).success).toBe(false);
+});
+
+it('reports relay authentication failure without claiming public or device connectivity', async () => {
+  const relay = await startRelay({ token: randomSecret(), port: 0 }); cleanup.push(() => relay.close());
+  const { controller } = await setup();
+  controller.configure({ mode: 'relay', serverUrl: 'http://127.0.0.1:' + relay.port, token: randomSecret() });
+  await until(() => controller.status().health?.relayRegistration === 'error');
+  expect(controller.status().health).toEqual({ relayRegistration: 'error', tunnelProcess: 'off', publicReachability: 'unknown', deviceConfirmed: 'unknown' });
+});
+
 it('switches both remote modes and off without restarting sessions or sharing the host secret', async () => {
   let tunnelClosed = 0;
   const { controller, local, admin, core } = await setup(async ({ port }) => ({ url: 'http://127.0.0.1:' + port, close: async () => { tunnelClosed++; } }));
@@ -47,6 +62,7 @@ it('switches both remote modes and off without restarting sessions or sharing th
   const serverUrl = 'http://127.0.0.1:' + relay.port;
   controller.configure({ mode: 'relay', serverUrl, token: secret }); await until(() => controller.status().state === 'online');
   expect(tunnelClosed).toBe(1);
+  expect(controller.status().health).toEqual({ relayRegistration: 'ready', tunnelProcess: 'off', publicReachability: 'unknown', deviceConfirmed: 'unknown' });
   expect((await local.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(session.id);
   expect(JSON.stringify(controller.status())).not.toContain(secret);
   expect(controller.status().hasRelayToken).toBe(true);
@@ -58,6 +74,7 @@ it('switches both remote modes and off without restarting sessions or sharing th
 
   controller.configure({ mode: 'off' }); await until(() => !controller.endpoints());
   expect(controller.status().state).toBe('off');
+  expect(controller.status().health).toEqual({ relayRegistration: 'off', tunnelProcess: 'off', publicReachability: 'off', deviceConfirmed: 'off' });
   expect((await admin('/devices', 'POST', { name: 'Too early' })).status).toBe(409);
   await local.request('session.message', { sessionId: session.id, text: 'Local still works' });
   expect(core.store.sessions()).toHaveLength(1);
@@ -74,6 +91,7 @@ it('selects shared providers, protects stored cpolar credentials and reflects ve
   const { controller, local, core, directory, webRoot } = await setup(undefined, providers);
   await local.configureRemote({ mode: 'temporary', provider: 'localhost-run' }); await until(() => controller.status().state === 'online');
   expect((await local.remoteStatus()).providers.map(p => p.id)).toEqual(['localhost-run', 'cpolar', 'cloudflare']);
+  expect((await local.remoteStatus()).health).toEqual({ relayRegistration: 'ready', tunnelProcess: 'ready', publicReachability: 'unknown', deviceConfirmed: 'unknown' });
   await expect(local.configureRemote({ mode: 'temporary', provider: 'cpolar' })).rejects.toThrow('Auth Token');
   expect(controller.status().state).toBe('online'); expect(controller.status().provider).toBe('localhost-run');
   await local.configureRemote({ mode: 'temporary', provider: 'cpolar', cpolarToken: 'private-test-token' }); await until(() => controller.status().state === 'online');
@@ -85,7 +103,9 @@ it('selects shared providers, protects stored cpolar credentials and reflects ve
   const health = await phone.checkConnection(); expect(health.phase).toBe('connected'); expect(health.latencyMs).toBeGreaterThanOrEqual(0);
   await until(() => controller.deviceStatus(result.pairing.clientId).connection === 'connected');
   const confirmed = (await local.devices())[0]!; expect(confirmed.lastConfirmedAt).toBeTruthy();
+  expect((await local.remoteStatus()).health).toEqual({ relayRegistration: 'ready', tunnelProcess: 'ready', publicReachability: 'unknown', deviceConfirmed: 'ready' });
   phone.close(); await until(() => controller.deviceStatus(result.pairing.clientId).connection === 'offline');
+  expect(controller.status().health?.deviceConfirmed).toBe('unknown');
   change?.('https://renewed.cpolar.cn'); expect(controller.endpoints()?.remoteUrl).toBe('https://renewed.cpolar.cn');
   await local.configureRemote({ mode: 'off' }); await controller.close();
   const restored = new RemoteController(core, { directory, webRoot, providers }); cleanup.push(() => restored.close());
@@ -119,6 +139,7 @@ it('cancels a pending temporary start and retains an explicit off preference acr
     entered = true; signal.addEventListener('abort', () => { cancelled = true; reject(new Error('cancelled')); }, { once: true });
   }));
   controller.configure({ mode: 'temporary' }); await until(() => entered);
+  expect(controller.status().health).toEqual({ relayRegistration: 'unknown', tunnelProcess: 'unknown', publicReachability: 'unknown', deviceConfirmed: 'unknown' });
   controller.configure({ mode: 'off' }); await until(() => cancelled);
   await controller.close();
   const restored = new RemoteController(core, { directory, webRoot, initialRelay: { relayUrl: 'ws://127.0.0.1:12345', token: '' } });
@@ -135,6 +156,8 @@ it('automatically recovers temporary process failure without leaving a stale pai
   controller.configure({ mode: 'temporary' }); await until(() => controller.status().state === 'online');
   const previousCrash = crash;
   crash();
+  expect(controller.status().health?.tunnelProcess).toBe('error');
+  expect(controller.status().health?.relayRegistration).toBe('unknown');
   expect(controller.endpoints()).toBeUndefined();
   await until(() => stopped === 1);
   expect(controller.status().state).toBe('starting');
@@ -145,6 +168,7 @@ it('automatically recovers temporary process failure without leaving a stale pai
   controller.configure({ mode: 'temporary' }); expect(started).toBe(1);
   await until(() => controller.status().state === 'online');
   expect(started).toBe(2); expect(stopped).toBe(1);
+  expect(controller.status().health?.tunnelProcess).toBe('ready');
   const recovered = controller.endpoints(); expect(recovered).toBeDefined();
   previousCrash(); expect(controller.endpoints()).toEqual(recovered);
   expect(controller.status().state).toBe('online');

@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalClient } from '@turnwire/sdk';
+import type { MethodResult, Snapshot } from '@turnwire/protocol';
 import { createProgram } from '../apps/cli/src/program.js';
 import { runTui } from '../apps/cli/src/terminal.js';
 import { imageSummary } from '../apps/cli/src/images.js';
@@ -13,9 +14,22 @@ let directory: string;
 beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), 'turnwire-cli-images-')); });
 afterEach(async () => { vi.restoreAllMocks(); await rm(directory, { recursive: true, force: true }); });
 async function file(name = 'tiny raster.png', bytes: Buffer = png) { const path = join(directory, name); await writeFile(path, bytes); return path; }
+function snapshotFixture(imageInput: boolean | undefined) {
+  return {
+    device: { id: 'device', name: 'Test host' },
+    sessions: [{ id: 's', runtimeId: 'runtime', runtimeSessionId: 'runtime-session', title: 'Test session', cwd: '/tmp', status: 'idle', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }],
+    runtimes: [{ id: 'runtime', name: 'Test runtime', online: true, message: '', capabilities: {
+      approvals: false, streaming: true, resume: true, shell: false, diff: false,
+      fileEdits: false, toolCalls: false, backgroundTasks: false, modelSelection: false,
+      ...(imageInput === undefined ? {} : { imageInput }),
+    } }],
+    approvals: [], questions: [], cursor: 0,
+  } satisfies Snapshot;
+}
 function setup(imageInput: boolean | undefined = true) {
-  const snapshot = { sessions: [{ id: 's', runtimeId: 'runtime' }], runtimes: [{ id: 'runtime', capabilities: { imageInput } }] };
-  const request = vi.spyOn(LocalClient.prototype, 'request').mockImplementation(async method => method === 'system.snapshot' ? snapshot : { accepted: true });
+  const snapshot = snapshotFixture(imageInput);
+  const accepted = { accepted: true, messageId: 'm' } satisfies MethodResult<'session.message'>;
+  const request = vi.spyOn(LocalClient.prototype, 'request').mockImplementation(async method => method === 'system.snapshot' ? snapshot : accepted);
   const close = vi.spyOn(LocalClient.prototype, 'close').mockImplementation(() => {});
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const dispatch = (args: string[], lang = 'en', json = true) => createProgram({ url: 'http://localhost:1', token: 'test', lang, json }).parseAsync(args, { from: 'user' });
@@ -43,10 +57,10 @@ it.each([
   await dispatch(['send', 's', '--image', await file(`raster.${extension}`, bytes as Buffer)]);
   expect(request).toHaveBeenLastCalledWith('session.message', expect.objectContaining({ images: [expect.objectContaining({ mediaType })] }));
 });
-it('keeps ordinary send payload and does not require a capability snapshot', async () => {
+it('normalizes ordinary send text and does not require a capability snapshot', async () => {
   const { request, dispatch } = setup();
   await dispatch(['send', 's', ' ordinary text ']);
-  expect(request).toHaveBeenCalledExactlyOnceWith('session.message', { sessionId: 's', text: ' ordinary text ' });
+  expect(request).toHaveBeenCalledExactlyOnceWith('session.message', { sessionId: 's', text: 'ordinary text' });
 });
 it('rejects count, size, unsupported signature, missing files, directories, URLs and long text before any request', async () => {
   const { request, dispatch } = setup();
@@ -67,9 +81,9 @@ it('rejects count, size, unsupported signature, missing files, directories, URLs
 });
 it.each([false, undefined])('rejects unsupported or absent runtime image capability (%s)', async capability => {
   const { request, close, dispatch } = setup(false);
-  request.mockResolvedValueOnce({ sessions: [{ id: 's', runtimeId: 'runtime' }], runtimes: [{ id: 'runtime', capabilities: capability === undefined ? {} : { imageInput: false } }] });
+  request.mockResolvedValueOnce(snapshotFixture(capability));
   await expect(dispatch(['send', 's', '--image', await file()])).rejects.toThrow(/transport support/);
-  expect(request).toHaveBeenCalledExactlyOnceWith('system.snapshot');
+  expect(request).toHaveBeenCalledExactlyOnceWith('system.snapshot', {});
   expect(close).toHaveBeenCalledOnce();
 });
 it('accepts the exact per-image, total and image-text boundaries', async () => {
@@ -106,7 +120,7 @@ it('provides English and Chinese help, localized limits, and metadata-only summa
 });
 it('acknowledges image-only live messages while attached', async () => {
   const { request, log, close, dispatch } = setup();
-  request.mockResolvedValueOnce({ sessions: [{ id: 's' }] }).mockResolvedValueOnce({ events: [], cursor: 0, hasMore: false, nextBefore: null });
+  request.mockResolvedValueOnce(snapshotFixture(true)).mockResolvedValueOnce({ events: [], cursor: 0, hasMore: false, nextBefore: null } satisfies MethodResult<'history.page'>);
   const unsubscribe = vi.fn();
   vi.spyOn(LocalClient.prototype, 'subscribe').mockImplementation(handler => {
     setImmediate(() => {
@@ -122,7 +136,7 @@ it('acknowledges image-only live messages while attached', async () => {
 });
 it('acknowledges image-only records in human history without exposing image input bytes', async () => {
   const { request, log, dispatch } = setup();
-  request.mockResolvedValue({ events: [{ seq: 1, time: 'now', data: { type: 'message.user', sessionId: 's', messageId: 'm', text: '', images: [{ attachmentId: 'a', name: 'tiny.png', mediaType: 'image/png', bytes: png.length, width: 1, height: 1 }] } }], cursor: 1, hasMore: false, nextBefore: null });
+  request.mockResolvedValue({ events: [{ seq: 1, time: 'now', data: { type: 'message.user', sessionId: 's', messageId: 'm', text: '', images: [{ attachmentId: 'a', name: 'tiny.png', mediaType: 'image/png', bytes: png.length, width: 1, height: 1 }] } }], cursor: 1, hasMore: false, nextBefore: null } satisfies MethodResult<'history.page'>);
   await dispatch(['history', 's'], 'en', false);
   expect(log.mock.calls.flat().join('')).toContain('[1 image attachment(s)]');
   expect(log.mock.calls.flat().join('')).toContain('tiny.png');

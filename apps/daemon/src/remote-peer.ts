@@ -8,8 +8,8 @@ const MAX_QUEUE_ITEMS = 256;
 const REPLAY_BATCH = 32;
 import type { SecureMessage, Pairing } from '@turnwire/protocol';
 import type { TurnwireCore } from '@turnwire/core';
-import { SecureChannel, secureMessage, acceptClientHandshake } from '@turnwire/sdk';
-import type { SessionChannel } from '@turnwire/sdk';
+import { SecureChannel, secureMessage, acceptClientHandshake } from '@turnwire/wire';
+import type { SessionChannel } from '@turnwire/wire';
 import { DevicePresence } from './presence.js';
 
 /** One authenticated device connection, shared by outbound Relay and inbound TLS bridge. */

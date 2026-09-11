@@ -86,6 +86,8 @@ change, and no model id invented on this side.
 ```bash
 scripts/host-reload.sh             # publish only changed frontend assets, never restart
 scripts/host-reload.sh --frontend  # explicit initial/manual frontend publication
+scripts/host-reload.sh --daemon --dry-run # isolated staged build only; no host requests or signals
+scripts/host-reload.sh --daemon    # explicit controlled daemon-only deployment, after coordination
 ```
 
 - **Content fingerprints.** Separate frontend, backend/shared and DSH hashes cover actual bytes,
@@ -93,11 +95,12 @@ scripts/host-reload.sh --frontend  # explicit initial/manual frontend publicatio
   dependencies and credential files are excluded. Dirty-to-dirty edits are detected; docs-only
   edits never build or deploy. The first automatic observation records no deployment success and
   performs no build. `--force` is no longer supported.
-- **No automatic backend update.** Backend/shared changes are reported as requiring an operator.
-  There is no race-free drain gate, so an idle snapshot is not permission to restart. Neither
-  daemon nor DSH is restarted by this script. DSH changes always need explicit operator action;
-  daemon maintenance must use a supervisor daemon-only operation that preserves DSH. A full host
-  restart can terminate live work. No model catalog synchronization runs during reload.
+- **No automatic backend update.** Backend/shared changes require an explicit `--daemon` operator
+  invocation. An idle snapshot is never restart permission: a durable local maintenance lease closes
+  admission and waits for Turnwire-managed work to drain. This is **not a whole-DSH drain**; unrelated
+  DSH sessions may remain active. DSH, supervisor and dependency upgrades remain manual and outside
+  this active-host deployment objective. No DSH package, model configuration or catalog is changed.
+  A full host restart can terminate live work and must be separately coordinated.
 - **Frontend publication.** A checkout-local `flock` serializes reload builds and publication.
   Only the remote-web workspace builds, into staging. Content-addressed old assets are retained,
   new assets land before the index is atomically replaced, and changed non-hashed asset collisions
@@ -111,6 +114,46 @@ scripts/host-reload.sh --frontend  # explicit initial/manual frontend publicatio
   readiness, not evidence that all model providers are available or that sessions are drained.
   Shared/backend drift blocks automatic frontend publication too; use `--frontend` only after
   checking compatibility during manual maintenance.
+
+### Authenticated runtime readiness
+
+The supervisor treats pinned DSH's stdout launch URL only as secret bootstrap discovery. It exchanges
+that token using `GET /?token=…` (303 plus cookie), then probes authenticated `POST /api/session/list`
+with a correlated client-request/server-response envelope and validates `result.ok` and `value.items`.
+These interfaces were inspected in the installed 0.1.5-rc.2 runtime, not added to DSH. A startup deadline,
+invalid token, unreachable API or malformed response fails closed: stdout alone never starts a daemon.
+After startup, periodic failure marks readiness unknown and blocks new daemon starts/reload; it does
+not stop an active DSH. The private atomic `<state>/run/host-readiness.json` (0600, run directory 0700)
+contains PIDs, daemon generation, probe time, token-free DSH URL and readiness. It contains neither
+launch tokens nor model/daemon credentials. A stale record (over ten seconds) cannot authorize deploy.
+This proves authenticated runtime API reachability, not model-provider availability or global idleness.
+An already-running older supervisor has no such record: `--daemon` deliberately refuses it. Installing
+this readiness-capable supervisor requires a separately coordinated host stop/start when active DSH
+work is safe to interrupt; rebuilding files does not update a running supervisor. Until then use only
+frontend publication/dry-run and leave daemon deployment blocked. Never fabricate a readiness record.
+
+### Controlled daemon deployment and recovery
+
+`--daemon` builds one staged daemon artifact with workspace packages bundled from source, not the
+current `dist` files. Installed third-party dependencies, supervisor code and DSH stay unchanged;
+changes needing those components require separate manual maintenance. The script acquires a local
+authenticated `/maintenance` lease only after the build, waits for `ready`, zero in-flight requests
+and known zero managed runtime work, atomically replaces `apps/daemon/dist/main.js`, then sends
+SIGUSR2 to the recorded supervisor. It verifies a new daemon generation, unchanged DSH/supervisor
+identity, fresh authenticated runtime readiness, daemon HTTP health and the still-owned ready lease
+before explicitly releasing admission. A source change during staging/drain aborts publication.
+`--frontend` still never enters maintenance or restarts backend processes. Both paths share the lock.
+
+The durable `.turnwire/reload.daemon.pending.json` journal (0600) retains the opaque lease and the
+staged rollback artifact. Never print it or copy it into public diagnostics. An existing journal
+blocks another deploy. Failure before release restores installed bytes where possible and requests
+only a daemon reload; it **does not cancel maintenance** or stop DSH. Inspect the journal, confirm
+supervisor/DSH identities and restored daemon/runtime health, then explicitly cancel the owned lease
+through the local maintenance API before archiving the journal. If the release response is lost,
+the script neither rolls back nor signals again: admission may already be open, so inspect state
+manually. Successful verification alone writes `.turnwire/reload.daemon.json`; observations are not
+a running-version stamp. Do not kill a running deployment casually: its durable lease is intentionally
+left closed for recovery. No script promises atomic DSH upgrades or silently stops active DSH work.
 
 To stop all automatic checks (including an in-flight reload):
 
