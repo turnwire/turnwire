@@ -166,11 +166,13 @@ try {
   await expect(page.locator('.session-actions [data-auto-approve]')).toHaveCount(0);
   await expect(delegate).toHaveAttribute('role', 'switch');
   await expect(delegate).toHaveAttribute('data-auto-approve', 'off');
-  await expect(delegate).toHaveText('Approve for me');
+  await expect(delegate).toHaveAccessibleName('Approve for me');
+  await expect(page.locator('.composer-bottom .approval-mode')).toHaveCount(1);
+  await expect(delegate).toHaveText('');
   await expect(delegate).toBeEnabled();
   await delegate.click();
   await expect(delegate).toHaveAttribute('aria-checked', 'true');
-  await expect(delegate).toHaveText('Approving for you');
+  await expect(delegate).toHaveAttribute('title', /Approving for you/);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('第三条也需要审批');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false }).last()).toBeVisible();
@@ -178,7 +180,7 @@ try {
   // Wait for the delegated turn itself to settle, not an older identical canned answer.
   await expect(page.locator('.status')).toHaveText('Ready');
   await expect(delegate).toHaveAttribute('data-auto-approve', 'on');
-  await expect(delegate).toHaveText('Approving for you');
+  await expect(delegate).toHaveAttribute('title', /Approving for you/);
   // The switch is a command to the host, so the next prompt may only be sent once the host has
   // confirmed the new state; the attribute is that confirmation, the chip is only what it looks like.
   await expect(delegate).toBeEnabled();

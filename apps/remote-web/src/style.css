@@ -217,10 +217,6 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
 .inline-child-interaction { min-width: 0; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--line); }
 .inline-child-interaction > .tool-message { margin-top: 0; }
 .inline-child .child-execution { margin: 4px 0 10px; }
-.approval-mode { display: flex; justify-content: flex-end; min-width: 0; margin-bottom: 5px; }
-.approval-mode button { min-height: 36px; max-width: 100%; padding: 6px 10px; gap: 7px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.approval-mode button[aria-checked="true"] { color: #8a5d16; background: #fff5df; border-color: #e5cf9f; }
-.approval-mode-track { flex-shrink: 0; width: 26px; height: 15px; padding: 2px; border-radius: 10px; background: #cbd1da; }
-.approval-mode-track::after { content: ''; display: block; width: 11px; height: 11px; border-radius: 50%; background: white; }
-.approval-mode button[aria-checked="true"] .approval-mode-track { background: #b27a23; }
-.approval-mode button[aria-checked="true"] .approval-mode-track::after { transform: translateX(11px); }
+.composer-bottom .approval-mode { display: inline-flex; flex: 0 0 auto; margin: 0; }
+.composer-bottom .approval-mode button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); }
+.composer-bottom .approval-mode button[aria-checked="true"] { color: #8a5d16; background: #fff5df; border-color: #b27a23; }
