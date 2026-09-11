@@ -210,4 +210,6 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
 .inline-child-activity { color: var(--muted); font-size: 10px; flex-shrink: 0; }
 .inline-child-toggle[aria-expanded="true"] .agent-caret { transform: rotate(90deg); }
 .inline-child > .tool-message { margin-top: 0; }
+.inline-child-interaction { min-width: 0; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--line); }
+.inline-child-interaction > .tool-message { margin-top: 0; }
 .inline-child .child-execution { margin: 4px 0 10px; }

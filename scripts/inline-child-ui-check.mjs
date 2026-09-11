@@ -62,8 +62,13 @@ try {
   const unmatched = page.locator('.inline-child:not([data-subagent-id])').last();
   await unmatched.locator('summary').click();
   await expect(unmatched.locator('pre').last()).toHaveText('started subagent a');
+  await expect(a.locator('.tool-message')).toHaveCount(0);
+  await expect(b.locator('.tool-message')).toHaveCount(0);
   await a.getByRole('button', { name: /Details for Child A/ }).click();
   await b.getByRole('button', { name: /Details for Child B/ }).click();
+  await expect(a.locator(':scope > .tool-message')).toHaveCount(0);
+  await expect(a.locator('.inline-child-interaction > .tool-message')).toHaveCount(1);
+  await expect(a.locator('.inline-child-interaction > .child-execution')).toBeVisible();
   await expect(a).toContainText('Execution belonging only to a');
   await expect(b).toContainText('Execution belonging only to b');
   expect(runtime.calls).toEqual(expect.arrayContaining([{ sessionId: session.id, subagentId: 'a' }, { sessionId: session.id, subagentId: 'b' }]));
