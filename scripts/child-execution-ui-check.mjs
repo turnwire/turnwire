@@ -12,14 +12,26 @@ const errors = []; page.on('pageerror', error => errors.push(error.message));
 try {
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/child-fixture`);
   const row = page.getByRole('button', { name: /Fixture child/ });
+  await page.locator('.agent-strip-toggle').click();
+  const assertLatestVisible = async () => {
+    await expect.poll(() => page.locator('.child-records').evaluate(records => {
+      const list = records.closest('.agent-list');
+      return Math.abs(records.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom);
+    })).toBeLessThanOrEqual(2);
+  };
   await row.click();
   await expect(page.locator('[data-record-id="answer"]')).toContainText('Execution snapshot 1');
-  await page.locator('.child-records').evaluate(node => { node.scrollTop = node.scrollHeight; });
+  await assertLatestVisible();
+  await expect(page.getByRole('button', { name: 'Refresh latest', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Return to latest (reset)', exact: true })).toHaveCount(0);
   await page.getByText('read · Complete', { exact: true }).click();
   await expect(page.getByText('actual tool output', { exact: true })).toBeVisible();
   await expect(page.getByText('/workspace/example.ts', { exact: true })).toBeVisible();
+  await page.locator('.agent-list').evaluate(node => { node.scrollTop = 20; });
+  const readingPosition = await page.locator('.agent-list').evaluate(node => node.scrollTop);
   await page.evaluate(() => { window.fixture.version = 2; });
   await expect(page.locator('[data-record-id="answer"]')).toContainText('Execution snapshot 2');
+  expect(await page.locator('.agent-list').evaluate(node => node.scrollTop)).toBe(readingPosition);
   await expect(page.locator('[data-record-id="answer"]')).not.toContainText('Execution snapshot 1');
   await page.getByRole('button', { name: 'Older page', exact: true }).click();
   await expect(page.getByText('Older execution request', { exact: true })).toBeVisible();
@@ -30,8 +42,8 @@ try {
   expect(await page.evaluate(() => window.fixture.calls.length)).toBe(calls);
   await page.getByRole('button', { name: 'Return to latest (reset)' }).click();
   await expect(page.locator('[data-record-id="answer"]')).toContainText('Execution snapshot 2');
+  await assertLatestVisible();
   await page.evaluate(() => { window.fixture.fail = true; });
-  await page.getByRole('button', { name: 'Refresh latest', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Stale execution');
   await page.evaluate(() => { window.fixture.fail = false; });
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
@@ -40,6 +52,8 @@ try {
   await expect(page.locator('.child-execution')).toBeVisible();
   await expect(page.locator('.agent-heading')).toHaveCount(0);
   await expect(page.getByText('Latest window · inactive (not necessarily finished)', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-record-id="answer"] small')).toContainText('No result received');
+  await expect(page.locator('[data-record-id="answer"] small')).not.toContainText('In progress');
   await row.click();
   await expect(row).toHaveCount(0);
   await expect(page.locator('.agent-strip')).toHaveCount(0);
@@ -50,10 +64,10 @@ try {
   await expect(page.getByText(/Offline — displayed execution/)).toBeVisible();
   await page.getByRole('button', { name: 'Toggle connection', exact: true }).click();
   await page.evaluate(() => { window.fixture.empty = true; });
-  await page.getByRole('button', { name: 'Refresh latest', exact: true }).click();
   await expect(page.getByText('No execution records yet.', { exact: true })).toBeVisible();
+  await row.click();
   await page.evaluate(() => { window.fixture.delay = 400; window.fixture.empty = false; });
-  await page.getByRole('button', { name: 'Refresh latest', exact: true }).click();
+  await row.click();
   await expect(page.getByText('Loading execution…', { exact: true })).toBeVisible();
   await row.click();
   await page.waitForTimeout(500);
@@ -61,6 +75,7 @@ try {
   await page.evaluate(() => { window.fixture.delay = 0; window.fixture.version = 3; });
   await row.click();
   await expect(page.locator('[data-record-id="answer"]')).toContainText('Execution snapshot 3');
+  await assertLatestVisible();
   expect(errors).toEqual([]);
   console.log('Child browser fixture passed: body, tool expansion, replacement snapshots, pinned older page, paused polling, errors/retry, inactive retention, offline, empty.');
 } finally { await browser.close(); await server.close(); }

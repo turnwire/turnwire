@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { loadSubagentHistoryPage, type TurnwireClient } from '@turnwire/sdk';
 import type { SubagentHistoryPage } from '@turnwire/protocol';
 import { t, useLocale } from './i18n';
@@ -17,7 +17,23 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
   const [loading, setLoading] = useState(false);
   const [window, setWindow] = useState<{ before?: number; cursor?: number; revision: number }>({ revision: 0 });
   const viewport = useRef<HTMLDivElement>(null);
+  const pendingScroll = useRef<'latest' | 'older' | undefined>('latest');
   const older = window.before !== undefined;
+  useLayoutEffect(() => {
+    const records = viewport.current;
+    if (!pendingScroll.current || !page?.records.length || !records) return;
+    // AgentStrip has one shared scroll container; inline readers scroll their own records.
+    // Never scroll the conversation or document, and never reset a reader during polling.
+    const latest = pendingScroll.current === 'latest';
+    const list = records.closest<HTMLElement>('.agent-list');
+    if (list) {
+      const edge = latest ? 'bottom' : 'top';
+      list.scrollTop += records.getBoundingClientRect()[edge] - list.getBoundingClientRect()[edge];
+    } else {
+      records.scrollTop = latest ? records.scrollHeight : 0;
+    }
+    pendingScroll.current = undefined;
+  }, [page]);
   useEffect(() => {
     let active = true;
     let firstRead = true;
@@ -48,13 +64,13 @@ function ExecutionWindow({ client, sessionId, subagentId, running, connected }: 
     {loading && <p role="status">{t('execution.loading')}</p>}
     {page && !page.records.length && <p>{t('execution.empty')}</p>}
     <div className="child-records" ref={viewport}>{page?.records.map(record => <article key={record.id} className={`child-record child-${record.role}`} data-record-id={record.id}>
-      {record.role === 'tool' ? <details><summary>{record.tool ?? t('tool.tool')} · {t(record.isError ? 'tool.failed' : record.complete ? 'execution.complete' : 'tool.running')}</summary>
-        <h5>{t('execution.input')}</h5><pre>{record.input ?? ''}</pre><h5>{t('tool.output')}</h5><pre>{record.output ?? (record.complete ? record.text : t('execution.pendingResult'))}</pre>
-      </details> : <><small>{t(`execution.role.${record.role}`)} · {record.time}{!record.complete && ` · ${t('execution.inProgress')}`}</small><div className="child-record-text">{record.text}</div></>}
+      {record.role === 'tool' ? <details><summary>{record.tool ?? t('tool.tool')} · {t(record.isError ? 'tool.failed' : record.complete ? 'execution.complete' : running && !older ? 'tool.running' : 'tool.noResult')}</summary>
+        <h5>{t('execution.input')}</h5><pre>{record.input ?? ''}</pre><h5>{t('tool.output')}</h5><pre>{record.output ?? (record.complete ? record.text : t(running && !older ? 'execution.pendingResult' : 'tool.noResult'))}</pre>
+      </details> : <><small>{t(`execution.role.${record.role}`)} · {record.time}{!record.complete && ` · ${t(running && !older ? 'execution.inProgress' : 'tool.noResult')}`}</small><div className="child-record-text">{record.text}</div></>}
     </article>)}</div>
     <div className="child-execution-actions">
-      {page?.hasMore && page.nextBefore !== null && <button type="button" disabled={!connected || loading} onClick={() => { if (viewport.current) viewport.current.scrollTop = 0; setWindow(value => ({ before: page.nextBefore!, cursor: page.cursor, revision: value.revision + 1 })); }}>{t('execution.older')}</button>}
-      <button type="button" disabled={!connected || loading} onClick={() => { if (viewport.current) viewport.current.scrollTop = 0; setWindow(value => ({ revision: value.revision + 1 })); }}>{t(older ? 'execution.latestReset' : 'execution.refresh')}</button>
+      {page?.hasMore && page.nextBefore !== null && <button type="button" disabled={!connected || loading} onClick={() => { pendingScroll.current = 'older'; setWindow(value => ({ before: page.nextBefore!, cursor: page.cursor, revision: value.revision + 1 })); }}>{t('execution.older')}</button>}
+      {older && <button type="button" disabled={!connected || loading} onClick={() => { pendingScroll.current = 'latest'; setWindow(value => ({ revision: value.revision + 1 })); }}>{t('execution.latestReset')}</button>}
     </div>
     <small>{t('execution.pagingHint')}</small>
   </section>;

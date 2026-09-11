@@ -77,9 +77,14 @@ try {
   core.publish({ type: 'message.user', sessionId: session.id, messageId: 'next-turn', text: 'New turn without delegation' });
   await expect(page.locator('.agent-strip')).toHaveCount(0);
   await expect(a.locator('.child-execution')).toBeVisible();
-  runtime.active = false; emit({ type: 'status', status: 'idle' });
+  // Child completion must update even while the parent is still running.
+  runtime.active = false;
+  await expect(a).toContainText('Child inactive', { timeout: 10_000 });
+  await expect(b).toContainText('Child inactive');
+  await expect(a.locator('.inline-child-activity')).not.toHaveText('Child running');
+  emit({ type: 'status', status: 'idle' });
   await expect(page.locator('.agent-strip')).toHaveCount(0);
-  await expect(a).toContainText('Child inactive');
+  await expect(page.locator('.tool-message .tool-status').filter({ hasText: /^Running$/ })).toHaveCount(0);
   await expect(a.locator('.child-execution')).toBeVisible();
   await page.reload();
   await expect(page.locator('.agent-strip')).toHaveCount(0);

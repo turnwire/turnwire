@@ -182,6 +182,21 @@ it('describes the agents under a session, nested ones included, for the progress
   expect(agents[2]!.todos).toEqual([]);
   expect(host.calls.some(c => c.path === '/api/subagents/list' && c.args.parentSessionId === 'child-1')).toBe(true);
 });
+it('uses current child activity independently of todos and resident continuable identity', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  await runtime.createSession({ id: 's', cwd: process.cwd() });
+  const todos = [{ content: 'Finish work', status: 'completed' as const }];
+  // Native subagents/list reads the Agent driver's status, not whether a resident exists.
+  host.setChildren([{ id: 'resident', mode: 'continuable', activity: 'running', todos }]);
+  expect(await runtime.listSubagents('s')).toMatchObject([{ id: 'resident', activity: 'running', todos }]);
+  // Settlement must replace the prior running read; incomplete todos are not lifecycle state.
+  const unfinished = [{ content: 'Finish work', status: 'in_progress' as const }];
+  host.setChildren([{ id: 'resident', mode: 'continuable', activity: 'inactive', todos: unfinished }]);
+  expect(await runtime.listSubagents('s')).toMatchObject([{ id: 'resident', mode: 'continuable', activity: 'inactive', todos: unfinished }]);
+  // The same durable identity can start another turn without inventing a terminal state.
+  host.setChildren([{ id: 'resident', mode: 'continuable', activity: 'running', todos }]);
+  expect(await runtime.listSubagents('s')).toMatchObject([{ id: 'resident', activity: 'running' }]);
+});
 it('still names an agent whose own detail cannot be read', async () => {
   const host = await dshHost({ omitDetails: true }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
   await runtime.createSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', () => {}); await until(() => host.streams.size === 1);

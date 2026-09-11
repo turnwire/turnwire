@@ -231,8 +231,8 @@ try {
   await expect(page.getByText('Older child request', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Return to latest (reset)', exact: true }).click();
   await expect(page.locator('[data-record-id="child-message"]')).toContainText('Real child execution snapshot 2');
+  await expect(page.getByRole('button', { name: 'Refresh latest', exact: true })).toHaveCount(0);
   runtime.historyFailure = true;
-  await page.getByRole('button', { name: 'Refresh latest', exact: true }).click();
   await expect(page.locator('.child-execution [role="alert"]')).toContainText('Stale execution');
   runtime.historyFailure = false;
   await page.getByRole('button', { name: 'Retry', exact: true }).click();

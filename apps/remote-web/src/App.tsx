@@ -497,15 +497,15 @@ function ToolHeading({ message }: { message: ConversationMessage }) {
 }
 
 /** One tool call: a quiet line that says what it is doing until someone opens it. */
-function ToolCall({ message }: { message: ConversationMessage }) {
+function ToolCall({ message, running }: { message: ConversationMessage; running: boolean }) {
   const t = useLocale();
-  return <details className="tool-message"><summary><TerminalWindow size={13} /><ToolHeading message={message} /><span className="tool-status">{message.isError ? t('tool.failed') : message.complete ? t('tool.returned') : t('tool.running')}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>{t('tool.input')}</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>{t('tool.output')}</strong><pre>{message.output}</pre></>}</details>;
+  return <details className="tool-message"><summary><TerminalWindow size={13} /><ToolHeading message={message} /><span className="tool-status">{message.isError ? t('tool.failed') : message.complete ? t('tool.returned') : t(running ? 'tool.running' : 'tool.noResult')}</span><CaretRight size={11} className="tool-caret" /></summary>{message.input !== undefined && <><strong>{t('tool.input')}</strong><pre>{message.input}</pre></>}{message.output !== undefined && <><strong>{t('tool.output')}</strong><pre>{message.output}</pre></>}</details>;
 }
 
 /** One row of the conversation: a message, or a run of tool calls. */
 function ConversationRow({ row, running, agents, client, sessionId, connected, pendingQuestions, disabled, onAnswer }: { row: ConversationRowData; running: boolean; agents: SubagentView[]; client?: TurnwireClient; sessionId: string; connected: boolean; pendingQuestions?: Set<string>; disabled?: boolean; onAnswer?: (question: Question, answers: QuestionAnswerItem[]) => void }) {
   const t = useLocale();
-  if (row.launch) return <InlineChild agent={launchChild(row.launch, agents)} client={client} sessionId={sessionId} connected={connected} tool={<ToolCall message={row.launch} />} />;
+  if (row.launch) return <InlineChild agent={launchChild(row.launch, agents)} client={client} sessionId={sessionId} connected={connected} tool={<ToolCall message={row.launch} running={running} />} />;
   if (row.tools) return <ToolRun items={row.tools} running={running} />;
   const message = row.message!;
   if (message.role === 'question' && message.question) return <QuestionCard question={message.question} pending={pendingQuestions?.has(message.question.id) === true} disabled={disabled === true} onAnswer={answers => onAnswer?.(message.question!, answers)} />;
@@ -519,13 +519,13 @@ function ConversationRow({ row, running, agents, client, sessionId, connected, p
  */
 function ToolRun({ items, running }: { items: ConversationMessage[]; running: boolean }) {
   const t = useLocale();
-  if (items.length === 1) return <ToolCall message={items[0]!} />;
+  if (items.length === 1) return <ToolCall message={items[0]!} running={running} />;
   const tools = [...new Set(items.map(item => item.tool ?? t('tool.tool')))];
   const failures = items.filter(item => item.isError).length;
   const working = items.some(item => !item.complete);
   const label = tools.length === 1 && tools[0] === 'subagent' ? t('tool.subagentCount', { count: items.length }) : tools.length === 1 ? t('tool.namedCount', { tool: tools[0] ?? '', count: items.length }) : t('tool.manyItems', { tool: tools[0] ?? '', count: items.length });
   const status = failures ? t('tool.failures', { count: failures }) : !working ? t('tool.allReturned') : running ? t('tool.running') : t('tool.noResult');
-  return <details className="tool-group"><summary><TerminalWindow size={13} />{working ? <ToolHeading message={items[items.length - 1]!} /> : <span>{label}</span>}<span className="tool-status">{status}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{items.map(item => <ToolCall key={item.id} message={item} />)}</div></details>;
+  return <details className="tool-group"><summary><TerminalWindow size={13} />{working ? <ToolHeading message={items[items.length - 1]!} /> : <span>{label}</span>}<span className="tool-status">{status}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{items.map(item => <ToolCall key={item.id} message={item} running={running} />)}</div></details>;
 }
 
 export function CreateSession({ snapshot, busy, close, onBrowse, onCreateDirectory, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onBrowse: (path?: string) => Promise<WorkspaceListing>; onCreateDirectory: (parent: string, name: string) => Promise<WorkspaceListing>; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
