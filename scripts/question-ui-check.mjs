@@ -55,6 +55,11 @@ const core = new TurnwireCore(new Store(':memory:'), [runtime], { id: crypto.ran
 const reply = await core.handle({ v: 1, id: crypto.randomUUID(), method: 'session.create', params: { runtimeId: 'demo', title: 'Question check', cwd: process.cwd() } });
 if (!reply.ok) throw new Error('Fixture session failed');
 const session = reply.result;
+core.publish({ type: 'message.user', sessionId: session.id, messageId: 'fixture-turn', text: 'Review this turn' });
+for (const id of ['agent-1', ...Array.from({ length: 30 }, (_, index) => `extra-${index}`)]) {
+  runtime.emitFixture(session.id, { type: 'tool.started', callId: `launch-${id}`, tool: 'subagent', detail: '{}' });
+  runtime.emitFixture(session.id, { type: 'tool.finished', callId: `launch-${id}`, tool: 'subagent', detail: `started subagent ${id}` });
+}
 runtime.emitFixture(session.id, { type: 'status', status: 'waiting_approval' });
 runtime.emitFixture(session.id, {
   type: 'question.requested', requestId: 'r-1',
@@ -313,6 +318,9 @@ try {
   finishList();
   await page.locator('.topbar button[aria-controls="session-sidebar"]').click();
   await page.locator('.session-row').filter({ hasText: 'Question check' }).click();
+  // Latest bounded history can omit the turn boundary; do not guess from catalog timestamps.
+  await expect(page.locator('.agent-strip')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load earlier records' }).click();
   await expect(page.locator('.agent-item')).toHaveCount(3);
   await expect(page.locator('.agent-detail')).toHaveCount(0);
   await expect(page.locator('.agent-more')).toHaveAttribute('aria-expanded', 'false');

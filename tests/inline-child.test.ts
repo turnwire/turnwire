@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationMessage } from '@turnwire/sdk';
 import type { SubagentView } from '@turnwire/protocol';
-import { conversationRows, isChildLaunch, launchChild } from '../apps/remote-web/src/inlineChild';
+import { conversationRows, currentTurnChildren, isChildLaunch, launchChild } from '../apps/remote-web/src/inlineChild';
 
 const children: SubagentView[] = ['a', 'b'].map(id => ({ id, parentId: 'runtime-root', depth: 1, label: 'Same label', activity: 'running', mode: 'continuable', todos: [] }));
 const launch = (patch: Partial<ConversationMessage> = {}): ConversationMessage => ({ id: 'launch', role: 'tool', tool: 'subagent', text: '', input: '{"description":"Same label"}', output: 'started subagent a', complete: true, time: '2026-01-01', ...patch });
@@ -27,6 +27,24 @@ describe('inline child correlation', () => {
   });
   it('accepts explicit background true', () => {
     expect(launchChild(launch({ input: '{"run_in_background":true}' }), children)?.id).toBe('a');
+  });
+});
+
+describe('current turn child scope', () => {
+  const user = (id: string, patch: Partial<ConversationMessage> = {}) => launch({ id, role: 'user', ...patch });
+  it('excludes historical children even while running, and includes current nested work', () => {
+    const nested = { ...children[0]!, id: 'nested', parentId: 'b', depth: 2 };
+    const messages = [user('old'), launch(), user('new'), launch({ id: 'new-launch', output: 'started subagent b' })];
+    expect(currentTurnChildren(messages, [nested, ...children]).map(child => child.id)).toEqual(['nested', 'b']);
+  });
+  it('keeps current children through steering/queued messages but clears on a new turn', () => {
+    const messages = [user('turn'), launch(), user('steer', { steer: true }), user('queued', { queued: true })];
+    expect(currentTurnChildren(messages, children).map(child => child.id)).toEqual(['a']);
+    expect(currentTurnChildren([...messages, user('next')], children)).toEqual([]);
+  });
+  it('fails closed when the turn boundary is not loaded or identity cannot be proven', () => {
+    expect(currentTurnChildren([launch()], children)).toEqual([]);
+    expect(currentTurnChildren([user('turn'), launch({ complete: false })], children)).toEqual([]);
   });
 });
 

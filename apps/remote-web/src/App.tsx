@@ -9,7 +9,7 @@ import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatu
 import { MarkdownMessage } from './MarkdownMessage';
 import { AgentStrip } from './AgentStrip';
 import { InlineChild } from './InlineChild';
-import { conversationRows, launchChild, type ConversationRowData } from './inlineChild';
+import { conversationRows, currentTurnChildren, launchChild, type ConversationRowData } from './inlineChild';
 import { ModelPicker } from './ModelPicker';
 import { shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
@@ -226,6 +226,7 @@ export function App() {
    * conversation pays for on a phone.
    */
   const rows = useMemo(() => conversationRows(visible), [visible]);
+  const turnAgents = useMemo(() => currentTurnChildren(messages, scopedAgents), [messages, scopedAgents]);
   // The model panel hangs off the chip, so it closes the way a menu does: a tap anywhere else, or Esc.
   useEffect(() => {
     if (!showModel) return;
@@ -414,7 +415,7 @@ export function App() {
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await c.request('session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
-          <AgentStrip key={session.id} agents={session.archived ? [] : scopedAgents} client={clientRef.current} sessionId={session.id} connected={connected} />
+          <AgentStrip key={session.id} agents={session.archived ? [] : turnAgents} client={clientRef.current} sessionId={session.id} connected={connected} />
           {pending.length > 0 && <div className="queued-strip" role="status" aria-label={t('queue.aria')}>{pending.map(item => <div className="queued-item" key={item.id}>{editingQueued === item.id ? <input className="queued-edit" aria-label={t('queue.editLabel')} value={queuedDraft} autoFocus onChange={event => setQueuedDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (queuedDraft.trim()) void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() }); } if (event.key === 'Escape') setEditingQueued(undefined); }} /> : <span className="queued-text" title={item.text}>{item.text}</span>}<span className="queued-buttons">{editingQueued === item.id ? <button type="button" disabled={!connected || busy || !queuedDraft.trim()} onClick={() => void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() })}>{t('queue.save')}</button> : <button type="button" disabled={!connected || busy} onClick={() => { setEditingQueued(item.id); setQueuedDraft(item.text); }}>{t('queue.edit')}</button>}<button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'remove' })}>{t('queue.remove')}</button><button type="button" disabled={!connected || busy} onClick={() => void changeQueued(item.id, { kind: 'steer' })}>{t('queue.steer')}</button></span></div>)}</div>}
           </div><form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim()) return; submit(prompt, false); }}>
               <textarea aria-label={t('composer.messageAria')} placeholder={t('composer.placeholder')} value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} disabled={!connected || session.archived || ['interrupted', 'error'].includes(session.status)} onKeyDown={event => { if (event.key !== 'Enter') return; if (event.altKey) { event.preventDefault(); submit(prompt, true); } else if (event.metaKey || event.ctrlKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />

@@ -26,6 +26,7 @@ const reply = await core.handle({ v: 1, id: crypto.randomUUID(), method: 'sessio
 if (!reply.ok) throw new Error('Fixture session failed');
 const session = reply.result;
 const emit = event => runtime.emit(session.id, event);
+core.publish({ type: 'message.user', sessionId: session.id, messageId: 'human-turn', text: 'Start this turn' });
 const tool = (id, name, detail, output) => { emit({ type: 'tool.started', callId: id, tool: name, detail }); if (output !== undefined) emit({ type: 'tool.finished', callId: id, tool: name, detail: output }); };
 emit({ type: 'message.completed', messageId: 'before', text: 'Before the launches' });
 tool('read-before', 'read', 'before.txt', 'read before');
@@ -56,7 +57,7 @@ try {
   await expect(a).toContainText('Child running');
   await expect(page.locator('.agent-strip')).toBeVisible();
   // Assert DOM order, not merely presence in a separate footer or appended after all messages.
-  expect(await page.locator('.conversation-inner').evaluate(root => [...root.children].filter(el => el.matches('.message,.tool-message,.inline-child')).map(el => el.classList.contains('inline-child') ? `child:${el.dataset.subagentId ?? 'unmatched'}` : el.classList.contains('message') ? el.textContent.includes('Before the launches') ? 'before' : 'after' : el.textContent.includes('before.txt') ? 'read-before' : 'read-after'))).toEqual(['before', 'read-before', 'child:a', 'child:b', 'read-after', 'after', 'child:unmatched', 'child:unmatched']);
+  expect(await page.locator('.conversation-inner').evaluate(root => [...root.children].filter(el => el.matches('.message,.tool-message,.inline-child')).map(el => el.classList.contains('inline-child') ? `child:${el.dataset.subagentId ?? 'unmatched'}` : el.classList.contains('message') ? el.textContent.includes('Before the launches') ? 'before' : 'after' : el.textContent.includes('before.txt') ? 'read-before' : 'read-after'))).toEqual(['after', 'before', 'read-before', 'child:a', 'child:b', 'read-after', 'after', 'child:unmatched', 'child:unmatched']);
   await expect(page.locator('.tool-group .inline-child')).toHaveCount(0);
   await expect(page.locator('.inline-child:not([data-subagent-id]) .tool-message')).toHaveCount(2);
   const unmatched = page.locator('.inline-child:not([data-subagent-id])').last();
@@ -72,6 +73,10 @@ try {
   await expect(a).toContainText('Execution belonging only to a');
   await expect(b).toContainText('Execution belonging only to b');
   expect(runtime.calls).toEqual(expect.arrayContaining([{ sessionId: session.id, subagentId: 'a' }, { sessionId: session.id, subagentId: 'b' }]));
+  // A new human turn clears the footer even if old children still report running.
+  core.publish({ type: 'message.user', sessionId: session.id, messageId: 'next-turn', text: 'New turn without delegation' });
+  await expect(page.locator('.agent-strip')).toHaveCount(0);
+  await expect(a.locator('.child-execution')).toBeVisible();
   runtime.active = false; emit({ type: 'status', status: 'idle' });
   await expect(page.locator('.agent-strip')).toHaveCount(0);
   await expect(a).toContainText('Child inactive');

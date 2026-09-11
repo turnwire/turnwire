@@ -2,6 +2,8 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+The PWA footer child list is limited to verified launches in the latest started human turn and their descendants. Queued and steer messages do not start another turn. A new human turn clears the old list; historical readers remain at their original transcript positions. If bounded history omits the turn boundary or launch receipt, the UI does not guess ownership; loading older records can restore it. DSH inactive includes persisted children whose execution activation has already been released, not necessarily live OS processes. Do not kill processes or delete history based on that flag.
+
 The [mobile presentation audit](MOBILE-AUDIT.md) records narrow-toolbar, short-viewport and touch-target fixes, browser coverage, and physical-device/focus/scroll limitations. Mobile approval mode remains in the existing composer toolbar; Stop is compact, model labels shrink before pinned actions, and long workspace paths preserve their leaf end.
 
 CLI, the interactive terminal (`turnwire tui`) and the native desktop are clients of the same Turnwire host. With the same connection permissions, they must support the same product operations and observe the same state. UI mechanics may differ: a workspace path vs NSOpenPanel, a terminal QR vs NSImage, or a printed link vs a clipboard button.

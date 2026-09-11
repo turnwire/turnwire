@@ -25,6 +25,29 @@ export function launchChild(message: ConversationMessage, scopedChildren: readon
   return id ? scopedChildren.find(child => child.id === id && child.depth === 1) : undefined;
 }
 
+/** Footer scope is the latest started human turn, not the session's durable child catalog.
+ * Steering and still-queued prompts do not start a new turn. Missing history fails closed. */
+export function currentTurnChildren(messages: readonly ConversationMessage[], children: readonly SubagentView[]): SubagentView[] {
+  let start = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role === 'user' && !message.queued && !message.steer) { start = i; break; }
+  }
+  if (start < 0) return [];
+  const ids = new Set<string>();
+  for (const message of messages.slice(start + 1)) {
+    const child = launchChild(message, children);
+    if (child) ids.add(child.id);
+  }
+  // Include nested work only when its ancestor belongs to this turn.
+  for (let pass = 0; pass < children.length; pass++) {
+    let changed = false;
+    for (const child of children) if (!ids.has(child.id) && ids.has(child.parentId)) { ids.add(child.id); changed = true; }
+    if (!changed) break;
+  }
+  return children.filter(child => ids.has(child.id));
+}
+
 export interface ConversationRowData {
   key: string;
   tools?: ConversationMessage[];
