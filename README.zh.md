@@ -4,13 +4,12 @@
 
 同一个 Agent 会话，在 Mac、终端和手机上接续：**主机负责干活，手机负责随时接话和审批。**
 
-```text
-CLI ───────────────┐
-SwiftUI Desktop ──┼── turnwire-host ── Turnwire Core ── AgentRuntime ── DSH Host
-                  │     │
-Phone PWA ─ Relay ┘     SQLite
-           密文转发     元数据 / 事件缓存 / 审批 / 命令回执
-```
+### 它们如何协作
+
+- **客户端：** CLI、交互终端（TUI）、原生 Mac 应用和手机 PWA，都访问同一台主机、共享同一份会话状态。
+- **远程连接：** 手机通过 Relay 或已配置的隧道连接主机。配对后的会话通信经过加密，Relay 只转发密文。
+- **主机与状态：** `turnwire-host` 运行 Turnwire Core；SQLite 保存元数据、事件缓存、审批和命令回执。
+- **任务执行：** Turnwire Core 通过 `AgentRuntime` 接口将任务交给 DSH。模型凭据和任务执行始终留在主机上。
 
 ## 它能给你什么
 

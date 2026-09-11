@@ -4,13 +4,12 @@ English · [中文](README.zh.md)
 
 One agent session, continued across a Mac, a terminal, and a phone: **the host does the work, the phone lets you jump in and approve at any time.**
 
-```text
-CLI ───────────────┐
-SwiftUI Desktop ──┼── turnwire-host ── Turnwire Core ── AgentRuntime ── DSH Host
-                  │     │
-Phone PWA ─ Relay ┘     SQLite
-           encrypted    metadata · event cache · approvals · receipts
-```
+### How it fits together
+
+- **Clients:** CLI, interactive terminal (TUI), native Mac app, and phone PWA — all access the same host and session state.
+- **Remote connection:** The phone reaches the host through a Relay or a configured tunnel. Paired session traffic is encrypted; the Relay forwards ciphertext.
+- **Host and state:** `turnwire-host` runs Turnwire Core. SQLite stores metadata, cached events, approvals, and command receipts.
+- **Task execution:** Turnwire Core delegates tasks through the `AgentRuntime` interface to DSH. Model credentials and task execution stay on the host.
 
 ## What it gives you
 
