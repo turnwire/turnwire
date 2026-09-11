@@ -72,7 +72,7 @@ const en = {
   // Sidebar.
   'sidebar.closeSessionList': 'Close session list',
   'sidebar.closeList': 'Close list',
-  'sidebar.inbox': 'Inbox',
+  'sidebar.inbox': 'Approvals',
   'sidebar.searchSessions': 'Search sessions',
   'sidebar.searchPlaceholder': 'Search sessions or working directories',
   'sidebar.archived': 'Archived',
@@ -89,7 +89,7 @@ const en = {
   // Top bar.
   'topbar.openSessionList': 'Open session list',
   'topbar.deviceConnection': 'Device connection',
-  'topbar.inbox': 'Inbox',
+  'topbar.inbox': 'Approvals',
   'topbar.workspace': 'Workspace',
   'topbar.sessionActions': 'Session actions',
   'topbar.rename': 'Rename',
@@ -300,7 +300,7 @@ const en = {
   'connection.disconnect': 'Disconnect and forget',
 
   // Inbox.
-  'inbox.title': 'Inbox',
+  'inbox.title': 'Approvals',
   'inbox.subtitle': 'Actions that need you across all sessions.',
   'inbox.includeHandled': 'Include handled',
   'inbox.pushUnsupported': 'This browser does not support notifications yet; on iPhone, add the page to the Home Screen first.',
@@ -312,7 +312,7 @@ const en = {
   'inbox.disable': 'Turn off notifications on this device',
   'inbox.enable': 'Enable notifications and remember device',
   'inbox.emptyConnected': 'Nothing pending.',
-  'inbox.emptyDisconnected': 'The inbox updates after you connect to a host.',
+  'inbox.emptyDisconnected': 'Approvals update after you connect to a host.',
   'inbox.status.pending': 'Pending',
   'inbox.status.approved': 'Approved',
   'inbox.status.rejected': 'Rejected',
@@ -425,7 +425,7 @@ const zh: Catalog = {
 
   'sidebar.closeSessionList': '关闭会话列表',
   'sidebar.closeList': '关闭列表',
-  'sidebar.inbox': '收件箱',
+  'sidebar.inbox': '审批中心',
   'sidebar.searchSessions': '搜索会话',
   'sidebar.searchPlaceholder': '搜索会话或工作目录',
   'sidebar.archived': '已归档',
@@ -441,7 +441,7 @@ const zh: Catalog = {
 
   'topbar.openSessionList': '打开会话列表',
   'topbar.deviceConnection': '设备连接',
-  'topbar.inbox': '收件箱',
+  'topbar.inbox': '审批中心',
   'topbar.workspace': '工作空间',
   'topbar.sessionActions': '会话操作',
   'topbar.rename': '重命名',
@@ -637,7 +637,7 @@ const zh: Catalog = {
   'connection.back': '返回会话',
   'connection.disconnect': '断开并忘记连接',
 
-  'inbox.title': '收件箱',
+  'inbox.title': '审批中心',
   'inbox.subtitle': '所有会话中需要你处理的操作。',
   'inbox.includeHandled': '包含已处理',
   'inbox.pushUnsupported': '此浏览器尚不支持通知；iPhone 请先将页面添加到主屏幕再打开。',
@@ -649,7 +649,7 @@ const zh: Catalog = {
   'inbox.disable': '关闭本设备通知',
   'inbox.enable': '启用通知并记住设备',
   'inbox.emptyConnected': '暂无待办。',
-  'inbox.emptyDisconnected': '连接主机后更新收件箱。',
+  'inbox.emptyDisconnected': '连接主机后更新审批中心。',
   'inbox.status.pending': '待处理',
   'inbox.status.approved': '已批准',
   'inbox.status.rejected': '已拒绝',

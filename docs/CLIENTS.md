@@ -2,6 +2,8 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+The approval inbox is labeled **Approvals** in the PWA and native app (**审批中心** in Chinese); CLI/TUI help uses the same terminology. The existing `inbox` command, `inbox.page` RPC, notification routing and persisted records are unchanged.
+
 New local installations use [XDG directories](XDG.md). Daemon and CLI share one Node-only resolver; native local connection discovery also honors explicit config/home overrides, the existing legacy home, and the XDG config default. Saved native Keychain/UserDefaults connections and remote wire contracts are unchanged. Native discovery changes require macOS compilation/testing (not available in the Linux validation environment).
 
 Per-session auto-approval choices are stored by Core, not in client-local preferences. The shared command and authoritative snapshot preserve an explicit choice across reconnects and host restarts; this does not depend on keeping any client open. New sessions default off; disabling or archiving clears it, and old event journals do not restore prior transient authorization.

@@ -46,8 +46,8 @@ try {
   await expect(page.locator('.connection-ok')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.error-banner')).toHaveCount(0);
   await local.request('session.message', { sessionId: session.id, text: 'approval' });
-  await page.getByRole('button', { name: 'Open session list' }).click(); await page.getByRole('button', { name: /Inbox/ }).click();
-  await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open session list' }).click(); await page.getByRole('button', { name: /Approvals/ }).click();
+  await expect(page.getByRole('heading', { name: 'Approvals', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Enable notifications and remember device', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
