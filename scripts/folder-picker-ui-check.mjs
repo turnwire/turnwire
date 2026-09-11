@@ -1,0 +1,57 @@
+// Isolated source fixture: no full build, live host mutation or replacement product server.
+import { createServer } from 'vite';
+import react from '@vitejs/plugin-react';
+import { chromium, expect } from '@playwright/test';
+import { resolve } from 'node:path';
+const root = resolve(import.meta.dirname, '..');
+const server = await createServer({ configFile: false, root, optimizeDeps: { include: ['react', 'react-dom/client', 'zod'] }, plugins: [react(), { name: 'folder-fixture', configureServer(server) { server.middlewares.use('/folder-fixture', (_req, res) => { res.setHeader('content-type', 'text/html'); res.end('<div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh"; RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => type => type; window.__vite_plugin_react_preamble_installed__ = true;</script><script type="module" src="/tests/fixtures/folder-picker.tsx"></script>'); }); } }], resolve: { alias: { '@turnwire/sdk': resolve(root, 'packages/sdk/src/index.ts'), '@turnwire/protocol': resolve(root, 'packages/protocol/src/index.ts') } }, server: { host: '127.0.0.1', port: 0 } });
+await server.listen();
+let browser;
+try {
+  browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(() => localStorage.setItem('turnwire.locale', 'en'));
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/folder-fixture`);
+  await page.getByLabel('Session name').fill('Fixture session');
+  await page.getByRole('textbox', { name: /^Working directory/ }).fill('/host/home');
+  await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+  const picker = page.locator('.folder-picker');
+  await page.getByRole('button', { name: 'New folder', exact: true }).click();
+  const name = page.getByLabel('Folder name', { exact: true });
+  const create = page.getByRole('button', { name: 'Create folder', exact: true });
+  for (const invalid of ['', '.', '..', ' .. ', 'a/b', 'a\\b', 'x'.repeat(256)]) { await name.fill(invalid); await expect(create).toBeDisabled(); }
+  await name.fill('输入法');
+  await name.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true });
+  expect(await page.evaluate(() => window.fixture.calls)).toEqual([]);
+  expect(await page.evaluate(() => window.fixture.sessions)).toEqual([]);
+  await name.fill('cancelled');
+  await name.press('Escape');
+  await expect(name).toHaveCount(0);
+  expect(await page.evaluate(() => window.fixture.calls)).toEqual([]);
+  await page.getByRole('button', { name: 'New folder', exact: true }).click();
+  await name.fill('existing');
+  await page.evaluate(() => { window.fixture.fail = true; });
+  await create.click();
+  await expect(page.getByRole('alert')).toHaveText('Directory already exists');
+  await expect(name).toHaveValue('existing');
+  await expect(picker.locator('code')).toHaveText('/host/home');
+  await expect(page.getByRole('textbox', { name: /^Working directory/ })).toHaveValue('/host/home');
+  await page.evaluate(() => { window.fixture.fail = false; window.fixture.delay = 600; });
+  await name.fill('new folder');
+  await name.press('Enter');
+  await expect(page.getByRole('button', { name: 'Creating folder…', exact: true })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: 'Use this folder', exact: true })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: 'Up', exact: true })).toBeDisabled();
+  await expect(picker.locator('code')).toHaveText('/host/home/new folder');
+  await expect(name).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: /^Working directory/ })).toHaveValue('/host/home');
+  expect(await page.evaluate(() => window.fixture.sessions)).toEqual([]);
+  await picker.getByRole('button', { name: 'Use this folder', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: /^Working directory/ })).toHaveValue('/host/home/new folder');
+  await expect(picker).toHaveCount(0);
+  await page.getByRole('button', { name: 'Create session', exact: true }).click();
+  expect(await page.evaluate(() => window.fixture.sessions)).toEqual(['/host/home/new folder']);
+  expect(errors).toEqual([]);
+  console.log('Folder picker fixture passed: validation, cancel, failure preservation, busy navigation, explicit confirmation and session cwd.');
+} finally { await browser?.close(); await server.close(); }

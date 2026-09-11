@@ -180,6 +180,8 @@ export const methodSchemas = {
   'session.create': z.object({ cwd: z.string().min(1).max(4096), title: z.string().trim().min(1).max(200).default('New session'), runtimeId: idSchema.default('dsh'), model: modelSelectionSchema.optional() }).strict(),
   /** Browse host folders so a client can choose a session's working directory instead of typing it. */
   'workspace.list': z.object({ path: z.string().trim().min(1).max(4096).optional() }).strict(),
+  /** Create exactly one child folder, never a path traversal or recursive tree. */
+  'workspace.mkdir': z.object({ parent: z.string().trim().min(1).max(4096), name: z.string().trim().min(1).max(255).refine(name => name !== '.' && name !== '..' && !/[\\/\\\\\u0000-\u001f\u007f]/.test(name), 'Enter a single folder name without path separators or control characters') }).strict(),
   'session.resume': z.object({ sessionId: idSchema }).strict(),
   'session.rename': z.object({ sessionId: idSchema, title: z.string().trim().min(1).max(200) }).strict(),
   'session.archive': z.object({ sessionId: idSchema, archived: z.boolean() }).strict(),

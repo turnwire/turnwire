@@ -59,8 +59,10 @@ program.command('new [prompt]').description(t('command.new')).option('--cwd <pat
   if (program.opts().json) print(s); else console.log(t('new.success', { id: s.id, model: showModel(s) }));
 }));
 /** The terminal's half of the phone's folder picker: list one level of the host, then `new --cwd`. */
-program.command('dirs [path]').description(t('command.dirs')).action((path: string | undefined) => withClient(async c => {
-  const listing = await c.request<WorkspaceListing>('workspace.list', path ? { path: resolve(path) } : {});
+program.command('dirs [path]').description(t('command.dirs')).option('--mkdir <name>', t('option.mkdir')).action((path: string | undefined, options: { mkdir?: string }) => withClient(async c => {
+  const listing = options.mkdir !== undefined
+    ? await c.request<WorkspaceListing>('workspace.mkdir', { parent: path ? resolve(path) : (await c.request<WorkspaceListing>('workspace.list', {})).path, name: options.mkdir })
+    : await c.request<WorkspaceListing>('workspace.list', path ? { path: resolve(path) } : {});
   if (program.opts().json) print(listing);
   else { console.log(safe(listing.path)); if (!listing.entries.length) console.log(t('dirs.empty')); else for (const entry of listing.entries) console.log(`  ${safe(entry.name)}`); }
 }));

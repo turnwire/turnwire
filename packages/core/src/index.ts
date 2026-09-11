@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { TurnwireError, errorResponse, methodSchemas, requestSchema } from '@turnwire/protocol';
@@ -119,6 +119,21 @@ export class TurnwireCore {
       }
       case 'events.list': { const p = methodSchemas['events.list'].parse(request.params); return { events: this.store.events(p.after, p.limit, p.sessionId), cursor: this.store.cursor() }; }
       case 'workspace.list': return this.listWorkspace(methodSchemas['workspace.list'].parse(request.params));
+      case 'workspace.mkdir': {
+        const p = methodSchemas['workspace.mkdir'].parse(request.params);
+        if (!isAbsolute(p.parent)) throw new TurnwireError('INVALID_WORKSPACE', 'Parent directory must be an absolute path');
+        const parent = await realpath(p.parent).catch(() => { throw new TurnwireError('INVALID_WORKSPACE', 'Parent directory does not exist'); });
+        if (!(await stat(parent)).isDirectory()) throw new TurnwireError('INVALID_WORKSPACE', 'Parent must be a directory');
+        const path = join(parent, p.name);
+        try { await mkdir(path, { recursive: false }); }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          throw new TurnwireError('INVALID_WORKSPACE', code === 'EEXIST' ? 'A file or directory with this name already exists' : `Cannot create directory (${code ?? 'unknown error'})`);
+        }
+        // The freshly created directory is empty. Avoid a second read that could report failure
+        // after creation succeeded; the mutation receipt is safe to replay after reconnect.
+        return { path, parent, home: homedir(), entries: [], total: 0 };
+      }
       case 'session.create': {
         const p = methodSchemas['session.create'].parse(request.params);
         if (!isAbsolute(p.cwd)) throw new TurnwireError('INVALID_WORKSPACE', 'Working directory must be an absolute path');

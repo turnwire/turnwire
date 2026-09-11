@@ -200,6 +200,10 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
 .folder-error { margin: 9px 0 0; font-size: 11.5px; color: #a34545; }
 .folder-hint { margin: 3px 0 0; font-size: 10.5px; color: var(--muted); }
 .choose-folder[aria-busy="true"] { opacity: .65; }
+.folder-create { margin: 8px 0; padding: 8px 0; border-top: 1px solid var(--line); }
+.folder-create label { margin: 0; }
+.folder-create-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.folder-new { margin-bottom: 8px; font-size: 11.5px; }
 .folder-picker footer { display: flex; gap: 8px; justify-content: flex-end; }
 .folder-picker footer button { font-size: 11.5px; }
 

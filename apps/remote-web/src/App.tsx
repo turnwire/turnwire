@@ -4,7 +4,7 @@ import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
 import { LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import { TurnwireError, eventSessionId } from '@turnwire/protocol';
+import { TurnwireError, eventSessionId, methodSchemas } from '@turnwire/protocol';
 import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { MarkdownMessage } from './MarkdownMessage';
 import { AgentStrip } from './AgentStrip';
@@ -423,7 +423,7 @@ export function App() {
           </div></footer>
         </>}
     </main>
-    {create && snapshot && <CreateSession snapshot={snapshot} busy={busy} close={() => setCreate(false)} onBrowse={async path => { const c = clientRef.current; if (!c) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return c.request<WorkspaceListing>('workspace.list', path ? { path } : {}); }} onCreate={(cwd, title, runtimeId) => void perform(async c => { const s = await c.request<Session>('session.create', { cwd, title, runtimeId }); setSnapshot(previous => previous ? { ...previous, sessions: [s, ...previous.sessions.filter(p => p.id !== s.id)] } : previous); setSelected(s.id); setShowConnection(false); setCreate(false); })} />}
+    {create && snapshot && <CreateSession snapshot={snapshot} busy={busy} close={() => setCreate(false)} onBrowse={async path => { const c = clientRef.current; if (!c) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return c.request<WorkspaceListing>('workspace.list', path ? { path } : {}); }} onCreateDirectory={async (parent, name) => { const c = clientRef.current; if (!c) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return c.request<WorkspaceListing>('workspace.mkdir', { parent, name }); }} onCreate={(cwd, title, runtimeId) => void perform(async c => { const s = await c.request<Session>('session.create', { cwd, title, runtimeId }); setSnapshot(previous => previous ? { ...previous, sessions: [s, ...previous.sessions.filter(p => p.id !== s.id)] } : previous); setSelected(s.id); setShowConnection(false); setCreate(false); })} />}
   </div>;
 }
 
@@ -499,18 +499,30 @@ function ToolRun({ items, running }: { items: ConversationMessage[]; running: bo
   return <details className="tool-group"><summary><TerminalWindow size={13} />{working ? <ToolHeading message={items[items.length - 1]!} /> : <span>{label}</span>}<span className="tool-status">{status}</span><CaretRight size={11} className="tool-caret" /></summary><div className="tool-group-items">{items.map(item => <ToolCall key={item.id} message={item} />)}</div></details>;
 }
 
-function CreateSession({ snapshot, busy, close, onBrowse, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onBrowse: (path?: string) => Promise<WorkspaceListing>; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
+export function CreateSession({ snapshot, busy, close, onBrowse, onCreateDirectory, onCreate }: { snapshot: Snapshot; busy: boolean; close: () => void; onBrowse: (path?: string) => Promise<WorkspaceListing>; onCreateDirectory: (parent: string, name: string) => Promise<WorkspaceListing>; onCreate: (cwd: string, title: string, runtimeId: string) => void }) {
   const t = useLocale();
   const ref = useRef<HTMLDialogElement>(null); const [cwd, setCwd] = useState(snapshot.sessions[0]?.cwd ?? ''); const [title, setTitle] = useState(''); const [runtimeId, setRuntime] = useState(snapshot.runtimes[0]?.id ?? 'dsh');
   const [listing, setListing] = useState<WorkspaceListing>(); const [failure, setFailure] = useState(''); const [reading, setReading] = useState(false); const [choosing, setChoosing] = useState(false);
+  const [newFolder, setNewFolder] = useState(false); const [folderName, setFolderName] = useState(''); const [makingFolder, setMakingFolder] = useState(false); const [folderFailure, setFolderFailure] = useState('');
+  const folderBusy = reading || makingFolder;
+  const validFolderName = methodSchemas['workspace.mkdir'].safeParse({ parent: listing?.path ?? '/', name: folderName }).success;
   const picker = useRef<HTMLElement | null>(null);
+  function cancelNewFolder() { setNewFolder(false); setFolderName(''); setFolderFailure(''); }
+  async function createDirectory() {
+    if (!listing || folderBusy || !validFolderName) return;
+    setMakingFolder(true); setFolderFailure('');
+    try { setListing(await onCreateDirectory(listing.path, folderName)); cancelNewFolder(); setFailure(''); }
+    catch (error) { setFolderFailure(errorText(error)); }
+    finally { setMakingFolder(false); }
+  }
   useEffect(() => { ref.current?.showModal(); }, []);
   // The picker opens on the tap, not on the answer: a prompt tap that shows nothing until the host
   // replies reads as a dead button, and on a slow or older host that reply can be a long wait.
   useEffect(() => { if (choosing) picker.current?.scrollIntoView({ block: 'nearest' }); }, [choosing, listing]);
   /** Opens the picker at `path`, falling back to the host home so a stale path is not a dead end. */
   async function browse(path?: string) {
-    setChoosing(true); setReading(true); setFailure('');
+    if (folderBusy) return;
+    cancelNewFolder(); setChoosing(true); setReading(true); setFailure('');
     try { setListing(await onBrowse(path)); }
     catch (error) {
       if (!path) setFailure(errorText(error));
@@ -522,16 +534,22 @@ function CreateSession({ snapshot, busy, close, onBrowse, onCreate }: { snapshot
     <div className="dialog-heading"><h2 id="new-title">{t('common.newSession')}</h2><button type="button" className="icon-button" onClick={close} aria-label={t('common.close')}><X size={20} /></button></div>
     <p>{t('create.intro')}</p>
     <label>{t('create.name')}<input autoFocus required maxLength={200} value={title} onChange={e => setTitle(e.target.value)} placeholder={t('create.namePlaceholder')} /></label>
-    <label>{t('create.cwd')}<span className="field-row"><input required value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/absolute/path/to/project" /><button type="button" className="choose-folder" aria-busy={reading} onClick={() => void browse(cwd || undefined)}>{reading ? <CircleNotch size={16} className="spin" /> : <FolderSimple size={16} />}{t('create.choose')}</button></span></label>
+    <label>{t('create.cwd')}<span className="field-row"><input required value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/absolute/path/to/project" /><button type="button" className="choose-folder" disabled={folderBusy} aria-busy={folderBusy} onClick={() => void browse(cwd || undefined)}>{reading ? <CircleNotch size={16} className="spin" /> : <FolderSimple size={16} />}{t('create.choose')}</button></span></label>
     {choosing && <section className="folder-picker" ref={picker} aria-label={t('create.folderPicker')}>
-      <header><code title={listing?.path ?? cwd}>{listing?.path ?? t('create.reading')}</code><span><button type="button" disabled={reading || !listing} onClick={() => listing && void browse(listing.home)}>{t('create.home')}</button><button type="button" disabled={reading || !listing?.parent} onClick={() => listing?.parent && void browse(listing.parent)}>{t('create.up')}</button></span></header>
+      <header><code title={listing?.path ?? cwd}>{listing?.path ?? t('create.reading')}</code><span><button type="button" disabled={folderBusy || !listing} onClick={() => listing && void browse(listing.home)}>{t('create.home')}</button><button type="button" disabled={folderBusy || !listing?.parent} onClick={() => listing?.parent && void browse(listing.parent)}>{t('create.up')}</button></span></header>
       <div className="folder-list">
-        {listing?.entries.map(entry => <button type="button" key={entry.path} onClick={() => void browse(entry.path)}><FolderSimple size={15} /><span>{entry.name}</span><CaretRight size={12} /></button>)}
+        {listing?.entries.map(entry => <button type="button" key={entry.path} disabled={folderBusy} onClick={() => void browse(entry.path)}><FolderSimple size={15} /><span>{entry.name}</span><CaretRight size={12} /></button>)}
         {!reading && listing && !listing.entries.length && <p role="status">{t('create.noFolders')}</p>}
         {reading && <p role="status" className="folder-reading"><CircleNotch size={14} className="spin" />{t('create.reading')}</p>}
       </div>
       {listing && listing.entries.length < listing.total && <p className="folder-note">{t('create.truncated', { shown: listing.entries.length, total: listing.total })}</p>}
-      <footer><button type="button" className="primary" disabled={reading || !listing} onClick={() => { if (!listing) return; setCwd(listing.path); setListing(undefined); setChoosing(false); setFailure(''); }}>{t('create.useFolder')}</button><button type="button" onClick={() => { setListing(undefined); setChoosing(false); setFailure(''); }}>{t('common.cancel')}</button></footer>
+      {newFolder ? <div className="folder-create" aria-busy={makingFolder}>
+        <label>{t('create.folderName')}<input autoFocus value={folderName} disabled={makingFolder} onChange={e => { setFolderName(e.target.value); setFolderFailure(''); }} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (!e.nativeEvent.isComposing && e.keyCode !== 229) void createDirectory(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (!makingFolder) cancelNewFolder(); } }} /></label>
+        <p className="folder-hint">{t('create.folderNameHint')}</p>
+        {folderFailure && <p className="folder-error" role="alert">{folderFailure}</p>}
+        <div className="folder-create-actions"><button type="button" disabled={folderBusy || !validFolderName} onClick={() => void createDirectory()}>{makingFolder ? t('create.creatingFolder') : t('create.createFolder')}</button><button type="button" disabled={makingFolder} onClick={cancelNewFolder}>{t('common.cancel')}</button></div>
+      </div> : <button type="button" className="folder-new" disabled={folderBusy || !listing} onClick={() => { setNewFolder(true); setFolderFailure(''); }}>{t('create.newFolder')}</button>}
+      <footer><button type="button" className="primary" disabled={folderBusy || !listing} onClick={() => { if (!listing) return; setCwd(listing.path); setListing(undefined); setChoosing(false); setFailure(''); cancelNewFolder(); }}>{t('create.useFolder')}</button><button type="button" disabled={folderBusy} onClick={() => { setListing(undefined); setChoosing(false); setFailure(''); cancelNewFolder(); }}>{t('common.cancel')}</button></footer>
     </section>}
     {failure && <p className="folder-error" role="alert">{failure}</p>}
     {choosing && failure && <p className="folder-hint">{t('create.browseHint')}</p>}
