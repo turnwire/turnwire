@@ -48,6 +48,23 @@ try {
 
   // The picker has to survive the phone layout, which is where it is actually used.
   await page.setViewportSize({ width: 390, height: 844 });
+  const actions = page.locator('.session-actions');
+  const actionsToggle = actions.locator('summary');
+  await actionsToggle.click();
+  await expect(actions).toHaveAttribute('open', '');
+  await actions.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(actions).toHaveAttribute('open', '');
+  await actions.locator('input').click();
+  await expect(actions).toHaveAttribute('open', '');
+  await actions.locator('input').press('Escape');
+  await expect(actions).not.toHaveAttribute('open', '');
+  await expect(actionsToggle).toBeFocused();
+  await actionsToggle.click();
+  await page.locator('.composer textarea').click();
+  await expect(actions).not.toHaveAttribute('open', '');
+  await actionsToggle.click();
+  await page.locator('.composer textarea').dispatchEvent('pointerdown', { pointerType: 'touch', bubbles: true });
+  await expect(actions).not.toHaveAttribute('open', '');
   const sidebar = page.locator('.sidebar');
   await expect(sidebar).toHaveAttribute('inert', '');
   const sidebarOpen = page.getByRole('button', { name: 'Open session list', exact: true });

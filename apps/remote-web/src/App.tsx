@@ -236,6 +236,23 @@ export function App() {
    */
   const rows = useMemo(() => conversationRows(visible), [visible]);
   const turnAgents = useMemo(() => currentTurnChildren(messages, scopedAgents), [messages, scopedAgents]);
+  const sessionActions = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      const menu = sessionActions.current;
+      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false;
+    };
+    const escape = (event: KeyboardEvent) => {
+      const menu = sessionActions.current;
+      if (event.key !== 'Escape' || !menu?.open) return;
+      event.preventDefault(); menu.open = false;
+      if (menu.contains(document.activeElement)) menu.querySelector('summary')?.focus();
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape); };
+  }, []);
+  useEffect(() => { if (sessionActions.current) sessionActions.current.open = false; setRenameTitle(undefined); }, [selected]);
   // The model panel hangs off the chip, so it closes the way a menu does: a tap anywhere else, or Esc.
   useEffect(() => {
     if (!showModel) return;
@@ -401,7 +418,7 @@ export function App() {
       <div className="sidebar-bottom"><button className="device-row" onClick={() => { setShowConnection(true); setDrawer(false); }}><Desktop size={20} /><span><strong>{snapshot?.device.name ?? t('sidebar.connectHost')}</strong><small><i className={connected ? 'online' : ''} />{connected ? t('sidebar.connected') : state === 'connecting' ? t('sidebar.connecting') : t('sidebar.offline')}</small></span><GearSix size={17} /></button><div className="local-note"><ShieldCheck size={14} />{t('sidebar.localNote')}</div></div>
     </aside>
     <main>
-      <header className="topbar"><button ref={sidebarTrigger} className="icon-button mobile-only" aria-expanded={drawer} aria-controls="session-sidebar" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <><Status status={session.status} /><details className="session-actions"><summary>{t('topbar.sessionActions')}</summary><div><button disabled={!connected || busy} onClick={() => { setRenameTitle(session.title); }}>{t('topbar.rename')}</button>{renameTitle !== undefined && <form onSubmit={event => { event.preventDefault(); void perform(async c => { await c.request('session.rename', { sessionId: session.id, title: renameTitle }); setRenameTitle(undefined); }); }}><input aria-label={t('topbar.newSessionName')} value={renameTitle} onChange={event => setRenameTitle(event.target.value)} /><button disabled={busy || !renameTitle.trim()}>{t('topbar.saveName')}</button></form>}<button disabled={!connected || busy || ['running', 'waiting_approval'].includes(session.status)} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: !session.archived }); })}>{session.archived ? t('common.unarchive') : t('topbar.archiveSession')}</button></div></details></>}<button className="icon-button" aria-label={t('topbar.connectionSettings')} onClick={() => setShowConnection(true)}><Plug size={19} /></button></div></header>
+      <header className="topbar"><button ref={sidebarTrigger} className="icon-button mobile-only" aria-expanded={drawer} aria-controls="session-sidebar" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <><Status status={session.status} /><details ref={sessionActions} className="session-actions"><summary>{t('topbar.sessionActions')}</summary><div><button disabled={!connected || busy} onClick={() => { setRenameTitle(session.title); }}>{t('topbar.rename')}</button>{renameTitle !== undefined && <form onSubmit={event => { event.preventDefault(); void perform(async c => { await c.request('session.rename', { sessionId: session.id, title: renameTitle }); setRenameTitle(undefined); }); }}><input aria-label={t('topbar.newSessionName')} value={renameTitle} onChange={event => setRenameTitle(event.target.value)} /><button disabled={busy || !renameTitle.trim()}>{t('topbar.saveName')}</button></form>}<button disabled={!connected || busy || ['running', 'waiting_approval'].includes(session.status)} onClick={() => void perform(async c => { await c.request('session.archive', { sessionId: session.id, archived: !session.archived }); })}>{session.archived ? t('common.unarchive') : t('topbar.archiveSession')}</button></div></details></>}<button className="icon-button" aria-label={t('topbar.connectionSettings')} onClick={() => setShowConnection(true)}><Plug size={19} /></button></div></header>
       {connection?.kind === 'remote' && (health?.phase === 'connected'
         // Connected is the normal state, so it costs one thin line: the host and the round trip, with the
         // full story on the pointer and a click to verify again. Everything else keeps the bar that says
