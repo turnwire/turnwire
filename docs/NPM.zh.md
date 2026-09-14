@@ -19,6 +19,17 @@ turnwire
 
 启动器应优先连接已有、认证有效且兼容的 DSH；否则提示安装固定兼容版本。安装和凭据配置必须明确取得用户同意。外部 DSH 归用户所有，停止 Turnwire 不得停止它。模型名称与能力由 runtime 提供，安装器不自行编造。本机使用无需 Relay，远程以自托管为主，可选配置 Relay／隧道。API Key、配对码和 npm token 不应出现在 issue、发布日志或源码里。
 
+## 首次启动细节
+
+- 已有 DSH：显式提供 `TURNWIRE_DSH_URL` 与 `TURNWIRE_DSH_TOKEN`，或在 Turnwire 配置目录创建仅本人可读的 `dsh-connection.json`（0600，包含 `url`、`token`）。不会扫描进程或读取其他工具的秘密；认证失败不会擅自安装替代实例。
+- 没有配置外部实例时：检查 Turnwire 数据目录里的托管 DSH，缺失才询问安装。可用 `--yes` 明确允许安装，不能代替所需的模型凭据。
+- 首次所需模型凭据：读取 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，或交互式隐藏输入，私有配置不会被覆盖。
+- 默认前台运行。`--open` 打开已认证本机 Web，`--no-open` 不打开浏览器。浏览器启动链接只允许同源 loopback，并在读取后清除片段凭据。
+- `--port PORT` 选择 Turnwire Web 端口；`TURNWIRE_DSH_PORT` 选择新启动的托管 DSH 端口。占用时拒绝启动，不停止其他服务。
+- `turnwire doctor --json` 离线检查环境，不下载运行时、不创建配置。
+
+这不是任意 DSH 安装的自动发现器：首版复用需要明确的外部连接配置，或 Turnwire 已管理的安装位置。已有但不在这些位置的 DSH 不会被擅自接管。
+
 ## 构建可审阅的安装包
 
 在干净源码目录中执行：

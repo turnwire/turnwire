@@ -19,6 +19,17 @@ Linux and macOS are the target platforms. Node.js 22.13 or newer is required by 
 
 The launcher should connect to an existing, authenticated compatible DSH instance first; otherwise it offers installation of the pinned compatible DSH version. Installation and credential setup must be explicit. Existing external DSH processes remain user-owned: stopping Turnwire must not stop them. Runtime-owned model names and capabilities are not invented by the installer. Local use does not require Relay; remote use is self-host-first, with Relay/tunnel setup optional. Never paste API keys, pairing codes or npm tokens into GitHub issues or release logs.
 
+## First-run details
+
+- Existing DSH: explicitly supply `TURNWIRE_DSH_URL` and `TURNWIRE_DSH_TOKEN`, or an owned mode-0600 `dsh-connection.json` containing `url` and `token` in the Turnwire config directory. No process-secret scanning; failed authentication does not install a replacement.
+- Otherwise the launcher checks its managed runtime location and asks before installation. `--yes` authorizes installation, not missing model credentials.
+- Model credentials come from `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` or a hidden interactive prompt; existing private configuration is not overwritten.
+- Foreground only. `--open` opens authenticated local Web; `--no-open` suppresses opening. The fragment bootstrap only accepts same-origin loopback and clears credentials from the location after reading.
+- `--port PORT` selects Web port; `TURNWIRE_DSH_PORT` selects the owned DSH port. Occupied ports are refused, never cleared by stopping another service.
+- `turnwire doctor --json` is offline and does not install or create configuration.
+
+This preview does not automatically discover arbitrary DSH installations: reuse requires explicit connection configuration or the Turnwire-managed installation path. Other installations are not silently adopted.
+
 ## Build a reviewable package
 
 From a clean checkout with dependencies installed:

@@ -12,7 +12,7 @@ import { resolveManagedHostPaths } from '../../packages/sdk/src/node-paths.ts';
 export const DSH_VERSION = '0.1.5-rc.2';
 const systemNames = ['PATH','HOME','USER','LOGNAME','SHELL','TMPDIR','TMP','TEMP','LANG','LC_ALL','LC_CTYPE','TZ','SYSTEMROOT','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','NODE_EXTRA_CA_CERTS','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR','TERM','COLORTERM'];
 const pathNames = ['TURNWIRE_STATE_HOME','TURNWIRE_CONFIG_HOME','TURNWIRE_DATA_HOME','TURNWIRE_CACHE_HOME','TURNWIRE_DSH_HOME','TURNWIRE_DSH_ENV_FILE','TURNWIRE_DSH_ENTRY'];
-export function cleanEnvironment(env = process.env) { return Object.fromEntries([...systemNames, ...pathNames, 'TURNWIRE_PORT','TURNWIRE_ALLOWED_ORIGINS'].filter(key => env[key] !== undefined).map(key => [key, env[key]])); }
+export function cleanEnvironment(env = process.env) { return Object.fromEntries([...systemNames, ...pathNames, 'TURNWIRE_PORT','TURNWIRE_DSH_PORT','TURNWIRE_ALLOWED_ORIGINS'].filter(key => env[key] !== undefined).map(key => [key, env[key]])); }
 export function parseLaunch(args) {
   const options = { yes: false, port: undefined, open: undefined };
   for (let i = 0; i < args.length; i++) {
@@ -134,7 +134,10 @@ export async function main(args = process.argv.slice(2), root = resolve(dirname(
       startBrowser();
       return await runChild(process.execPath,[join(root,'apps/daemon/dist/main.js')],{env:{...env,TURNWIRE_RUNTIME:'dsh',TURNWIRE_DSH_URL:connection},cwd:root});
     }
-    let installed = false; try { installed = (await lstat(paths.dshEntry)).isFile(); } catch {}
+    let installed = false; try { installed = (await lstat(paths.dshEntry)).isFile(); } catch (error) { if (error.code !== 'ENOENT') throw Error('Cannot inspect managed DSH entry; no installation was attempted'); }
+    const dshPort = Number(env.TURNWIRE_DSH_PORT ?? 3080);
+    if (!Number.isInteger(dshPort) || dshPort < 1 || dshPort > 65535) throw Error('Invalid TURNWIRE_DSH_PORT');
+    await new Promise((ok, fail) => { const server = createServer(); server.once('error', () => fail(Error('Managed DSH port is already occupied; set TURNWIRE_DSH_PORT or connect to an external DSH.'))); server.listen(dshPort, '127.0.0.1', () => server.close(ok)); });
     if (!installed) {
       if (process.env.TURNWIRE_DSH_ENTRY) throw Error('Explicit TURNWIRE_DSH_ENTRY does not exist; refusing to install over a custom path');
       if (!options.yes && !await confirm(`Install @deepseek-ai/dsh@${DSH_VERSION} into Turnwire runtime data?`)) throw Error('Installation not authorised. Re-run interactively or pass --yes.');

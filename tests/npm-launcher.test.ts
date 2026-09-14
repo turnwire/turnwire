@@ -6,7 +6,7 @@ import { cleanEnvironment, parseLaunch, privateJson, launchUrl, findConnection, 
 
 describe('npm launcher bootstrap', () => {
   it('strips ambient credentials and Node injection but preserves canonical directories', () => {
-    expect(cleanEnvironment({ HOME: '/tmp/home', PATH: '/bin', NODE_OPTIONS: '--require bad', OPENAI_API_KEY: 'secret', TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'secret', TURNWIRE_DSH_URL: 'secret', TURNWIRE_CONFIG_HOME: '/tmp/config' })).toEqual({ HOME: '/tmp/home', PATH: '/bin', TURNWIRE_CONFIG_HOME: '/tmp/config' });
+    expect(cleanEnvironment({ HOME: '/tmp/home', PATH: '/bin', NODE_OPTIONS: '--require bad', OPENAI_API_KEY: 'secret', TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'secret', TURNWIRE_DSH_URL: 'secret', TURNWIRE_CONFIG_HOME: '/tmp/config', TURNWIRE_DSH_PORT: '45678' })).toEqual({ HOME: '/tmp/home', PATH: '/bin', TURNWIRE_CONFIG_HOME: '/tmp/config', TURNWIRE_DSH_PORT: '45678' });
   });
   it('parses explicit install, browser and port options without shell syntax', () => {
     expect(parseLaunch(['--yes','--port','9922','--no-open'])).toEqual({ yes: true, port: '9922', open: false });
