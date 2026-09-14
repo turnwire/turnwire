@@ -52,8 +52,13 @@ jobs:
     uses: ./.github/workflows/npm-package.yml
     with:
       revision: ${{ needs.authorize.outputs.revision }}
+  test-dsh:
+    needs: authorize
+    uses: ./.github/workflows/dsh-compatibility.yml
+    with:
+      revision: ${{ needs.authorize.outputs.revision }}
   publish:
-    needs: [authorize, test-package]
+    needs: [authorize, test-package, test-dsh]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: npm-release

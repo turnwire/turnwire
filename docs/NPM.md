@@ -17,7 +17,7 @@ turnwire
 
 Linux and macOS are the target platforms. Node.js 22.13 or newer is required by the application; use a supported recent Node release. Native Windows is not claimed. The initial preview runs in the foreground, not as a silently installed system service. Do not remove its package files or npx cache while it is running.
 
-The launcher should connect to an existing, authenticated compatible DSH instance first; otherwise it offers installation of the pinned compatible DSH version. Installation and credential setup must be explicit. Existing external DSH processes remain user-owned: stopping Turnwire must not stop them. Runtime-owned model names and capabilities are not invented by the installer. Local use does not require Relay; remote use is self-host-first, with Relay/tunnel setup optional. Never paste API keys, pairing codes or npm tokens into GitHub issues or release logs.
+The launcher should connect to an existing, authenticated compatible DSH instance first; otherwise it resolves npm `latest` and offers installation of that exact version. Compatibility is checked against actual interfaces, not exact equality with the test baseline. Installation and credential setup must be explicit. Existing external DSH processes remain user-owned: stopping Turnwire must not stop them. Runtime-owned model names and capabilities are not invented by the installer. Local use does not require Relay; remote use is self-host-first, with Relay/tunnel setup optional. Never paste API keys, pairing codes or npm tokens into GitHub issues or release logs.
 
 ## First-run details
 
@@ -29,6 +29,12 @@ The launcher should connect to an existing, authenticated compatible DSH instanc
 - `turnwire doctor --json` is offline and does not install or create configuration.
 
 This preview does not automatically discover arbitrary DSH installations: reuse requires explicit connection configuration or the Turnwire-managed installation path. Other installations are not silently adopted.
+
+## Latest DSH and safe updates
+
+Run `turnwire start --update-dsh` to explicitly check and update managed DSH; add `--yes` to authorize installation when needed. Stop your own foreground instance first: no hot replacement during active sessions. The updater resolves npm `latest` to an exact version, installs into a separate version directory, probes authenticated interfaces with an isolated HOME and a dummy key, then atomically switches a private selection file. Failed validation leaves the previous selection unchanged and old installations retained. No automatic downgrade; external DSH and custom entries are not updated.
+
+Normal startup does not continuously poll npm or silently update. `latest` is a publisher-controlled dist-tag and may be older than `next`. Compatibility uses observed response shapes rather than invented protocol versions or unsupported capability handshakes. See [DSH compatibility](DSH-COMPATIBILITY.md) for limits and CI coverage.
 
 ## Build a reviewable package
 
@@ -81,7 +87,7 @@ Reference: [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) 
 1. Update the package version source and release notes; run validation and merge to main.
 2. Create and push `v0.1.0-next.1` (example) pointing to the reviewed main commit.
 3. Run **Publish npm** manually from `main`, input the existing tag, and type `publish-turnwire`.
-4. The workflow validates the tag syntax and main ancestry, resolves an immutable commit, runs both package smoke jobs, then waits for configured environment approval.
+4. The workflow validates the tag syntax and main ancestry, resolves an immutable commit, runs cross-platform package smoke plus real baseline/latest/next DSH checks, then enters the release environment (approval depends on the actual protection configuration).
 5. It publishes the exact Linux-tested tarball, checks name/version against the tag, and uses OIDC authentication (provenance only for a public source repository). `vX.Y.Z-next.N` publishes to `next`; `vX.Y.Z` publishes to `latest`. Other prerelease formats are rejected.
 
 PRs cannot trigger publication. No checkout of an arbitrary user-provided ref occurs before tag validation. The publish job has the only `id-token: write` permission, does not run package lifecycle scripts, and does not rebuild the artifact it publishes. A failed OIDC configuration must fail closed; do not add a broad token as an automatic fallback.

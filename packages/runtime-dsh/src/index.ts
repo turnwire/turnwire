@@ -12,7 +12,8 @@ import { historyPageSchema, historySnapshotSchema, historyRecords, liveHistoryRe
 export const DSH_SOURCE_REVISION = 'fb2c4b9e698e30edb738bca4cf0618587db7d203';
 /** Bounds on one progress read: a run of delegations should be visible, not unbounded. */
 const MAX_SUBAGENTS = 50; const MAX_SUBAGENT_DEPTH = 3;
-const resultSchema = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), value: z.unknown() }), z.object({ ok: z.literal(false), error: z.object({ code: z.string(), message: z.string() }).passthrough() })]);
+import { decodeDshResponse, validateDshSessionList, parseDshModelCatalog, type DshCompatibilityReport } from './compatibility.js';
+export { probeDshCompatibility, inspectDshCompatibility, type DshCompatibilityReport } from './compatibility.js';
 const summarySchema = z.object({ sessionId: z.string(), running: z.boolean(), cwd: z.string().optional() }).passthrough();
 /** One `subagents/list` row: the durable child identity plus the Host's live read of its activity. */
 const subagentEntrySchema = z.object({ kind: z.string(), id: z.string(), activity: z.string().optional(), hasChildren: z.boolean().optional(), mode: z.string().optional(), label: z.string().optional() }).passthrough();
@@ -54,6 +55,9 @@ export class DshRuntime implements AgentRuntime {
   private listeners = new Map<string, Set<(event: RuntimeEvent) => void>>();
   private sessions = new Map<string, RuntimeSession>();
   private contextAvailable = true;
+  private compatibility?: DshCompatibilityReport;
+  /** Adapter abilities are separate from observed host support; unprobed features stay unknown. */
+  compatibilityReport(): DshCompatibilityReport | undefined { return this.compatibility ? structuredClone(this.compatibility) : undefined; }
   private contextProjection = new ContextProjection((id, context) => {
     const session = this.sessions.get(id); if (session) session.context = context;
     this.emit(id, { type: 'context', context });
@@ -323,7 +327,10 @@ export class DshRuntime implements AgentRuntime {
    */
   async modelCatalog(): Promise<ModelCatalog> {
     await this.connect();
-    return modelCatalogSchema.parse(await this.rpc('session/modelCatalog', {}));
+    if (this.compatibility) this.compatibility.optional.modelCatalog = 'unknown';
+    const catalog = parseDshModelCatalog(await this.rpc('session/modelCatalog', {}));
+    if (this.compatibility) this.compatibility.optional.modelCatalog = 'supported';
+    return catalog;
   }
   /**
    * `session/selectModel` returns the selection the Host resolved, which can differ from
@@ -428,10 +435,7 @@ export class DshRuntime implements AgentRuntime {
     const response = await fetch(new URL(`/api/${endpoint}`, this.url), { method: 'POST', headers: { 'content-type': 'application/json', cookie: this.cookie }, body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }), signal: AbortSignal.timeout(30_000) });
     if (response.status === 401) this.cookie = '';
     if (!response.ok) throw new TurnwireError('DSH_HTTP_ERROR', `DSH ${endpoint} returned HTTP ${response.status}`);
-    const envelope = z.object({ type: z.literal('server-response'), rpcId: z.literal(rpcId), result: resultSchema }).parse(await response.json());
-    const parsed = envelope.result;
-    if (!parsed.ok) throw new TurnwireError(parsed.error.code, parsed.error.message);
-    return parsed.value;
+    return decodeDshResponse(await response.json(), rpcId);
   }
   private async connect(): Promise<void> {
     if (this.closed) throw new Error('DSH adapter disposed');
@@ -439,6 +443,9 @@ export class DshRuntime implements AgentRuntime {
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
       await this.authenticate();
+      this.compatibility = undefined;
+      validateDshSessionList(await this.rpc('session/list', { _request: {} }));
+      this.compatibility = { version: null, evidence: 'authenticated-read-only-rpc', core: { sessionList: 'supported' }, optional: { modelCatalog: 'unknown', contextUsage: 'unknown', imageInput: 'unknown' } };
       const url = new URL('/api/remote.mux', this.url); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(url, { headers: { cookie: this.cookie }, maxPayload: 16 * 1024 * 1024, handshakeTimeout: 8000 }); this.socket = socket;

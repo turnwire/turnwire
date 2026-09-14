@@ -4,21 +4,10 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { readFile, mkdir } from 'node:fs/promises';
 import { writeFileSync, renameSync, rmSync, chmodSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { probeDshCompatibility } from '../../../packages/runtime-dsh/src/compatibility.js';
 
-/** Pinned 0.1.5-rc.2 launch-cookie + read-only session/list contract; never trusts HTML. */
-export async function probeDsh(launch: string, timeoutMs = 5000) {
-  const signal = AbortSignal.timeout(timeoutMs);
-  const login = await fetch(launch, { redirect: 'manual', signal });
-  const cookie = login.headers.get('set-cookie')?.split(';')[0];
-  await login.body?.cancel();
-  if (login.status !== 303 || !cookie) throw new Error('DSH authentication not ready');
-  const rpcId = randomUUID();
-  const response = await fetch(new URL('/api/session/list', launch), { method: 'POST', redirect: 'error', signal,
-    headers: { cookie, 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: 'session/list', payload: { args: { _request: {} } } }) });
-  const value = await response.json();
-  if (!response.ok || value?.type !== 'server-response' || value.rpcId !== rpcId || value.result?.ok !== true || !Array.isArray(value.result.value?.items)) throw new Error('DSH session endpoint not ready');
-}
+/** Shared, bounded, read-only semantic probe; version is unknown unless observed elsewhere. */
+export const probeDsh = probeDshCompatibility;
 import { createInterface } from 'node:readline';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';

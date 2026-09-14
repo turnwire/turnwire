@@ -1,0 +1,40 @@
+name: DSH compatibility
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+  push:
+    branches: [main]
+    paths: ['apps/launcher/**', 'apps/daemon/**', 'packages/runtime-dsh/**', 'packages/core/**', 'packages/protocol/**', 'scripts/**', 'package*.json', '.github/workflows/dsh-compatibility.yml']
+  pull_request:
+    paths: ['apps/launcher/**', 'apps/daemon/**', 'packages/runtime-dsh/**', 'packages/core/**', 'packages/protocol/**', 'scripts/**', 'package*.json', '.github/workflows/dsh-compatibility.yml']
+permissions:
+  contents: read
+jobs:
+  compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        channel: [baseline, latest, next]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build standalone package
+        run: node scripts/package-npm.mjs
+      - name: Test real DSH with no inference
+        run: node scripts/dsh-compatibility.mjs '${{ matrix.channel }}' artifacts/npm/turnwire

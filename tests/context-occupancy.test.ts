@@ -19,9 +19,15 @@ import { startRelay } from '../apps/relay/src/server.js';
 import { RemoteBridge } from '../apps/daemon/src/remote.js';
 
 it('reads the real mux control contract and clears on disconnect without stale follow revival', async () => {
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/?token=')) { res.writeHead(303, { 'set-cookie': 'dsh_auth=test' }); res.end(); }
-    else { res.writeHead(404); res.end(); }
+    else if (req.method === 'POST' && req.url === '/api/session/list' && req.headers.cookie === 'dsh_auth=test') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      const request = JSON.parse(body);
+      expect(request).toMatchObject({ type: 'client-request', method: 'session/list', payload: { args: { _request: {} } } });
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ type: 'server-response', rpcId: request.rpcId, result: { ok: true, value: { items: [{ sessionId: 's', running: false }] } } }));
+    } else { res.writeHead(404); res.end(); }
   });
   const sockets = new WebSocketServer({ server });
   let socket: WebSocket | undefined; let follow: string | undefined;
