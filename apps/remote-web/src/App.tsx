@@ -17,7 +17,7 @@ import { RuntimeMark } from './RuntimeMark';
 import { AutoApprovalMark } from './AutoApprovalMark';
 import './chat-polish.css';
 import { InlineChild } from './InlineChild';
-import { conversationRows, currentTurnChildren, launchChild, type ConversationRowData } from './inlineChild';
+import { conversationRows, currentTurnChildren, launchChild, type ConversationRowData } from './inlineChildProjection';
 import { ModelPicker } from './ModelPicker';
 import { prependScrollTop, shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';

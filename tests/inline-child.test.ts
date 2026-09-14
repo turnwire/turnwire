@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationMessage } from '@turnwire/sdk';
 import type { SubagentView } from '@turnwire/protocol';
-import { conversationRows, currentTurnChildren, isChildLaunch, launchChild } from '../apps/remote-web/src/inlineChild';
+import { conversationRows, currentTurnChildren, isChildLaunch, launchChild } from '../apps/remote-web/src/inlineChildProjection';
 
 const children: SubagentView[] = ['a', 'b'].map(id => ({ id, parentId: 'runtime-root', depth: 1, label: 'Same label', activity: 'running', mode: 'continuable', todos: [] }));
 const launch = (patch: Partial<ConversationMessage> = {}): ConversationMessage => ({ id: 'launch', role: 'tool', tool: 'subagent', text: '', input: '{"description":"Same label"}', output: 'started subagent a', complete: true, time: '2026-01-01', ...patch });
