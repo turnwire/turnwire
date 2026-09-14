@@ -1,0 +1,65 @@
+name: npm package smoke
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Normal PR full CI stays in check.yml; a release must validate its exact tag too.
+      - name: Validate release revision
+        if: inputs.revision != '' && matrix.os == 'ubuntu-latest'
+        run: npm run typecheck && npm test
+      - name: Build the standalone distribution
+        run: |
+          npm run build
+          node scripts/package-npm.mjs
+          mkdir -p artifacts/npm/tarballs
+          npm pack ./artifacts/npm/turnwire --pack-destination ./artifacts/npm/tarballs
+      - name: Install and smoke-test outside the checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(find "$GITHUB_WORKSPACE/artifacts/npm/tarballs" -maxdepth 1 -name '*.tgz')
+          test -n "$package"
+          sandbox=$(mktemp -d "$RUNNER_TEMP/turnwire-npm.XXXXXX")
+          export HOME="$sandbox/home"
+          export XDG_CONFIG_HOME="$sandbox/config"
+          export XDG_STATE_HOME="$sandbox/state"
+          export XDG_DATA_HOME="$sandbox/data"
+          export XDG_CACHE_HOME="$sandbox/cache"
+          mkdir -p "$HOME" "$sandbox/install" "$sandbox/empty"
+          npm install --prefix "$sandbox/install" --ignore-scripts --no-audit --no-fund "$package"
+          cd "$sandbox/empty"
+          "$sandbox/install/node_modules/.bin/turnwire" --help
+          "$sandbox/install/node_modules/.bin/turnwire" --version
+          "$sandbox/install/node_modules/.bin/turnwire" doctor --json
+          node "$GITHUB_WORKSPACE/tests/npm-smoke.mjs" "$sandbox/install/node_modules/turnwire"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package-${{ matrix.os }}
+          path: artifacts/npm/tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 7

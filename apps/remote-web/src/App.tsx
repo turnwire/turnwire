@@ -22,12 +22,20 @@ import { ModelPicker } from './ModelPicker';
 import { prependScrollTop, shouldLoadEarlier } from './historyScroll';
 import { t, useLocale, errorText, getLocale, setLocale, type MessageKey } from './i18n';
 
+import { localBootstrap } from './localBootstrap';
+
 type Connection = { kind: 'local'; url: string; token: string } | { kind: 'remote'; code: string };
 /** Failures a verified connection has answered: they stop being true, so they stop being shown. */
 const STALE_CONNECTION_FAILURES = new Set(['DISCONNECTED', 'OUTCOME_UNKNOWN', 'HOST_OFFLINE', 'STAGE_TIMEOUT', 'PROBE_TIMEOUT', 'CONNECTION_FAILED', 'REMOTE_ERROR']);
 const statusKeys: Record<SessionStatus, MessageKey> = { idle: 'status.idle', running: 'status.running', waiting_approval: 'status.waiting_approval', interrupted: 'status.interrupted', error: 'status.error' };
 function loadConnection(): Connection | undefined {
   try {
+    if (location.hash.startsWith('#local=')) {
+      const hash = location.hash;
+      history.replaceState(null, '', location.pathname + location.search);
+      const connection = localBootstrap(hash, location.origin);
+      if (connection) { sessionStorage.setItem('turnwire.connection', JSON.stringify(connection)); return connection; }
+    }
     if (location.hash.startsWith('#pair=')) {
       const code = location.hash.slice(6); decodePairing(code);
       const connection: Connection = { kind: 'remote', code };

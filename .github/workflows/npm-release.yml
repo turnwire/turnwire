@@ -1,0 +1,95 @@
+name: Publish npm
+run-name: Publish ${{ inputs.tag }} to npm
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, e.g. v0.1.0-next.0
+        required: true
+        type: string
+      confirm:
+        description: Type publish-turnwire to authorize publication
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+jobs:
+  authorize:
+    if: github.repository == 'turnwire/turnwire' && github.ref == 'refs/heads/main' && inputs.confirm == 'publish-turnwire'
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.tag.outputs.revision }}
+      version: ${{ steps.tag.outputs.version }}
+      channel: ${{ steps.tag.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag and release channel
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Intentionally limited to stable or next prereleases. Never publish arbitrary dist-tags.
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-next\.(0|[1-9][0-9]*))?$ ]]
+          revision=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          git merge-base --is-ancestor "$revision" origin/main
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE_TAG" == *-next.* ]]; then
+            echo 'channel=next' >> "$GITHUB_OUTPUT"
+          else
+            echo 'channel=latest' >> "$GITHUB_OUTPUT"
+          fi
+  test-package:
+    needs: authorize
+    uses: ./.github/workflows/npm-package.yml
+    with:
+      revision: ${{ needs.authorize.outputs.revision }}
+  publish:
+    needs: [authorize, test-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # GitHub-hosted runner + recent npm are required by npm Trusted Publishing.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global npm@11.6.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package-ubuntu-latest
+          path: release
+      - name: Verify reviewed tarball identity
+        env:
+          EXPECTED_VERSION: ${{ needs.authorize.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(release/*.tgz)
+          test "${#packages[@]}" -eq 1
+          tar -xOf "${packages[0]}" package/package.json > manifest.json
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const p = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            if (p.name !== "turnwire" || p.version !== process.env.EXPECTED_VERSION || p.private === true) throw Error("Package identity mismatch");
+            if (p.scripts?.prepublishOnly || p.scripts?.publish || p.scripts?.postpublish) throw Error("Publication hooks are not allowed");
+          '
+          sha256sum "${packages[0]}"
+      - name: Publish via npm trusted OIDC
+        env:
+          RELEASE_CHANNEL: ${{ needs.authorize.outputs.channel }}
+          NPM_CONFIG_PROVENANCE: ${{ !github.event.repository.private }}
+        # npm provenance is unsupported for private source repos; OIDC authentication remains in use.
+        run: npm publish release/*.tgz --ignore-scripts --access public --tag "$RELEASE_CHANNEL" --registry https://registry.npmjs.org

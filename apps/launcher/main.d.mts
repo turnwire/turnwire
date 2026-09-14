@@ -1,0 +1,10 @@
+export const DSH_VERSION: string;
+export function cleanEnvironment(env?: Record<string, string | undefined>): Record<string,string>;
+export function parseLaunch(args: string[]): {yes:boolean; port:string|undefined; open:boolean|undefined};
+export function privateJson(path: string): Promise<Record<string, any>>;
+export function launchUrl(url: string, token?: string): string;
+export function findConnection(env: Record<string,string|undefined>, paths: {config:string}): Promise<string|undefined>;
+export function ensureKey(paths:{dshEnvFile:string}, env:Record<string,string|undefined>, prompt?:()=>Promise<string>):Promise<string|undefined>;
+export function doctor(options?:{env?:Record<string,string|undefined>;platform?:string;node?:string}):Promise<{platform:string;node:string;supported:boolean;foregroundOnly:boolean;dshInstalled:boolean;dshVersion:string;paths:Record<string,string>;externalDshConfigured:boolean}>;
+export function runChild(executable:string,args:string[],options?:{env?:Record<string,string|undefined>;cwd?:string;quiet?:boolean}):Promise<number>;
+export function main(args?:string[],root?:string):Promise<number>;

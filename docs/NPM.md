@@ -1,0 +1,78 @@
+English · [中文](NPM.zh.md)
+
+# npm distribution and releases
+
+The public package and executable are both **turnwire**. The initial preview version is `0.1.0-next.0`. A registry 404 does not reserve the name: npm verifies ownership/name availability at first publication. This document describes the intended release process; a local build does not mean the package has been published.
+
+## User experience
+
+After the preview is published:
+
+```sh
+npx turnwire@next
+# Or install persistently:
+npm install -g turnwire@next
+turnwire
+```
+
+Linux and macOS are the target platforms. Node.js 22.13 or newer is required by the application; use a supported recent Node release. Native Windows is not claimed. The initial preview runs in the foreground, not as a silently installed system service. Do not remove its package files or npx cache while it is running.
+
+The launcher should connect to an existing, authenticated compatible DSH instance first; otherwise it offers installation of the pinned compatible DSH version. Installation and credential setup must be explicit. Existing external DSH processes remain user-owned: stopping Turnwire must not stop them. Runtime-owned model names and capabilities are not invented by the installer. Local use does not require Relay; remote use is self-host-first, with Relay/tunnel setup optional. Never paste API keys, pairing codes or npm tokens into GitHub issues or release logs.
+
+## Build a reviewable package
+
+From a clean checkout with dependencies installed:
+
+```sh
+npm ci
+npm run check
+node scripts/package-npm.mjs
+mkdir -p artifacts/npm/tarballs
+npm pack ./artifacts/npm/turnwire --pack-destination ./artifacts/npm/tarballs
+npm pack ./artifacts/npm/turnwire --dry-run
+```
+
+`apps/launcher/main.mjs` is the launcher source. `scripts/package-npm.mjs` prepares `artifacts/npm/turnwire`. Only the resulting reviewed tarball is published, not the monorepo root. Review its file list, package identity, license notices and SHA-256. No user config, state, database, log, private key or credential belongs in it. Workspace dependencies and source-checkout paths must not be needed after installation.
+
+`.github/workflows/check.yml` remains the full type/test/build gate. `npm-package.yml` adds Linux/macOS package-install smoke checks outside the checkout: install the tarball without lifecycle scripts, then execute `--help`, `--version`, and offline `doctor --json` with isolated directories. It also starts the installed demo daemon on an ephemeral port and verifies health, authenticated `system.snapshot` RPC, matching Web contract and static assets. The matrix targets Linux x64/arm64 and macOS arm64/x64 using GitHub-hosted runner labels. These smoke checks do **not** prove live DSH installation, model execution, phone connectivity, background services or every CPU architecture. macOS validation is performed by Actions, not claimed from Linux development testing.
+
+## First publication (maintainer bootstrap)
+
+1. Confirm `npm whoami`, name availability and account 2FA. Do not store a token in this repository.
+2. Review the source commit, successful CI results, tarball file list and package version. The first package must be `turnwire@0.1.0-next.0` (or deliberately revise the preview version before tagging).
+3. Publish the **reviewed tarball** from a trusted local terminal, using interactive npm authentication:
+
+   ```sh
+   npm publish ./artifacts/npm/tarballs/turnwire-0.1.0-next.0.tgz --access public --tag next
+   ```
+
+   This is a manual authorization step, not an instruction to publish before validation. Do not run it from the workspace root without the tarball path. Do not claim local bootstrap provenance if none was generated.
+4. Verify `npm view turnwire@next name version dist.integrity` and install that registry version in a clean environment.
+5. Configure Trusted Publisher on the newly created npm package.
+
+## GitHub Trusted Publisher setup
+
+In npm's package settings, configure GitHub Actions with:
+
+- Organization/user: `turnwire`
+- Repository: `turnwire`
+- Workflow filename: **`npm-release.yml`**
+- Environment: **`npm-release`**
+
+In GitHub create the `npm-release` environment with required reviewers where available. Restrict release workflow execution to the protected `main` branch, protect main and version tags, and review changes to `.github/workflows` carefully. The environment approval is the final human publish gate; merely naming an environment does not configure protection. Use GitHub-hosted runners. The workflow uses Node 24 and npm 11.6.2 for OIDC publishing; this is separate from application Node requirements. No `NPM_TOKEN` secret is needed.
+
+The current GitHub repository is private. npm provenance is unsupported for private source repositories even for public npm packages; the workflow explicitly disables provenance for private repositories while retaining OIDC authentication, and enables it if the repository is public. It does not change repository visibility. This repository's current plan does not support required environment reviewers: do not claim an independent approval gate is active. Restrict `npm-release` to main and limit workflow dispatch/write permissions; the typed manual dispatch is the available human authorization boundary. If independent approval is required, use a plan/protection mechanism that supports it before enabling automated release.
+
+Reference: [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) and [npm provenance](https://docs.npmjs.com/generating-provenance-statements/). Check these requirements again when changing CI versions.
+
+## Subsequent release
+
+1. Update the package version source and release notes; run validation and merge to main.
+2. Create and push `v0.1.0-next.1` (example) pointing to the reviewed main commit.
+3. Run **Publish npm** manually from `main`, input the existing tag, and type `publish-turnwire`.
+4. The workflow validates the tag syntax and main ancestry, resolves an immutable commit, runs both package smoke jobs, then waits for configured environment approval.
+5. It publishes the exact Linux-tested tarball, checks name/version against the tag, and uses OIDC authentication (provenance only for a public source repository). `vX.Y.Z-next.N` publishes to `next`; `vX.Y.Z` publishes to `latest`. Other prerelease formats are rejected.
+
+PRs cannot trigger publication. No checkout of an arbitrary user-provided ref occurs before tag validation. The publish job has the only `id-token: write` permission, does not run package lifecycle scripts, and does not rebuild the artifact it publishes. A failed OIDC configuration must fail closed; do not add a broad token as an automatic fallback.
+
+npm versions are immutable. Fix a bad release with a new version, and if necessary deliberately restore a dist-tag to a known-good version after reviewing the impact. Do not force tags or silently overwrite user configuration. Stable publication must wait for actual Linux/macOS install/start and upgrade validation; successful CI smoke alone is insufficient.
