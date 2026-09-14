@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contextUsage } from '../apps/remote-web/src/contextUsage.js';
+import { contextUsage } from '../apps/remote-web/src/formatContextUsage.js';
 
 describe('context occupancy presentation', () => {
   it('does not represent missing or invalid values as zero', () => {

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionContext } from '@turnwire/protocol';
 import { t, useLocale } from './i18n';
-import { contextUsage } from './contextUsage';
+import { contextUsage } from './formatContextUsage';
 import './context-usage.css';
 
 export function ContextUsage({ context }: { context?: SessionContext }) {
