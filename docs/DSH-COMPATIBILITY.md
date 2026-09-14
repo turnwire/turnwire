@@ -1,3 +1,5 @@
+English · [中文](DSH-COMPATIBILITY.zh.md)
+
 # DSH compatibility / DSH 兼容性
 
 ## What is tested
