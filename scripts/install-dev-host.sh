@@ -26,11 +26,14 @@ done
 [ -n "$state" ] && [ -n "$dsh_home" ] || { echo "both --state and --dsh-home are required" >&2; exit 1; }
 git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || { echo "refusing: $root is not a git working tree" >&2; exit 1; }
 [ -x config/dsh-runtime/node_modules/.bin/dsh ] || { echo "run first: npm ci --prefix config/dsh-runtime" >&2; exit 1; }
-[ -f config/dsh.env.json ] || { echo "create config/dsh.env.json with the DSH environment first (mode 0600)" >&2; exit 1; }
+source "$root/scripts/host-paths.sh"
+export TURNWIRE_STATE_HOME=$state TURNWIRE_DSH_HOME=$dsh_home
+turnwire_resolve_paths
+[ -f "$TURNWIRE_DSH_ENV_FILE" ] || { echo "create $TURNWIRE_DSH_ENV_FILE with the DSH environment first (mode 0600)" >&2; exit 1; }
 [ -f apps/daemon/dist/host-service.mjs ] || { echo "run first: npm run build" >&2; exit 1; }
 
 node=$(command -v node)
-units="$HOME/.config/systemd/user"; mkdir -p "$units"
+units="$TURNWIRE_UNITS_DIR"; mkdir -p "$units"
 mkdir -p "$state" "$dsh_home"; chmod 700 "$state" "$dsh_home"
 
 cat > "$units/turnwire-dev.service" <<UNIT
@@ -45,11 +48,14 @@ StartLimitBurst=5
 Type=simple
 WorkingDirectory=$root
 Environment=TURNWIRE_INSTALL_DIR=$root
-Environment=TURNWIRE_HOME=$state
+Environment=TURNWIRE_STATE_HOME=$state
+Environment=TURNWIRE_CONFIG_HOME=$TURNWIRE_CONFIG_HOME
+Environment=TURNWIRE_DATA_HOME=$TURNWIRE_DATA_HOME
+Environment=TURNWIRE_CACHE_HOME=$TURNWIRE_CACHE_HOME
 Environment=TURNWIRE_DSH_HOME=$dsh_home
 Environment=TURNWIRE_DSH_ENTRY=$root/config/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js
 Environment=TURNWIRE_DAEMON_ENTRY=$root/apps/daemon/dist/main.js
-Environment=TURNWIRE_DSH_ENV_FILE=$root/config/dsh.env.json
+Environment=TURNWIRE_DSH_ENV_FILE=$TURNWIRE_DSH_ENV_FILE
 Environment=PATH=$(dirname "$node"):/usr/local/bin:/usr/bin:/bin
 ExecStart=$node $root/apps/daemon/dist/host-service.mjs
 Restart=on-failure
@@ -80,7 +86,10 @@ cat > "$units/turnwire-dev-reload.service" <<UNIT
 Description=Publish changed frontend assets (backend updates require operator)
 [Service]
 Type=oneshot
-Environment=TURNWIRE_HOME=$state
+Environment=TURNWIRE_STATE_HOME=$state
+Environment=TURNWIRE_CONFIG_HOME=$TURNWIRE_CONFIG_HOME
+Environment=TURNWIRE_DATA_HOME=$TURNWIRE_DATA_HOME
+Environment=TURNWIRE_CACHE_HOME=$TURNWIRE_CACHE_HOME
 ExecStart=$root/scripts/host-reload.sh
 UNIT
 chmod 600 "$units/turnwire-dev-reload.service"

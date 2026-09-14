@@ -8,7 +8,7 @@ const fixture = { calls: [] as any[], fail: false, version: 1, empty: false, del
 Object.assign(window, { fixture });
 const child = { id: 'child', parentId: 'root', depth: 1, label: 'Fixture child', mode: 'continuable' as const, activity: 'running' as const, todos: [{ content: 'Secondary plan', status: 'pending' as const }] };
 const client = {
-  async request(method: string, args: any) {
+  async call(method: string, args: any) {
     fixture.calls.push({ method, ...args });
     await new Promise(resolve => setTimeout(resolve, fixture.delay));
     if (fixture.fail) throw new Error('Fixture history failure');
@@ -24,6 +24,6 @@ const client = {
 };
 function Fixture() {
   const [running, setRunning] = useState(true); const [connected, setConnected] = useState(true);
-  return <main style={{ width: '100%', maxWidth: 390, padding: 12 }}><div className="main-reference" hidden><MessageBody message={{ id: 'reference', role: 'assistant', text: markdown, time: '2026-01-01', complete: true }} /></div><button onClick={() => setRunning(false)}>Settle child</button><button onClick={() => setRunning(true)}>Run child</button><button onClick={() => setConnected(value => !value)}>Toggle connection</button><AgentStrip sessionId="root" client={client as any} connected={connected} agents={[{ ...child, activity: running ? 'running' : 'inactive' }]} /></main>;
+  return <main style={{ width: '100%', maxWidth: 390, padding: 12 }}><div className="main-reference" hidden><MessageBody message={{ id: 'reference', role: 'assistant', text: markdown, time: '2026-01-01T00:00:00Z', complete: true }} /></div><button onClick={() => setRunning(false)}>Settle child</button><button onClick={() => setRunning(true)}>Run child</button><button onClick={() => setConnected(value => !value)}>Toggle connection</button><AgentStrip sessionId="root" client={client as any} connected={connected} agents={[{ ...child, activity: running ? 'running' : 'inactive' }]} /></main>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

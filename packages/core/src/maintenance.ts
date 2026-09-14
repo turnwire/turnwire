@@ -35,6 +35,8 @@ export class MaintenanceGate {
     } else if (input.action === 'compact') {
       const revision = this.revision;
       if (!this.token || input.token !== this.token) throw new TurnwireError('MAINTENANCE_LEASE', 'Maintenance token does not match the active lease');
+      // Worker cancellation can yield; validate the lease again after all asynchronous preparation.
+      await this.store.cancelHistoryExports();
       const status = await this.status();
       if (status.state !== 'ready' || revision !== this.revision || this.active || input.token !== this.token) throw new TurnwireError('MAINTENANCE_BUSY', 'Compaction requires a stable drained maintenance lease');
       // No await between the final lease check and SQLite maintenance.

@@ -59,17 +59,17 @@ try {
   console.log('DSH answered with a launch URL (token not printed)');
 
   console.log(`Starting the Turnwire daemon on 127.0.0.1:${daemonPort}`);
-  const daemon = spawn(process.execPath, ['--import', 'tsx', 'apps/daemon/src/main.ts'], { cwd: root, env: { ...process.env, TURNWIRE_HOME: state, TURNWIRE_RUNTIME: 'dsh', TURNWIRE_DSH_URL: dshUrl, TURNWIRE_PORT: String(daemonPort) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const daemon = spawn(process.execPath, ['--import', 'tsx', 'apps/daemon/src/main.ts'], { cwd: root, env: { ...process.env, TURNWIRE_STATE_HOME: join(state, 'state'), TURNWIRE_CONFIG_HOME: state, TURNWIRE_DATA_HOME: join(state, 'data'), TURNWIRE_CACHE_HOME: join(state, 'cache'), TURNWIRE_RUNTIME: 'dsh', TURNWIRE_DSH_URL: dshUrl, TURNWIRE_PORT: String(daemonPort) }, stdio: ['ignore', 'pipe', 'pipe'] });
   children.push(daemon);
   let logs = ''; daemon.stdout.on('data', chunk => { logs += String(chunk); }); daemon.stderr.on('data', chunk => { logs += String(chunk); });
   const config = await until(async () => JSON.parse(await readFile(join(state, 'client.json'), 'utf8')), `the daemon to publish client.json (${logs.slice(-400)})`);
   client = new LocalClient(config.url, config.token);
 
-  const snapshot = await client.request('system.snapshot');
+  const snapshot = await client.call('system.snapshot');
   if (!snapshot.runtimes.some(runtime => runtime.id === 'dsh' && runtime.online)) throw new Error(`DSH runtime is not online: ${JSON.stringify(snapshot.runtimes)}`);
   console.log('Daemon reached the Host and reports the dsh runtime online');
 
-  session = await client.request('session.create', { cwd: scratch, title: 'DSH live check', runtimeId: 'dsh' });
+  session = await client.call('session.create', { cwd: scratch, title: 'DSH live check', runtimeId: 'dsh' });
   const text = await turn('Reply with exactly this word and nothing else: READY', 120_000);
   if (!/READY/.test(text)) throw new Error(`The turn did not answer as asked: ${JSON.stringify(text.slice(0, 200))}`);
   console.log('A real turn streamed an assistant message back');
@@ -79,38 +79,38 @@ try {
   // also makes the second prompt deterministic: it is queued while the turn waits for the decision.
   outside = join(homedir(), `turnwire-dsh-live-${process.pid}.txt`);
   const before = await answers();
-  await client.request('session.message', { sessionId: session.id, text: `Use the bash tool to write the text turnwire-live-check into ${outside}, then tell me whether it worked.` });
-  const approval = await until(async () => (await client.request('system.snapshot')).approvals.find(entry => entry.sessionId === session.id), 'an approval request').catch(async error => {
+  await client.call('session.message', { sessionId: session.id, text: `Use the bash tool to write the text turnwire-live-check into ${outside}, then tell me whether it worked.` });
+  const approval = await until(async () => (await client.call('system.snapshot')).approvals.find(entry => entry.sessionId === session.id), 'an approval request').catch(async error => {
     // A turn that never asks for approval is a contract difference worth seeing, so the events that did
     // arrive are printed instead of only the timeout.
-    const page = await client.request('events.list', { sessionId: session.id, after: 0, limit: 200 });
+    const page = await client.call('events.list', { sessionId: session.id, after: 0, limit: 200 });
     console.error('Events so far:', page.events.map(event => event.data.type === 'tool.started' ? `tool.started:${event.data.tool}` : event.data.type).join(', '));
     throw error;
   });
   console.log(`The Host asked for approval: ${approval.tool}`);
 
-  const queued = await client.request('session.message', { sessionId: session.id, text: 'While that waits: reply with the word SECOND.' });
+  const queued = await client.call('session.message', { sessionId: session.id, text: 'While that waits: reply with the word SECOND.' });
   if (queued.queued !== true) throw new Error('The second prompt was not reported as queued while the turn waited for approval');
-  const waiting = await until(async () => { const items = (await client.request('session.queue', { sessionId: session.id })).items; return items.length ? items : undefined; }, 'the runtime queue to list the queued prompt');
+  const waiting = await until(async () => { const items = (await client.call('session.queue', { sessionId: session.id })).items; return items.length ? items : undefined; }, 'the runtime queue to list the queued prompt');
   if (waiting[0]?.messageId !== queued.messageId) throw new Error(`The queue listed ${waiting[0]?.messageId}, expected ${queued.messageId}`);
   console.log('The runtime queue projection listed the waiting prompt');
 
-  await client.request('approval.decide', { approvalId: approval.id, decision: 'approved' });
+  await client.call('approval.decide', { approvalId: approval.id, decision: 'approved' });
   await until(async () => (await answers()).length > before.length ? true : undefined, 'the approved turn to answer', 120_000);
   console.log('The approved turn finished and answered');
 
   const dispatched = await until(async () => {
-    const page = await client.request('events.list', { sessionId: session.id, after: 0, limit: 1000 });
+    const page = await client.call('events.list', { sessionId: session.id, after: 0, limit: 1000 });
     return page.events.some(event => event.data.type === 'message.updated' && event.data.messageId === queued.messageId && event.data.queued === false) ? true : undefined;
   }, 'the host to record when the queued prompt started', 180_000);
   if (!dispatched) throw new Error('The queued prompt never started');
   console.log('The host recorded the moment the queued prompt started');
   // The runtime keeps its inbox entry after it has handed the prompt over, which is exactly why a
   // late cancel used to look like it worked: the removal was accepted and the answer came anyway.
-  const listed = await client.request('session.queue', { sessionId: session.id });
+  const listed = await client.call('session.queue', { sessionId: session.id });
   if (listed.items.some(item => item.messageId === queued.messageId)) throw new Error('The queue still lists a prompt that has started');
   let refused = '';
-  await client.request('session.queueAction', { sessionId: session.id, messageId: queued.messageId, action: { kind: 'remove' } }).catch(error => { refused = error.code; });
+  await client.call('session.queueAction', { sessionId: session.id, messageId: queued.messageId, action: { kind: 'remove' } }).catch(error => { refused = error.code; });
   if (refused !== 'QUEUE_ITEM_STARTED') throw new Error(`Taking back a started prompt answered ${JSON.stringify(refused)}`);
   console.log('A started prompt has left the queue and cannot be taken back');
 
@@ -126,15 +126,15 @@ try {
 
 /** The session's completed assistant messages, in journal order. */
 async function answers() {
-  const page = await client.request('history.page', { sessionId: session.id, limit: 100 });
+  const page = await client.call('history.page', { sessionId: session.id, limit: 100 });
   return page.events.filter(event => event.data.type === 'message.completed' && event.data.text?.trim()).map(event => event.data.text);
 }
 
 /** Waits for the session's newest assistant message, so a turn is only read once it is complete. */
 async function turn(prompt, timeoutMs) {
-  await client.request('session.message', { sessionId: session.id, text: prompt });
+  await client.call('session.message', { sessionId: session.id, text: prompt });
   return until(async () => {
-    const page = await client.request('history.page', { sessionId: session.id, limit: 100 });
+    const page = await client.call('history.page', { sessionId: session.id, limit: 100 });
     const answers = page.events.filter(event => event.data.type === 'message.completed' && event.data.text?.trim());
     return answers.length ? answers.at(-1).data.text ?? '' : undefined;
   }, 'the turn to answer', timeoutMs);

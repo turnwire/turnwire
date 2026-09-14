@@ -39,7 +39,7 @@ function integer(name: string, fallback: number, min: number, max: number) {
 
 export async function runManagedHost() {
   const root = resolve(process.env.TURNWIRE_INSTALL_DIR ?? fileURLToPath(new URL('../../../', import.meta.url)));
-  const paths = resolveManagedHostPaths(root);
+  const paths = resolveManagedHostPaths();
   await mkdir(paths.state, { recursive: true, mode: 0o700 });
   await mkdir(paths.dshHome, { recursive: true, mode: 0o700 });
   // Custom provider credential names are supported only through this private DSH environment
@@ -57,7 +57,7 @@ export async function runManagedHost() {
   const key = process.env.TURNWIRE_HARNESS_DEEPSEEK_API_KEY || forwarded.TURNWIRE_HARNESS_DEEPSEEK_API_KEY;
   if (!key) throw new Error('Configure TURNWIRE_HARNESS_DEEPSEEK_API_KEY in the DSH environment file');
   const system = pick(SYSTEM_ENV);
-  const base = { ...system, ...pick(DAEMON_ENV), TURNWIRE_HOME: paths.state, TURNWIRE_CONFIG_HOME: paths.config, TURNWIRE_DATA_HOME: paths.data, TURNWIRE_CACHE_HOME: paths.cache };
+  const base = { ...system, ...pick(DAEMON_ENV), TURNWIRE_STATE_HOME: paths.state, TURNWIRE_CONFIG_HOME: paths.config, TURNWIRE_DATA_HOME: paths.data, TURNWIRE_CACHE_HOME: paths.cache };
   const secrets = [...new Set([key, ...Object.values(forwarded), ...TURNWIRE_SECRETS.map(name => process.env[name])])].filter((secret): secret is string => typeof secret === 'string' && secret.length > 0);
   const clean = (text: string) => secrets.reduce((redacted, secret) => redacted.replaceAll(secret, '[redacted]'), text).replace(/([?&]token=)[^\s)&]+/gi, '$1[redacted]');
   const daemonEntry = resolve(process.env.TURNWIRE_DAEMON_ENTRY ?? join(root, 'apps/daemon/dist/main.js'));

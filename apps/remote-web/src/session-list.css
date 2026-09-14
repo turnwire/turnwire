@@ -1,0 +1,21 @@
+/* Inline expansion stays inside the scrolling list, including its last row on a phone. */
+.session-list-item { display:grid; grid-template-columns:minmax(0,1fr) 40px; align-items:center; min-width:0; border-radius:8px; }
+.session-list-item.selected { background:#e0e7f3; }
+.session-list-item .session-row { min-width:0; width:100%; margin:0; padding-right:5px; }
+.session-list-item .session-row > span:first-of-type { min-width:0; }
+.session-list-item .session-more { width:36px; height:40px; padding:4px; }
+.session-row-menu { grid-column:1 / -1; min-width:0; margin:2px 4px 8px; padding:8px; border:1px solid var(--line); border-radius:8px; background:#fff; display:grid; gap:6px; }
+.session-row-menu > button { justify-content:flex-start; }
+.session-management-error { display:grid; gap:6px; min-width:0; padding:8px; margin:4px; border:1px solid #d89494; border-radius:6px; background:#fff1f1; color:#842424; font-size:12px; overflow-wrap:anywhere; }
+.session-management-error button { justify-self:start; }
+.session-row-menu .session-management-error { margin:0; }
+.session-row-menu form { display:grid; gap:8px; min-width:0; }
+.session-row-menu label { min-width:0; font-size:12px; }
+.session-row-menu input { width:100%; padding:8px; }
+.session-rename-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+@media(max-width:700px) {
+  .session-list-item { grid-template-columns:minmax(0,1fr) 44px; }
+  .session-list-item .session-more { width:44px; height:44px; }
+  .session-row-menu button { min-height:44px; }
+  .session-row-menu input { font-size:16px; }
+}

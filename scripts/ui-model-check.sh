@@ -58,7 +58,7 @@ done
 if [ -z "$url" ]; then echo "DSH did not print a launch URL:" >&2; tail -20 "$logs/dsh.log" >&2; exit 1; fi
 
 echo "Starting the Turnwire daemon on 127.0.0.1:$daemon_port"
-TURNWIRE_HOME="$home" TURNWIRE_RUNTIME=dsh TURNWIRE_DSH_URL="$url" TURNWIRE_PORT="$daemon_port" \
+TURNWIRE_STATE_HOME="$home/state" TURNWIRE_CONFIG_HOME="$home" TURNWIRE_DATA_HOME="$home/data" TURNWIRE_CACHE_HOME="$home/cache" TURNWIRE_RUNTIME=dsh TURNWIRE_DSH_URL="$url" TURNWIRE_PORT="$daemon_port" \
   ./node_modules/.bin/tsx apps/daemon/src/main.ts > "$logs/daemon.log" 2>&1 &
 pids+=($!)
 
@@ -70,4 +70,4 @@ done
 if [ ! -f "$home/client.json" ]; then echo "The daemon did not publish client.json:" >&2; tail -20 "$logs/daemon.log" >&2; exit 1; fi
 
 echo "Running the browser check (browser: ${found:-forced})"
-TURNWIRE_HOME="$home" node scripts/ui-model-check.mjs
+TURNWIRE_CONFIG_HOME="$home" node scripts/ui-model-check.mjs

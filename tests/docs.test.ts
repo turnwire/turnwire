@@ -114,3 +114,36 @@ it('links to headings that exist', () => {
   }
   expect([...broken]).toEqual([]);
 });
+
+it('does not advertise removed configuration, pairing commands or SDK paths', () => {
+  const obsolete = [
+    /\bTURNWIRE_HOME\s*=|`TURNWIRE_HOME\//,
+    /\b(?:turnwire\s+)?devices\s+upgrade\b/,
+    /packages\/sdk\/src\/(?:crypto|session-crypto|session)\.ts/,
+    /\bcallTyped\s*(?:<[^>]*>)?\s*\(/,
+    /\b(?:client|sdk|local|remote)\.rpc\s*(?:<[^>]*>)?\s*\(/,
+  ];
+  for (const document of [...documents, '.env.example']) {
+    for (const pattern of obsolete) expect(read(document), document).not.toMatch(pattern);
+  }
+});
+
+it('documents independent directory overrides in both languages and the environment example', () => {
+  for (const document of ['docs/XDG.md', 'docs/XDG.zh.md', '.env.example']) {
+    for (const kind of ['CONFIG', 'STATE', 'DATA', 'CACHE']) {
+      expect(read(document), document).toContain(`TURNWIRE_${kind}_HOME`);
+    }
+  }
+});
+
+it('keeps final maintenance guidance bilingual and linked from directory rules', () => {
+  for (const suffix of ['', '.zh']) {
+    const document = `docs/FIRST-UPGRADE${suffix}.md`;
+    const text = read(document);
+    expect(read(`docs/XDG${suffix}.md`)).toContain(`(FIRST-UPGRADE${suffix}.md)`);
+    for (const boundary of ['Store', 'schema', 'v2', 'OUTCOME_UNKNOWN', 'TURNWIRE_STATE_HOME', 'packages/wire']) {
+      expect(text, document).toContain(boundary);
+    }
+    expect(text, document).not.toMatch(/117a4ef|b44bd28|753707|22881ff2-d3a0-4f67-a843-9abb051bc8ec/);
+  }
+});

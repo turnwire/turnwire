@@ -23,9 +23,11 @@ systemctl --user cat "$dev_unit" >/dev/null 2>&1 || { echo "run first: scripts/i
 systemctl --user cat "$release_unit" >/dev/null 2>&1 || { echo "refusing: $release_unit is not installed" >&2; exit 1; }
 [ -f apps/daemon/dist/host-service.mjs ] || { echo "run first: npm run build" >&2; exit 1; }
 
-# The development unit's own TURNWIRE_HOME is what keeps the pairings and Relay token.
-state=$(systemctl --user show "$dev_unit" -p Environment --value | tr ' ' '\n' | sed -n 's/^TURNWIRE_HOME=//p' | head -1)
-[ -n "$state" ] || { echo "refusing: cannot read TURNWIRE_HOME from $dev_unit" >&2; exit 1; }
+# The development unit's own TURNWIRE_STATE_HOME is what keeps the pairings and Relay token.
+state=$(systemctl --user show "$dev_unit" -p Environment --value | tr ' ' '\n' | sed -n 's/^TURNWIRE_STATE_HOME=//p' | head -1)
+[ -n "$state" ] || { echo "refusing: cannot read TURNWIRE_STATE_HOME from $dev_unit" >&2; exit 1; }
+config=$(systemctl --user show "$dev_unit" -p Environment --value | tr ' ' '\n' | sed -n 's/^TURNWIRE_CONFIG_HOME=//p' | head -1)
+[ -n "$config" ] || { echo "refusing: cannot read TURNWIRE_CONFIG_HOME from $dev_unit" >&2; exit 1; }
 
 guard_dir="${XDG_RUNTIME_DIR:-/tmp}/turnwire-switch"
 mkdir -p "$guard_dir" && chmod 700 "$guard_dir"
@@ -52,7 +54,7 @@ systemctl --user start "$dev_unit"
 # development host started and authenticated with the stored Relay token.
 deadline=$(( $(date +%s) + window ))
 for _ in $(seq 1 "$window"); do
-  if TURNWIRE_HOME="$state" npm run --silent turnwire -- remote status --json 2>/dev/null | grep -q '"state":"online"'; then
+  if TURNWIRE_STATE_HOME="$state" TURNWIRE_CONFIG_HOME="$config" npm run --silent turnwire -- remote status --json 2>/dev/null | grep -q '"state":"online"'; then
     touch "$confirm"
     echo "rollback guard released: the development host is online on the Relay"
     echo "now reload the phone; if it reports an authentication failure, redeploy the Relay (turnwire deploy) so the phone runs the new bundle."

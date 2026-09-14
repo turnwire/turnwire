@@ -25,7 +25,7 @@ npm run turnwire -- new 'Check approval sync on this session' --runtime demo --t
 npm run turnwire -- ls
 ```
 
-`npm run dev` runs the daemon, and `npm run dev:web` runs the Vite dev server separately. The production-built PWA is served same-origin by the daemon. The default state directory is `~/.turnwire`; use `TURNWIRE_HOME` to specify a separate directory. **Do not operate the same state directory with multiple daemons at once.**
+`npm run dev` runs the daemon, and `npm run dev:web` runs the Vite dev server separately. The production-built PWA is served same-origin by the daemon. Paths are independent: `TURNWIRE_STATE_HOME`, `TURNWIRE_CONFIG_HOME`, `TURNWIRE_DATA_HOME` and `TURNWIRE_CACHE_HOME` override state, config, runtime data and cache respectively. Otherwise each uses its absolute `XDG_*_HOME` base plus `/turnwire`, defaulting to `~/.local/state/turnwire`, `~/.config/turnwire`, `~/.local/share/turnwire` and `~/.cache/turnwire`. `TURNWIRE_HOME` is removed and rejected; no old layout or checkout-local DSH environment file is auto-detected. See [XDG directories](XDG.md). **Do not operate the same state directory with multiple daemons at once. Isolate config as well as state for previews, so the daemon cannot overwrite the active `client.json`.** Store only accepts the current database format and rejects old databases without migration; use separate empty state. See the [maintenance guide](FIRST-UPGRADE.md).
 
 ## Connecting a real DSH
 
@@ -72,8 +72,8 @@ node --import tsx scripts/remote-resilience-check.mjs
 node --import tsx scripts/question-ui-check.mjs
 
 # A full UI pass needs an isolated Demo to talk to:
-TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev   # another terminal
-TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs
+TURNWIRE_STATE_HOME=/tmp/turnwire-preview-state TURNWIRE_CONFIG_HOME=/tmp/turnwire-preview-config TURNWIRE_RUNTIME=demo npm run dev   # another terminal
+TURNWIRE_STATE_HOME=/tmp/turnwire-preview-state TURNWIRE_CONFIG_HOME=/tmp/turnwire-preview-config node scripts/ui-check.mjs
 ```
 
 Test coverage includes request deduplication, approval races, database recovery, event replay, local authentication, DNS rebinding protection, Relay revocation, ciphertext integrity, cross-device isolation, replay rejection, model catalog and selection validation (unregistered models are rejected), the DSH contract and the main UI flows. The script names, repository paths, CLI commands, DSH version and credential variable names in the docs are checked mechanically by `tests/docs.test.ts`, so stale statements fail CI directly.
@@ -92,7 +92,10 @@ packages/protocol    versioned messages, types and runtime validation
 packages/runtime     AgentRuntime interface and a clearly labelled Demo
 packages/runtime-dsh official DSH HTTP / WebSocket adapter
 packages/core        sessions, permissions, SQLite, events and request deduplication
-packages/sdk         local / Remote clients, encryption, conversation model
+packages/sdk         local / Remote clients, typed call API, conversation model
+packages/wire        shared crypto and encrypted-session transport
 ```
+
+SDK requests use only the typed `call` API; crypto and encrypted-session primitives belong to `packages/wire`, not SDK compatibility exports. Remote pairing and transport are v2-only, with no old-host/device compatibility or device-upgrade/PUT replacement path.
 
 Code ownership, how each capability is covered across clients, and "which layer a new behaviour belongs in" are covered by [Capability parity and code ownership](CLIENTS.md) and [Turnwire RPC v1 and remote transport v2](PROTOCOL.md).

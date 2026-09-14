@@ -4,7 +4,8 @@ English · [中文](SELF-HOSTING.zh.md)
 
 The host can run this checkout instead of an installed release, so the agent that edits Turnwire
 is the agent Turnwire is running. This document covers the loop, the guards that keep it
-developer-only, and the rollback that keeps a remote operator connected.
+developer-only, and recovery procedures. Switching or reloading can interrupt remote connections;
+rollback does not guarantee recovery of incompatible state.
 
 ## Why this is not a product feature
 
@@ -27,14 +28,19 @@ even if someone finds and runs the script. It also refuses any unit other than
 
 ```bash
 npm ci --prefix config/dsh-runtime          # the DSH the host will run
-cp <release>/config/dsh.env.json config/dsh.env.json   # 0600, gitignored
+export TURNWIRE_DSH_ENV_FILE=/absolute/private/dsh.env.json # existing file, mode 0600
 npm run build
 scripts/install-dev-host.sh --state <state> --dsh-home <dsh-state>
 ```
 
-`--state` and `--dsh-home` must be the directories the current host already uses, or the host
-comes up with no paired devices, no Relay token and no session log. Nothing is started: the unit
-exists but stays inactive until you switch to it.
+Choose `--state` and `--dsh-home` explicitly. Reuse state only after verifying that it uses the
+current final storage schema and v2 pairings, and that the DSH home is compatible. Store rejects
+older databases without migration; for an incompatible installation use separate empty state,
+configure the host and create new pairings. Do not point the new host at old state as an upgrade
+strategy. See [First upgrade](FIRST-UPGRADE.md). Config/data/cache use separate XDG paths or
+explicit `TURNWIRE_CONFIG_HOME`, `TURNWIRE_DATA_HOME` and `TURNWIRE_CACHE_HOME` overrides;
+`--state` sets `TURNWIRE_STATE_HOME`, not those paths. No legacy layout is detected.
+Nothing is started: the unit exists but stays inactive until you switch to it.
 
 Add `--enable-watch` to enable both `turnwire-dev-reload.path` and
 `turnwire-dev-reload.timer` (nested edits are caught by the timer). These only publish frontend
@@ -44,8 +50,9 @@ The host is never started by this installer; enabling watch does start the reloa
 
 ## The DSH environment file
 
-`config/dsh.env.json` (0600, gitignored) is the environment DSH is started with, not a slot for a
-single key: every string it holds is forwarded to the DSH process, and Turnwire's own secrets
+The private `TURNWIRE_DSH_ENV_FILE` (mode 0600; default `~/.config/turnwire/dsh.env.json`,
+resolved through `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME`) is the environment DSH is
+started with, not a slot for a single key: every string it holds is forwarded to the DSH process, and Turnwire's own secrets
 (relay token, DSH launch token and URL) are stripped even if the file names them. Nothing in it
 reaches the daemon or any client — model credentials stay inside DSH.
 
@@ -72,7 +79,7 @@ one entry plus its credential:
             name: Some model
 ```
 ```json
-// config/dsh.env.json
+// TURNWIRE_DSH_ENV_FILE
 { "TURNWIRE_HARNESS_DEEPSEEK_API_KEY": "…", "TURNWIRE_HARNESS_GATEWAY_KEY": "…" }
 ```
 
@@ -106,8 +113,8 @@ scripts/host-reload.sh --daemon    # explicit controlled daemon-only deployment,
   new assets land before the index is atomically replaced, and changed non-hashed asset collisions
   fail closed for manual handling. Failed builds leave the existing index intact. Use the same
   lock for other manual asset builds; unrelated `npm run build` commands do not honor this lock.
-- **Health and stamps.** Local `/health` must return HTTP success and `{status:"ok",protocol:1}`
-  before building, before publication and after publication. Unknown/unreachable health blocks;
+- **Health and stamps.** Local `/health` must return HTTP success, `status:"ok"`, `protocol:1` and an immutable built `identity` containing `buildId` and `contractDigest`. The daemon build identity covers the actual bundle dependency graph and captured source inputs, build configuration and declared dependency lock; it is not a hand-maintained list of source directories. Installed external dependency bytes are outside this source/build identity and must remain consistent with the lockfile.
+  Publication checks this before building, before publication and after publication. The staged frontend's `turnwire-build.json` must require that contract, including for explicit `--frontend`. Source-mode or identity-free backends are not publishable. Unknown/unreachable health blocks;
   failure after publication restores the old index. Only verified frontend publication writes
   `.turnwire/reload.frontend.json`. The separate observation file is not a running-version stamp.
   Set `TURNWIRE_RELOAD_HEALTH_URL` for a nondefault local daemon endpoint. This is frontend HTTP
@@ -144,6 +151,10 @@ identity, fresh authenticated runtime readiness, daemon HTTP health and the stil
 before explicitly releasing admission. A source change during staging/drain aborts publication.
 `--frontend` still never enters maintenance or restarts backend processes. Both paths share the lock.
 
+Before acquiring maintenance and again after draining but before installation, the staged daemon
+runs `--check-storage`. A failed compatibility check prevents installation and signaling; it does
+not migrate the database. Daemon-only publication also checks the currently served frontend contract against the staged daemon, then verifies the exact running replacement build ID. Cross-contract changes require a coordinated offline full release, not a one-sided publication. `--dry-run` only builds and does not read the active database.
+
 The durable `.turnwire/reload.daemon.pending.json` journal (0600) retains the opaque lease and the
 staged rollback artifact. Never print it or copy it into public diagnostics. An existing journal
 blocks another deploy. Failure before release restores installed bytes where possible and requests
@@ -171,9 +182,10 @@ scripts/host-switch.sh
 It stops the release unit and starts the development one, then a transient systemd unit — outside
 the host unit's cgroup, so the restart cannot kill it — restores the release host unless the
 development host reaches the Relay within `TURNWIRE_SWITCH_WINDOW` (default 600s). The Relay link
-is the right check because it proves the host started and authenticated with its stored token,
-without depending on the phone being awake. If the switch goes wrong while you are away from the
-machine, the machine comes back on its own.
+checks only host startup and authentication with its stored token, without depending on the
+phone being awake. It does not prove device enrollment, E2EE connectivity or data compatibility.
+The watchdog attempts service recovery; it cannot guarantee that an older release can read the
+selected state or that a remote operator regains access. Arrange local recovery before switching.
 
 `--no-watchdog` skips the guard.
 
@@ -188,10 +200,11 @@ Relay so the phone picks up the new bundle:
 npm run turnwire -- deploy --config <private config>
 ```
 
-Existing pairings survive this: a pairing credential is a token and a key, with no protocol
-constant in it, so both ends agreeing on the same source is enough. The Relay keeps serving the
-page over plain HTTPS even while the encrypted channel is failing, so a reload is always possible
-from the phone.
+Pairings carry a protocol version. Only compatible v2 pairings can be reused; matching source
+builds do not convert v1 credentials or old state. V1 pairing is rejected with no upgrade path:
+configure a fresh installation and create a new v2 invitation from the local host. A reachable
+Relay may still serve the PWA over HTTPS while E2EE fails, but reloading the page neither repairs
+incompatible credentials nor guarantees remote access. See [First upgrade](FIRST-UPGRADE.md).
 
 ## Rolling back by hand
 
@@ -200,4 +213,7 @@ systemctl --user stop turnwire-dev.service
 systemctl --user start turnwire-host.service
 ```
 
-The release tree is never modified by any of this, so the release host is always one command away.
+These development scripts leave the release tree unchanged, but restarting that release is safe
+only with compatible configuration, runtime and state. File rollback is not database migration or
+credential recovery, and does not promise uninterrupted sessions. Preserve a separately usable
+release environment and arrange a maintenance window and local access before switching.

@@ -14,13 +14,13 @@ bash scripts/start-host.sh
 
 If Node/npm is already installed, `npm start` runs the same entry point. The Bash entry can prepare the pinned Node runtime itself. Download/build time depends on the network and CPU; this is one startup command, not a promise of instant installation or no prerequisites.
 
-The script checks the environment, prepares Node and dependencies, builds the PWA/host, asks for the model credential without echoing it, and delegates persistent service installation to the existing Linux installer. The default managed host needs `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`; this does not invent or register any models. Fresh installs store private configuration under the XDG config directory, state under the XDG state directory, runtimes under the XDG data directory and downloads under the XDG cache directory. Existing checkout-local `config/dsh.env.json` and established layouts are preserved; no migration occurs. See [XDG directory rules](XDG.md). Do not put keys in command-line arguments, public deployment files or screenshots.
+The script checks the environment, prepares Node and dependencies, builds the PWA/host, asks for the model credential without echoing it, and delegates persistent service installation to the existing Linux installer. The default managed host needs `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`; this does not invent or register any models. Private configuration, state, runtimes and downloads use independent `TURNWIRE_CONFIG_HOME`, `TURNWIRE_STATE_HOME`, `TURNWIRE_DATA_HOME` and `TURNWIRE_CACHE_HOME` overrides. Without overrides, the corresponding absolute XDG base plus `/turnwire` is used; defaults are `~/.config/turnwire`, `~/.local/state/turnwire`, `~/.local/share/turnwire` and `~/.cache/turnwire`. `TURNWIRE_HOME` is removed and rejected. Old layouts are not auto-detected; the DSH environment file defaults only to `dsh.env.json` in the resolved config directory, unless explicitly set with `TURNWIRE_DSH_ENV_FILE`. Store rejects old databases with `UNSUPPORTED_STORAGE` and provides no migration; use separate empty state for the current format. See [XDG directory rules](XDG.md). Do not put keys in command-line arguments, public deployment files or screenshots.
 
 Required system tools include Bash, a systemd user manager and the tools needed to download/extract the Node release. Root is not the intended execution account. Use a simple checkout path without spaces, matching the service installer's path requirements. macOS is not supported by this Linux bootstrap; use the native/source setup instructions instead.
 
 ## Subsequent runs
 
-Run only one bootstrap invocation at a time; concurrent first-time builds are not serialized. Run the same command again after it finishes. A matching running service is left running; a matching stopped installation is started without rebuilding. The entry refuses a conflicting service belonging to another installation rather than overwriting or restarting it. This is not an upgrade command. Finish active tasks and follow controlled update instructions to replace an installation.
+Run only one bootstrap invocation at a time; concurrent first-time builds are not serialized. Run the same command again after it finishes. A matching running service is left running; a matching stopped installation is started without rebuilding. The entry refuses a conflicting service belonging to another installation rather than overwriting or restarting it. This is not an upgrade command. Finish active tasks and follow the [maintenance guide](FIRST-UPGRADE.md) to replace an installation.
 
 ```bash
 bash scripts/start-host.sh --check
@@ -41,7 +41,7 @@ bin/turnwire devices pair --name phone --qr
 
 Use the remote form to connect an existing fixed Relay or choose a temporary access provider. A permanent public endpoint still needs a reachable server/domain and credentials; bootstrap does not provision a VPS, configure DNS, open firewall ports or deploy public services without operator action. See [Relay deployment](RELAY-INSTALL.md).
 
-Daemon and DSH remain loopback-only. No delegated approvals are enabled by bootstrap. Keep the host awake, protect private credentials, and back up both Turnwire state and DSH state/attachments.
+Daemon and DSH remain loopback-only. No delegated approvals are enabled by bootstrap. Keep the host awake, protect private credentials, and back up Turnwire config and state plus DSH state/attachments, including an explicitly configured `TURNWIRE_DSH_HOME`. Pairing is v2-only and requires a matching current Relay, host and client; old hosts and device credentials are not supported.
 
 ## Verification boundary
 

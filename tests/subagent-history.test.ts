@@ -1,7 +1,8 @@
 import { afterEach, expect, it } from 'vitest';
 import { TurnwireCore, Store } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import { LocalClient, RemoteClient, loadSubagentHistoryPage, randomSecret } from '@turnwire/sdk';
+import { LocalClient, RemoteClient, loadSubagentHistoryPage } from '@turnwire/sdk';
+import { randomSecret } from '@turnwire/wire';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
 import { startRelay } from '../apps/relay/src/server.js';
 import { RemoteBridge } from '../apps/daemon/src/remote.js';
@@ -22,7 +23,7 @@ it('returns the same scoped child records over local and paired encrypted transp
   const remote = new RemoteClient(pairing);
   try {
     await new Promise<void>((resolve, reject) => { let attempts = 0; const timer = setInterval(() => { if (bridge.connected) { clearInterval(timer); resolve(); } else if (++attempts > 200) { clearInterval(timer); reject(new Error('Relay connection timed out')); } }, 10); });
-    const session = await local.request<Session>('session.create', { runtimeId: 'demo', title: 'Transport', cwd: process.cwd() });
+    const session = await local.call('session.create', { runtimeId: 'demo', title: 'Transport', cwd: process.cwd() });
     const params = { sessionId: session.id, subagentId: child.id, limit: 50 };
     expect(await loadSubagentHistoryPage(remote, params)).toEqual(await loadSubagentHistoryPage(local, params));
     await expect(loadSubagentHistoryPage(remote, { ...params, subagentId: 'unrelated' })).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });

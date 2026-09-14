@@ -32,7 +32,7 @@ async function fixture(dsh = dshScript, daemon = daemonScript, overrides: NodeJS
   await writeFile(join(root, 'dsh.mjs'), dsh);
   await writeFile(join(root, 'daemon.mjs'), daemon);
   // Never spread process.env: exported DSH/HOME/XDG/ports/provider values cannot escape the fixture.
-  const env = hermeticEnv(root, { TURNWIRE_INSTALL_DIR: root, TURNWIRE_HOME: join(root, 'state'), TURNWIRE_CONFIG_HOME: join(root, 'config'), TURNWIRE_DATA_HOME: join(root, 'data'), TURNWIRE_CACHE_HOME: join(root, 'cache'), TURNWIRE_DSH_HOME: join(root, 'dsh-state'), TURNWIRE_DSH_ENV_FILE: join(root, 'config/dsh.env.json'), TURNWIRE_DSH_PORT: '43081', TURNWIRE_PORT: '0', TURNWIRE_DSH_ENTRY: join(root, 'dsh.mjs'), TURNWIRE_DAEMON_ENTRY: join(root, 'daemon.mjs'), TURNWIRE_HOST_START_TIMEOUT_MS: '2000', TURNWIRE_HOST_RESTART_DELAY_MS: '30', TURNWIRE_HOST_RESTART_MAX_DELAY_MS: '60', TURNWIRE_HOST_STABLE_MS: '60000', ...overrides });
+  const env = hermeticEnv(root, { TURNWIRE_INSTALL_DIR: root, TURNWIRE_STATE_HOME: join(root, 'state'), TURNWIRE_CONFIG_HOME: join(root, 'config'), TURNWIRE_DATA_HOME: join(root, 'data'), TURNWIRE_CACHE_HOME: join(root, 'cache'), TURNWIRE_DSH_HOME: join(root, 'dsh-state'), TURNWIRE_DSH_ENV_FILE: join(root, 'config/dsh.env.json'), TURNWIRE_DSH_PORT: '43081', TURNWIRE_PORT: '0', TURNWIRE_DSH_ENTRY: join(root, 'dsh.mjs'), TURNWIRE_DAEMON_ENTRY: join(root, 'daemon.mjs'), TURNWIRE_HOST_START_TIMEOUT_MS: '2000', TURNWIRE_HOST_RESTART_DELAY_MS: '30', TURNWIRE_HOST_RESTART_MAX_DELAY_MS: '60', TURNWIRE_HOST_STABLE_MS: '60000', ...overrides });
   const child = spawn(process.execPath, ['--import', 'tsx', resolve('apps/daemon/src/host-service.ts')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = '';
   child.stdout.on('data', chunk => { logs += String(chunk); }); child.stderr.on('data', chunk => { logs += String(chunk); });
@@ -61,7 +61,7 @@ it('isolates ambient and custom provider credentials, keeps operational paths, r
     expect(daemon.env.TURNWIRE_DSH_URL).toBe(`http://127.0.0.1:43081/?token=${token}`);
     expect(daemon.env.TURNWIRE_RUNTIME).toBe('dsh'); expect(daemon.env.TURNWIRE_PORT).toBe('0');
     expect(daemon.env.TURNWIRE_ALLOWED_ORIGINS).toBe('https://fixture.invalid'); expect(daemon.env.TURNWIRE_SSH_PATH).toBe('/fixture/ssh');
-    for (const suffix of ['HOME', 'CONFIG_HOME', 'DATA_HOME', 'CACHE_HOME']) expect(daemon.env[`TURNWIRE_${suffix}`]).toMatch(f.root);
+    for (const suffix of ['STATE_HOME', 'CONFIG_HOME', 'DATA_HOME', 'CACHE_HOME']) expect(daemon.env[`TURNWIRE_${suffix}`]).toMatch(f.root);
     expect(JSON.stringify([daemon.argv, dsh.argv])).not.toContain(token);
     f.child.kill('SIGTERM'); expect(await f.stopped).toBe(0);
     expect(await readFile(join(f.root, 'stops'), 'utf8')).toBe('daemon\ndsh\n');

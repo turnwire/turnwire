@@ -7,6 +7,7 @@
   "dependencies": {
     "@turnwire/protocol": "*",
     "@turnwire/sdk": "*",
+    "@turnwire/wire": "*",
     "commander": "^13.1.0",
     "qrcode": "1.5.4"
   },

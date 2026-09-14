@@ -7,9 +7,11 @@ import { RemotePeer } from './remote-peer.js';
 export class RemoteBridge {
   private socket?: WebSocket; private timer?: ReturnType<typeof setTimeout>; private stopped = false;
   private registered = false; private attempts = 0; private peers = new Map<string, RemotePeer>();
+  private connections = new Map<string, string>();
   private connectionMessage = 'Connecting to the remote service…';
   private registrationFailed = false;
   get connected() { return this.registered; }
+  get needsRestart() { return !this.stopped && !this.socket && !this.timer; }
   get health(): 'ready' | 'unknown' | 'error' { return this.registered ? 'ready' : this.registrationFailed ? 'error' : 'unknown'; }
   get statusMessage() { return this.connectionMessage; }
   onControl?: (frame: Record<string, unknown>) => void;
@@ -32,16 +34,21 @@ export class RemoteBridge {
         if (typeof frame.type === 'string' && frame.type.startsWith('push.')) { this.onControl?.(frame); return; }
         const connectionId = frame.connectionId;
         const id = frame.clientId; if (typeof id !== 'string') return;
-        if (frame.type === 'client.connected' || frame.type === 'client.disconnected') { this.peers.get(id)?.close(); this.peers.delete(id); this.presence.disconnect(id); return; }
+        if (typeof connectionId !== 'string' || !connectionId) throw new Error('Connection identity required');
+        if (frame.type === 'client.connected') {
+          this.peers.get(id)?.close(); this.peers.delete(id); this.presence.disconnect(id); this.connections.set(id, connectionId); return;
+        }
+        if (this.connections.get(id) !== connectionId) return;
+        if (frame.type === 'client.disconnected') { this.peers.get(id)?.close(); this.peers.delete(id); this.connections.delete(id); this.presence.disconnect(id); return; }
         if (frame.type !== 'payload' || !this.core.store.devices().some(d => d.clientId === id)) return;
         let peer = this.peers.get(id);
         if (!peer) {
           peer = new RemotePeer(this.core, id, payload => {
-            if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) throw new Error('Relay socket closed');
+            if (this.socket !== socket || socket.readyState !== WebSocket.OPEN || this.connections.get(id) !== connectionId) throw new Error('Relay socket closed or replaced');
             const frame = JSON.stringify({ type: 'payload', clientId: id, connectionId, payload });
             if (socket.bufferedAmount + Buffer.byteLength(frame) > 4 * 1024 * 1024) { socket.terminate(); throw new Error('Relay write overload'); }
             return new Promise<void>((resolve, reject) => socket.send(frame, error => error ? reject(error) : resolve()));
-          }, () => { this.peers.get(id)?.close(); this.peers.delete(id); this.sendControl({ type: 'client.close', clientId: id, connectionId }); }, this.presence, this.routes);
+          }, () => { if (this.socket !== socket || this.connections.get(id) !== connectionId) return; this.peers.get(id)?.close(); this.peers.delete(id); this.connections.delete(id); this.presence.disconnect(id); this.sendControl({ type: 'client.close', clientId: id, connectionId }); }, this.presence, this.routes);
           this.peers.set(id, peer);
         }
         peer.receive(frame.payload);
@@ -53,10 +60,10 @@ export class RemoteBridge {
       if (code === 4401) this.connectionMessage = 'Relay authentication failed; check the key or a duplicate host connection';
       else if (this.registered) this.connectionMessage = 'Remote connection lost; reconnecting…';
       this.registrationFailed = code !== 4001; this.registered = false; this.presence.disconnect(); this.socket = undefined;
-      for (const peer of this.peers.values()) peer.close(); this.peers.clear();
+      for (const peer of this.peers.values()) peer.close(); this.peers.clear(); this.connections.clear();
       if (!this.stopped && code !== 4401) this.timer = setTimeout(() => { this.timer = undefined; this.start(); }, retryDelay(this.attempts++));
     });
   }
-  refreshDevices() { this.presence.disconnect(); this.registered = false; this.attempts = 0; this.connectionMessage = 'Updating paired devices…'; if (this.socket) this.socket.close(4001, 'Pairing changed'); else { clearTimeout(this.timer); this.start(); } }
-  async close() { this.stopped = true; this.registered = false; clearTimeout(this.timer); const socket = this.socket; this.socket = undefined; socket?.terminate(); for (const peer of this.peers.values()) peer.close(); this.peers.clear(); this.presence.disconnect(); }
+  refreshDevices() { this.presence.disconnect(); this.registered = false; this.attempts = 0; this.connectionMessage = 'Updating paired devices…'; if (this.socket) this.socket.close(4001, 'Pairing changed'); else { clearTimeout(this.timer); this.timer = undefined; this.start(); } }
+  async close() { this.stopped = true; this.registered = false; clearTimeout(this.timer); this.timer = undefined; const socket = this.socket; this.socket = undefined; socket?.terminate(); for (const peer of this.peers.values()) peer.close(); this.peers.clear(); this.connections.clear(); this.presence.disconnect(); }
 }

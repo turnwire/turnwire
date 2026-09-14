@@ -2,6 +2,8 @@ English · [中文](IMPLEMENTATION.zh.md)
 
 # Turnwire implementation
 
+> Historical scaffold and design background. The checklist and observations below describe the initial delivery, not current deployment status or test totals. Current boundaries are in [CLIENTS](CLIENTS.md), [PROTOCOL](PROTOCOL.md) and [maintenance guidance](FIRST-UPGRADE.md): XDG-only directory resolution, no old database migration, SDK `call` only, shared crypto/session code in `packages/wire`, and v2-only pairing. Historical continuity observations do not promise restoration of old data or uninterrupted upgrades.
+
 ## Goal
 
 Build the Turnwire scaffold described in the original design conversation, using TypeScript as requested on 2026-09-09.

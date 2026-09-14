@@ -1,53 +1,57 @@
 import { MAX_HISTORY_RECORD_BYTES, methodSchemas, parseMethodResult, historyPageSchema, historyRecordSchema, eventSessionId, subagentHistoryPageSchema, directStatusSchema, directConfigurationSchema, notificationStatusSchema } from '@turnwire/protocol';
 import type { MethodArgs, MethodResult, DirectStatus, DirectConfiguration, NotificationStatus, Question, ImageAttachment } from '@turnwire/protocol';
-export { acceptClientHandshake, createClientHandshake, SessionChannel } from './session-crypto.js';
-export { retryDelay } from './retry.js';
-import { retryDelay } from './retry.js';
-import { historyOrder, connectionPongSchema, eventSchema, TurnwireError, pairingSchema, responseSchema, remoteConfigurationSchema, remoteStatusSchema, pairedDeviceSchema, pairingResultSchema, pairDeviceSchema, revokeDeviceSchema, deploymentConfigSchema, deploymentStatusSchema } from '@turnwire/protocol';
+import { retryDelay, validateEndpoint } from '@turnwire/wire';
+import { HistoryBuffer, historyOrder, connectionPongSchema, eventSchema, TurnwireError, pairingSchema, responseSchema, remoteConfigurationSchema, remoteStatusSchema, pairedDeviceSchema, pairingResultSchema, pairDeviceSchema, revokeDeviceSchema, deploymentConfigSchema, deploymentStatusSchema } from '@turnwire/protocol';
 import type { DeploymentConfig, DeploymentStatus, MaintenanceRequest, MaintenanceStatus } from '@turnwire/protocol';
 import { maintenanceRequestSchema, maintenanceStatusSchema } from '@turnwire/protocol';
 import type { Method, TurnwireEvent, Pairing, RpcResponse, Snapshot, RemoteConfiguration, RemoteStatus, PairedDevice, PairingResult, Session, HistoryPage } from '@turnwire/protocol';
-import { SecureChannel, secureMessage } from './crypto.js';
-export { HistoryBuffer } from '@turnwire/protocol';
-export type { HistoryPage } from '@turnwire/protocol';
-export { SecureChannel, secureMessage, randomSecret } from './crypto.js';
+
 export type ConnectionState = 'connecting' | 'connected' | 'offline';
-export type RpcClient = Pick<TurnwireClient, 'request'>;
+export type RpcClient = Pick<TurnwireClient, 'call'>;
 export { loadImage, sendImageMessage } from './images.js';
 export type { LoadImageArgs, SendImageMessageArgs } from './images.js';
 export type { ImageInput, ImageAttachment } from '@turnwire/protocol';
-export interface TypedRpcClient {
-  call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>>;
-}
-/** Typed adapter also supports existing lightweight request-only clients and mocks. */
-export async function call<M extends Method>(client: RpcClient, method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> {
-  const [params = {}, id] = args;
-  const parsed = methodSchemas[method].parse(params);
-  return parseMethodResult(method, await (id === undefined ? client.request(method, parsed) : client.request(method, parsed, id)));
+/** Ergonomic convenience for the client's typed RPC entry point. */
+export function call<M extends Method>(client: RpcClient, method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> {
+  return client.call(method, ...args);
 }
 export interface TurnwireClient {
-  /** @deprecated Use concrete client.call() or the typed call(client, method, params) adapter. Results are runtime validated. */
-  request<T = unknown>(method: Method, params?: unknown, id?: string): Promise<T>;
+  call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>>;
   subscribe(listener: (event: TurnwireEvent) => void, state?: (state: ConnectionState) => void, after?: number): () => void;
   close(): void;
 }
 function unwrap<T>(response: ReturnType<typeof responseSchema.parse>): T { if (!response.ok) throw new TurnwireError(response.error.code, response.error.message); return response.result as T; }
-import { validateEndpoint } from '@turnwire/wire';
-export { validateEndpoint, encodePairing, decodePairing } from '@turnwire/wire';
 
 export class LocalClient implements TurnwireClient {
   private url: URL; private socket?: WebSocket; private timer?: ReturnType<typeof setTimeout>;
   private deadline?: ReturnType<typeof setTimeout>; private attempts = 0;
   private stopped = false; private cursor = 0; private listeners = new Set<(event: TurnwireEvent) => void>();
   private states = new Set<(state: ConnectionState) => void>(); private state: ConnectionState = 'offline';
+  private closed = false;
+  private requests = new Set<AbortController>();
   constructor(url: string, private token: string) { this.url = validateEndpoint(url); }
+  /** Own the entire response body lifetime, not just the response headers. Abort is not rollback. */
+  private async ownedRequest<T>(timeout: number, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.closed) throw new TurnwireError('CLOSED', 'Client is closed');
+    const controller = new AbortController(); this.requests.add(controller);
+    const timer = setTimeout(() => controller.abort(new TurnwireError('OUTCOME_UNKNOWN', 'Request timed out; execution may have occurred')), timeout);
+    let abort: () => void = () => {};
+    const interrupted = new Promise<never>((_, reject) => {
+      abort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener('abort', abort, { once: true });
+    });
+    try { return await Promise.race([action(controller.signal), interrupted]); }
+    finally { clearTimeout(timer); controller.signal.removeEventListener('abort', abort); this.requests.delete(controller); }
+  }
   private async administration(path: string, method: string, body?: unknown): Promise<unknown> {
-    const response = await fetch(new URL(path, this.url), { method, headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000), redirect: 'error' });
+    return this.ownedRequest(10_000, async signal => {
+    const response = await fetch(new URL(path, this.url), { method, headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal, redirect: 'error' });
     if (!response.ok) {
       const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
       throw new TurnwireError(response.status === 401 ? 'UNAUTHORIZED' : 'ADMIN_ERROR', response.status === 401 ? 'Invalid connection token; reconnect' : value?.error ?? `Turnwire returned HTTP ${response.status}`);
     }
     return response.json();
+    });
   }
   /** Local administration only: drain managed work without exposing control to paired devices. */
   async maintenanceStatus(): Promise<MaintenanceStatus> { return maintenanceStatusSchema.parse(await this.administration('/maintenance', 'GET')); }
@@ -62,21 +66,27 @@ export class LocalClient implements TurnwireClient {
   async deployRelay(value: Partial<DeploymentConfig>): Promise<DeploymentStatus> { return deploymentStatusSchema.parse(await this.administration('/deployment', 'POST', deploymentConfigSchema.parse(value))); }
   async devices(): Promise<PairedDevice[]> { return pairedDeviceSchema.array().parse(await this.administration('/devices', 'GET')); }
   async pairDevice(name: string): Promise<PairingResult> { return pairingResultSchema.parse(await this.administration('/devices', 'POST', pairDeviceSchema.parse({ name }))); }
-  async upgradeDevice(id: string): Promise<PairingResult> { return pairingResultSchema.parse(await this.administration('/devices', 'PUT', revokeDeviceSchema.parse({ id }))); }
   async revokeDevice(id: string): Promise<void> { await this.administration('/devices', 'DELETE', revokeDeviceSchema.parse({ id })); }
-  call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> { return call(this, method, ...args); }
-  /** @deprecated Use call() for inferred method parameters and results. */
-  async request<T = unknown>(method: Method, params: unknown = {}, id: string = crypto.randomUUID()): Promise<T> {
-    const response = await fetch(new URL('/rpc', this.url), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.token}` }, body: JSON.stringify({ v: 1, id, method, params }), signal: AbortSignal.timeout(35_000) }).catch(error => { if (method.startsWith('session.') || method === 'approval.decide') throw new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`); throw error; });
+  async call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> {
+    const [input = {}, id = crypto.randomUUID()] = args;
+    if (this.closed) throw new TurnwireError('CLOSED', 'Client is closed');
+    const params = methodSchemas[method].parse(input);
+    return this.ownedRequest(35_000, async signal => {
+    const response = await fetch(new URL('/rpc', this.url), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.token}` }, body: JSON.stringify({ v: 1, id, method, params }), signal }).catch(() => { throw new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; execution may have occurred; check the result with request ID ${id}`); });
     if (!response.ok) throw new TurnwireError('HTTP_ERROR', response.status === 401 ? 'Invalid connection token; reconnect' : `Turnwire returned HTTP ${response.status}`);
     const result = responseSchema.parse(await response.json()); if (result.id !== id) throw new Error('Response ID mismatch');
-    return parseMethodResult(method, unwrap<unknown>(result)) as T;
+    return parseMethodResult(method, unwrap<unknown>(result));
+    }).catch(error => {
+      if (error instanceof TurnwireError && error.code === 'OUTCOME_UNKNOWN') throw new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; execution may have occurred; check the result with request ID ${id}`);
+      throw error;
+    });
   }
   subscribe(listener: (event: TurnwireEvent) => void, state?: (state: ConnectionState) => void, after = 0) {
+    if (this.closed) { state?.('offline'); return () => {}; }
     this.listeners.add(listener); if (state) { this.states.add(state); state(this.state); }
     this.cursor = Math.max(this.cursor, after); this.stopped = false;
     if (!this.socket && !this.timer) this.connect();
-    return () => { this.listeners.delete(listener); if (state) this.states.delete(state); if (!this.listeners.size) this.close(); };
+    return () => { this.listeners.delete(listener); if (state) this.states.delete(state); if (!this.listeners.size) this.stopSubscription(); };
   }
   private connect() {
     if (this.stopped) return; this.setState('connecting');
@@ -96,7 +106,12 @@ export class LocalClient implements TurnwireClient {
     socket.onclose = event => { if (this.socket !== socket) return; clearTimeout(this.deadline); this.deadline = undefined; this.socket = undefined; this.setState('offline'); if (!this.stopped && event.code !== 4401) this.timer = setTimeout(() => { this.timer = undefined; this.connect(); }, retryDelay(this.attempts++)); };
   }
   private setState(state: ConnectionState) { this.state = state; for (const listener of this.states) listener(state); }
-  close() { this.stopped = true; clearTimeout(this.deadline); this.deadline = undefined; this.attempts = 0; if (this.timer) clearTimeout(this.timer); this.timer = undefined; const socket = this.socket; this.socket = undefined; socket?.close(); this.setState('offline'); }
+  close() {
+    this.closed = true;
+    for (const controller of this.requests) controller.abort(new TurnwireError('OUTCOME_UNKNOWN', 'Client closed; execution may have occurred'));
+    this.stopSubscription();
+  }
+  private stopSubscription() { this.stopped = true; clearTimeout(this.deadline); this.deadline = undefined; this.attempts = 0; if (this.timer) clearTimeout(this.timer); this.timer = undefined; const socket = this.socket; this.socket = undefined; socket?.close(); this.setState('offline'); }
 }
 
 export { RemoteClient } from './remote-client.js';
@@ -109,7 +124,11 @@ export interface ConversationMessage { id: string; role: 'user' | 'assistant' | 
   images?: ImageAttachment[]; }
 export function conversation(events: TurnwireEvent[], sessionId: string): ConversationMessage[] {
   const messages = new Map<string, ConversationMessage>();
-  for (const event of [...events].sort(historyOrder)) {
+  // Raw journals and canonical pages share exactly one patch/order reducer. Apply by journal
+  // sequence before display sorting, so moving a queued row cannot reorder its patches or tool pair.
+  const history = new HistoryBuffer();
+  for (const event of [...events].sort((a, b) => a.seq - b.seq)) history.apply(event);
+  for (const event of history.events) {
     const d = event.data;
     // A question the agent is blocked on is part of the conversation, not only a control somewhere else
     // on the page: it is journaled where it was asked, and the answer is written back onto the same
@@ -132,22 +151,8 @@ export function conversation(events: TurnwireEvent[], sessionId: string): Conver
       const message = messages.get(d.messageId);
       if (message) message.images = d.images.map(({ attachmentId, mediaType, bytes, width, height, name }) => ({ attachmentId, mediaType, bytes, width, height, ...(name === undefined ? {} : { name }) }));
     }
-    if (d.type === 'message.user' && d.queued) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, queued: true }); }
-    if (d.type === 'message.user' && d.steer) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, steer: true }); }
-    // A prompt that had not run yet can be changed or taken back after it was journaled; the
-    // projection follows, so no client has to know what the queue did beyond these two events.
-    if (d.type === 'message.updated') {
-      const existing = messages.get(d.messageId);
-      if (existing) {
-        // A prompt is journaled where it was written, which is in the middle of the answer it was
-        // waiting behind. Starting to run is where it belongs in the conversation, so that update
-        // moves the row: a Map keeps insertion order, and re-inserting it puts it at this event.
-        if (existing.queued && d.queued === false) messages.delete(d.messageId);
-        const current = messages.get(d.messageId) ?? existing;
-        messages.set(d.messageId, { ...current, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) });
-      }
-    }
-    if (d.type === 'message.removed') messages.delete(d.messageId);
+    if (d.type === 'message.user' && d.queued !== undefined) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, queued: d.queued }); }
+    if (d.type === 'message.user' && d.steer !== undefined) { const message = messages.get(d.messageId); if (message) messages.set(d.messageId, { ...message, steer: d.steer }); }
     if (d.type === 'tool.started' || d.type === 'tool.finished') {
       const existing = messages.get(d.callId); const finished = d.type === 'tool.finished';
       messages.set(d.callId, { id: d.callId, role: 'tool', text: d.detail, tool: existing?.tool ?? d.tool, time: existing?.time ?? event.time, complete: finished,
@@ -191,7 +196,7 @@ export async function loadHistoryRecord(client: RpcClient, sessionId: string, or
         offset = chunk.nextOffset;
       } while (true);
       const events = eventSchema.array().parse(JSON.parse(chunks.join('')));
-      if (!events.length || events.some(event => eventSessionId(event.data) !== sessionId || (event.originSeq ?? event.seq) !== originSeq || event.truncation || event.seq > cursor!)) throw new Error('History record response scope mismatch');
+      if (!events.length || events.some(event => eventSessionId(event.data) !== sessionId || (event.originSeq ?? event.seq) !== originSeq || (event.displaySeq !== undefined && (event.displaySeq < originSeq || event.displaySeq > event.seq)) || event.truncation || event.seq > cursor!)) throw new Error('History record response scope mismatch');
       return events;
     } catch (error) { if (!(error instanceof TurnwireError) || error.code !== 'HISTORY_CHANGED' || attempt === 2) throw error; }
   }
@@ -214,11 +219,7 @@ export function applyEvent(snapshot: Snapshot, event: TurnwireEvent): Snapshot {
   const d = event.data;
   let sessions = snapshot.sessions, approvals = snapshot.approvals;
   if ('session' in d) {
-    const previous = sessions.find(s => s.id === d.session.id);
-    // New hosts send durable consent explicitly. Older hosts omit their transient flag on
-    // status updates; preserve it only in that case, never across archive or explicit false.
-    const session = { ...d.session, autoApprove: !d.session.archived && (d.session.autoApprove ?? previous?.autoApprove ?? false) };
-    sessions = [session, ...sessions.filter(s => s.id !== d.session.id)];
+    sessions = [d.session, ...sessions.filter(s => s.id !== d.session.id)];
   }
   if (d.type === 'session.autoApprove') sessions = sessions.map(s => s.id === d.sessionId ? { ...s, autoApprove: !s.archived && d.auto } : s);
   if ('approval' in d) approvals = d.approval.status === 'pending' ? [...approvals.filter(a => a.id !== d.approval.id), d.approval] : approvals.filter(a => a.id !== d.approval.id);

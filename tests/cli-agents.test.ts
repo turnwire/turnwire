@@ -15,7 +15,7 @@ const page: SubagentHistoryPage = {
   ],
 };
 function setup(json = false) {
-  const request = vi.spyOn(LocalClient.prototype, 'request').mockResolvedValue(page);
+  const request = vi.spyOn(LocalClient.prototype, 'call').mockResolvedValue(page);
   const close = vi.spyOn(LocalClient.prototype, 'close').mockImplementation(() => {});
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const program = createProgram({ url: 'http://localhost:1', token: 'test', json, lang: 'en' });

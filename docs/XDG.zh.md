@@ -1,26 +1,25 @@
 [English](XDG.md) · 中文
 
-# 新安装的 XDG 目录
+# XDG 目录
 
-新安装按照 XDG 基础目录规范，把外部应用数据与源码目录分离。**不迁移已有安装。** XDG 环境变量必须是绝对路径；空值或相对路径使用标准 HOME 默认值。
+所有安装按照 XDG 基础目录规范，把外部应用文件与源码目录分离。XDG 环境变量必须是绝对路径；空值或相对路径使用标准 HOME 默认值。不识别旧布局，也不迁移。
 
-| 用途 | 新安装默认位置 |
-| --- | --- |
-| 私有配置、本机客户端连接描述 | `$XDG_CONFIG_HOME/turnwire`，未设置时 `~/.config/turnwire` |
-| 会话数据库、主机状态、DSH 状态与附件 | `$XDG_STATE_HOME/turnwire`，未设置时 `~/.local/state/turnwire` |
-| 安装的 Node/DSH 运行时依赖 | `$XDG_DATA_HOME/turnwire/runtime`，未设置时 `~/.local/share/turnwire/runtime` |
-| 下载暂存、可重新下载的工具 | `$XDG_CACHE_HOME/turnwire`，未设置时 `~/.cache/turnwire` |
+| 用途 | 默认位置 | 显式覆盖 |
+| --- | --- | --- |
+| 私有配置、本机客户端连接描述 | `$XDG_CONFIG_HOME/turnwire`，未设置时 `~/.config/turnwire` | `TURNWIRE_CONFIG_HOME` |
+| 会话数据库、主机状态、DSH 状态与附件 | `$XDG_STATE_HOME/turnwire`，未设置时 `~/.local/state/turnwire` | `TURNWIRE_STATE_HOME` |
+| 安装的 Node/DSH 运行时依赖 | `$XDG_DATA_HOME/turnwire/runtime`，未设置时 `~/.local/share/turnwire/runtime` | `TURNWIRE_DATA_HOME`（runtime 是其子目录） |
+| 下载暂存、可重新下载的工具 | `$XDG_CACHE_HOME/turnwire`，未设置时 `~/.cache/turnwire` | `TURNWIRE_CACHE_HOME` |
 
-DSH 环境文件默认是 `配置目录/dsh.env.json`，DSH 状态是 `状态目录/dsh`。Linux 用户服务位于 `$XDG_CONFIG_HOME/systemd/user`，通常为 `~/.config/systemd/user`。版本控制中的 runtime patch、构建产物以及普通源码开发依赖仍在源码目录，本次不是搬迁源码树。
+DSH 环境文件默认是 `配置目录/dsh.env.json`，DSH 状态是 `状态目录/dsh`。Linux 用户服务位于 `$XDG_CONFIG_HOME/systemd/user`，通常为 `~/.config/systemd/user`。版本控制中的 runtime patch、构建产物以及普通源码开发依赖仍在源码目录。
 
-## 兼容与显式覆盖
+## 显式配置与不兼容安装
 
-- 已存在 `~/.turnwire` 时，独立 daemon/CLI 继续使用它，不自动复制、重命名或删除数据。
-- 已有源码目录内私有配置、状态或运行时的受管安装，保留原布局。启动已有匹配服务不会重写服务配置。
-- 显式设置的 `TURNWIRE_HOME` 保留独立部署的旧语义；没有分类覆盖时，配置、数据、缓存仍沿用该布局。
-- `TURNWIRE_CONFIG_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 可分别指定路径。新安装器把解析后的路径写入服务和 CLI 包装脚本，避免登录终端环境变化后客户端连接错主机。
-- `TURNWIRE_DSH_HOME`、`TURNWIRE_DSH_ENV_FILE`、`TURNWIRE_DSH_ENTRY` 等已有显式覆盖继续有效。
+- 每项覆盖只控制对应目录类别；状态覆盖不改变配置、数据或缓存位置。安装器把解析后的路径写入服务和 CLI 包装脚本。daemon 与客户端应使用相同的配置路径。
+- 已删除的统一 home 变量和旧 home/源码目录布局不参与解析。旧文件不会被复制、重命名、删除或自动接管。
+- `TURNWIRE_DSH_HOME`、`TURNWIRE_DSH_ENV_FILE`、`TURNWIRE_DSH_ENTRY` 是显式 DSH 覆盖，不是旧布局探测。
+- Store 只接受当前数据库 schema 或创建全新数据库；拒绝旧版/不兼容数据库，不进行迁移。不要把旧库复制进新的 XDG 目录来绕过拒绝。
 
-不要无意中把新安装指向已有数据库。配置和状态包含密钥及敏感对话，备份需妥善保护；备份配置、Turnwire 状态和 DSH 状态/附件。缓存只有在没有活动进程依赖相关文件时才适合清理。
+配置和状态备份包含凭据及敏感对话，必须妥善保护。相关进程停止后，或使用受支持的 SQLite 在线备份，一致地备份配置、Turnwire 状态和 DSH 状态/附件。缓存只有在没有活动进程依赖时才适合清理。备份不代表本版可以恢复旧数据库。
 
-测试通过隔离目录验证新默认值、绝对/相对 XDG 输入、显式覆盖和旧布局识别。不搬迁当前开发安装，也不声称已在全新生产服务器完成实装验收。
+维护和拒绝处理见[维护与不兼容状态拒绝指南](FIRST-UPGRADE.zh.md)。目录测试使用隔离文件系统夹具，不搬迁运行中的安装，也不等于生产实装验收。

@@ -34,7 +34,7 @@ esac`);
   for (const name of ['curl', 'tar', 'xz', 'sha256sum']) await command(`mock/${name}`, `echo '${name}' >> "$FIXTURE/calls"; exit 90`);
   const run = (args: string[] = [], env: Record<string, string> = {}) => {
     const result = spawnSync('/bin/bash', [join(root, 'scripts/start-host.sh'), ...args], {
-      env: hermeticEnv(root, { PATH: `${root}/mock:/usr/bin:/bin`, FIXTURE: root, ...env }), encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      env: hermeticEnv(root, { PATH: `${root}/mock:/usr/bin:/bin`, FIXTURE: root, TURNWIRE_DATA_HOME: root, TURNWIRE_CONFIG_HOME: join(root, 'config'), ...env }), encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { ...result, output: result.stdout + result.stderr };
   };
@@ -59,7 +59,7 @@ it('restarts an installed XDG service using its recorded Node path without reins
 it('fresh bootstrap writes XDG credentials without creating repository runtime or state', async () => {
   const f = await fixture(); const data = `${f.root}/home/data`;
   await mkdir(`${data}/turnwire`, { recursive: true }); await rename(`${f.root}/runtime`, `${data}/turnwire/runtime`);
-  const result = f.run([], { XDG_DATA_HOME: data, XDG_CONFIG_HOME: `${f.root}/home/config`, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'private' });
+  const result = f.run([], { TURNWIRE_DATA_HOME: '', TURNWIRE_CONFIG_HOME: '', XDG_DATA_HOME: data, XDG_CONFIG_HOME: `${f.root}/home/config`, TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'private' });
   expect(result.status, result.output).toBe(0);
   expect(JSON.parse(await readFile(`${f.root}/home/config/turnwire/dsh.env.json`, 'utf8'))).toEqual({ TURNWIRE_HARNESS_DEEPSEEK_API_KEY: 'private' });
   for (const path of ['runtime', 'state', 'dsh-state', 'config/dsh.env.json']) await expect(stat(join(f.root, path))).rejects.toThrow();

@@ -83,15 +83,9 @@
 .session-filter { padding: 8px 18px; display: grid; gap: 10px; }
 .session-filter > input { width: 100%; border: 1px solid var(--line, #ddd); border-radius: 6px; background: transparent; color: inherit; padding: 8px; font: inherit; font-size: 12px; }
 .session-filter label { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted, #777); }
-.session-actions { position: relative; font-size: 12px; }
-.session-actions summary { cursor: pointer; list-style: none; padding: 8px; }
-.session-actions > div { position: absolute; z-index: 10; right: 0; top: 100%; background: var(--surface, #fff); min-width: 120px; display: grid; padding: 6px; border: 1px solid var(--line, #ddd); border-radius: 8px; }
-.session-actions button { text-align: left; padding: 8px; font: inherit; }
 .tool-message > strong { display: block; margin: 8px 10px 2px; font-size: 9.5px; color: #98a3b3; }
 .message.error { border-left: 2px solid #b84a43; padding-left: 15px; }
 
-.session-actions form { width: 190px; display: grid; gap: 6px; padding: 6px; }
-.session-actions input { width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 4px; }
 
 /* Connected is the normal state: one thin line instead of a bar that explains a problem nobody has. */
 .connection-ok { display:flex; align-items:center; gap:6px; width:100%; border:0; border-bottom:1px solid #e8ebf1; border-radius:0; background:transparent; color:#66756a; font-size:10.5px; padding:5px 22px; justify-content:flex-start; }
@@ -287,7 +281,6 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
   .topbar-right > .status { font-size: 0; gap: 0; width: 12px; justify-content: center; flex-shrink: 0; }
   .topbar-right > .status > span { width: 7px; height: 7px; }
   .topbar .icon-button { min-width: 36px; min-height: 36px; }
-  .session-actions > summary { min-height: 36px; display: flex; align-items: center; }
   .session-heading, .session-heading > *, .child-execution, .child-execution > *, .agent-meta { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   .session-heading > span { display: block; white-space: normal; }
   .session-heading > span > svg { vertical-align: middle; margin-right: 6px; }
@@ -296,7 +289,7 @@ dialog { max-height: calc(100vh - 24px); overflow-y: auto; }
   .child-record summary, .agent-secondary-plan summary { min-height: 32px; }
   .agent-item, .agent-more { min-height: 36px; }
   .agent-more { padding-inline: 6px; }
-  .question-other, .queued-edit, .session-actions input, .session-filter > input { font-size: 16px; }
+  .question-other, .queued-edit, .session-filter > input { font-size: 16px; }
   .child-execution-actions { flex-wrap: wrap; }
   .child-execution-actions button { min-height: 36px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 }

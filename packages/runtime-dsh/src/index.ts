@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { ContextProjection } from './context.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TurnwireError, methodSchemas, imageAttachmentSchema, isCanonicalBase64, MAX_IMAGE_BASE64_LENGTH, modelCatalogSchema, modelSelectionSchema, type ImageInput, type ImageAttachment } from '@turnwire/protocol';
@@ -52,13 +53,23 @@ export class DshRuntime implements AgentRuntime {
   private retry?: ReturnType<typeof setTimeout>;
   private listeners = new Map<string, Set<(event: RuntimeEvent) => void>>();
   private sessions = new Map<string, RuntimeSession>();
+  private contextAvailable = true;
+  private contextProjection = new ContextProjection((id, context) => {
+    const session = this.sessions.get(id); if (session) session.context = context;
+    this.emit(id, { type: 'context', context });
+  });
+  private clearContext() {
+    this.contextProjection.reset();
+    for (const session of this.sessions.values()) delete session.context;
+    for (const id of this.listeners.keys()) this.emit(id, { type: 'context' });
+  }
   private streams = new Map<string, string>();
   private queues = new Map<string, Promise<void>>();
   private cursors = new Map<string, number>();
   private live = new Map<string, { id: string; nextIndex: number; text: string }>();
   private pending = new Map<string, { sessionId: string; clientId: string; resolving?: boolean; cancelled?: boolean }>();
   /** Question batches the Host is waiting on, keyed by their Remote event id. */
-  private questions = new Map<string, { sessionId: string; clientId: string }>();
+  private questions = new Map<string, { sessionId: string; clientId: string; resolving?: boolean; cancelled?: boolean }>();
   private childReads = new Map<string, { resolve: (snapshot: HistorySnapshot) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
   private childCuts = new Map<string, number>();
   private imageSends = new Map<string, { sessionId: string; messageId: string; count: number; resolve: (images: ImageAttachment[]) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -255,7 +266,8 @@ export class DshRuntime implements AgentRuntime {
    * the client renders.
    */
   async listQueue(sessionId: string): Promise<QueueItemView[]> {
-    try { await this.connect(); } catch { return []; }
+    // Connection failure is not evidence that the runtime inbox is empty.
+    await this.connect();
     return (await this.queuedItems(sessionId))
       .filter(entry => entry.rpcId !== undefined)
       .map(entry => ({ messageId: entry.rpcId!, target: entry.step ? 'next-step' as const : 'next-turn' as const, text: entry.text }));
@@ -272,14 +284,18 @@ export class DshRuntime implements AgentRuntime {
         if (!message.success) return [];
         return [{ itemId: message.data.id, step, text: message.data.content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join('\n'), ...(message.data.source?.rpcId === undefined ? {} : { rpcId: message.data.source.rpcId }) }];
       });
-      return [...read(inbox['next-turn'], false), ...read(inbox['next-step'], true)];
+      return [...read(inbox['next-step'], true), ...read(inbox['next-turn'], false)];
     }
     return [];
   }
   async health() { try { await this.connect(); return { online: true, message: 'Connected to the DSH host' }; } catch { return { online: false, message: this.lastError }; } }
   async createSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {
     await this.connect();
-    const created = z.object({ sessionId: z.string() }).passthrough().parse(await this.rpc('session/create', { request: { sessionId: options.id, cwd: options.cwd } }));
+    // Recovery of an uncertain allocation adopts the durable identity, never a new root.
+    const existing = (await this.listSessions()).find(session => session.id === options.id);
+    if (existing) { this.sessions.set(existing.id, existing); return existing; }
+    if ((this.cursors.get(options.id) ?? this.options.readCursor?.(options.id) ?? -1) >= 0) throw new TurnwireError('RUNTIME_ROOT_MISSING', 'Runtime root is missing but its replay cursor still exists; refusing recreation');
+    const created = z.object({ sessionId: z.literal(options.id) }).passthrough().parse(await this.rpc('session/create', { request: { sessionId: options.id, cwd: options.cwd } }));
     const session: RuntimeSession = { id: created.sessionId, cwd: options.cwd, status: 'idle' }; this.sessions.set(session.id, session); return session;
   }
   async resumeSession(options: { id: string; cwd: string }): Promise<RuntimeSession> {
@@ -291,14 +307,14 @@ export class DshRuntime implements AgentRuntime {
     // Agent and `session/prompt` attaches the Agent on demand, so an existing session
     // is followed read-only instead of being claimed again.
     const existing = (await this.listSessions()).find(s => s.id === options.id);
-    if (existing === undefined) await this.rpc('session/create', { request: { sessionId: options.id, cwd: options.cwd } });
-    const session = existing ?? { id: options.id, cwd: options.cwd, status: 'idle' as const };
+    if (existing === undefined) throw new TurnwireError('RUNTIME_ROOT_MISSING', 'The persisted runtime root is missing; resume cannot recreate its history');
+    const session = existing;
     this.sessions.set(session.id, session); this.follow(session.id); return session;
   }
   async listSessions(): Promise<RuntimeSession[]> {
     await this.connect();
     const value = z.object({ items: z.array(summarySchema) }).parse(await this.rpc('session/list', { _request: {} }));
-    return value.items.map(s => ({ id: s.sessionId, cwd: s.cwd ?? '', status: s.running ? 'running' : 'idle' }));
+    return value.items.map(s => ({ id: s.sessionId, cwd: s.cwd ?? '', status: s.running ? 'running' : 'idle', context: this.contextProjection.current(s.sessionId) }));
   }
   /**
    * `session/modelCatalog` takes no arguments. The Host lists every registered provider
@@ -376,12 +392,23 @@ export class DshRuntime implements AgentRuntime {
    */
   async answerQuestion(sessionId: string, requestId: string, answers: QuestionAnswerItem[]) {
     const pending = this.questions.get(requestId);
-    if (!pending || pending.sessionId !== sessionId || pending.clientId !== this.clientId) throw new TurnwireError('QUESTION_EXPIRED', 'That question has already been answered or has expired');
-    await this.rpc('$events/result', { clientId: pending.clientId, eventId: requestId, outcome: { kind: 'result', value: { answers } } });
-    if (this.questions.delete(requestId)) this.emit(sessionId, { type: 'question.resolved', requestId, decision: 'answered' });
+    if (!pending || pending.resolving || pending.sessionId !== sessionId || pending.clientId !== this.clientId) throw new TurnwireError('QUESTION_EXPIRED', 'That question has already been answered or has expired');
+    pending.resolving = true;
+    try {
+      await this.rpc('$events/result', { clientId: pending.clientId, eventId: requestId, outcome: { kind: 'result', value: { answers } } });
+      if (this.questions.get(requestId) !== pending) throw new TurnwireError('QUESTION_EXPIRED', 'Question connection expired while answering');
+      this.questions.delete(requestId);
+      // Core owns the complete answered transition (including answers). Remote cancel while
+      // resolving is waterfall cleanup; successful RPC confirmation wins over that echo.
+    } catch (error) {
+      pending.resolving = false;
+      if (pending.cancelled && this.questions.get(requestId) === pending) { this.questions.delete(requestId); this.emit(sessionId, { type: 'question.resolved', requestId, decision: 'cancelled' }); }
+      throw error;
+    }
   }
   subscribe(sessionId: string, listener: (event: RuntimeEvent) => void) {
     const set = this.listeners.get(sessionId) ?? new Set(); set.add(listener); this.listeners.set(sessionId, set);
+    listener({ type: 'context', context: this.contextProjection.current(sessionId) });
     if (this.clientId) this.follow(sessionId);
     return () => { set.delete(listener); if (!set.size) { this.listeners.delete(sessionId); const stream = [...this.streams].find(([, id]) => id === sessionId)?.[0]; if (stream) { this.send({ type: 'cancel', streamId: stream }); this.streams.delete(stream); } } };
   }
@@ -418,6 +445,7 @@ export class DshRuntime implements AgentRuntime {
         const timer = setTimeout(() => { socket.terminate(); reject(new Error('Timed out while opening the DSH event stream')); }, 10_000);
         socket.on('open', () => this.send({ type: 'open', streamId: 'events', endpoint: '$events', payload: { args: {} } }));
         socket.on('message', raw => {
+          if (this.socket !== socket) return;
           try {
             const frame = z.object({ type: z.enum(['item', 'error', 'end', 'cancel']), streamId: z.string(), value: z.unknown().optional(), error: z.object({ code: z.string(), message: z.string() }).passthrough().optional() }).parse(JSON.parse(raw.toString()));
             // Temporary reads have independent lifecycles. Late cancel/end acknowledgements
@@ -432,21 +460,28 @@ export class DshRuntime implements AgentRuntime {
               }
               return;
             }
+            if (frame.streamId === 'context-control') {
+              if (frame.type === 'item') this.contextProjection.frame(record(frame.value));
+              else { this.contextAvailable = false; this.clearContext(); }
+              return;
+            }
             if (frame.type !== 'item') throw new Error(frame.error?.message ?? `DSH stream ${frame.streamId} ended`);
             const value = record(frame.value);
             if (frame.streamId === 'events' && value.type === 'ready') {
               this.clientId = z.string().parse(value.clientId); clearTimeout(timer); resolve();
+              this.contextAvailable = true;
+              this.send({ type: 'open', streamId: 'context-control', endpoint: 'session/control', payload: { args: {} } });
               for (const id of this.listeners.keys()) this.follow(id);
             } else if (frame.streamId === 'events') { void this.remoteEvent(value).catch(error => this.fail(error)); }
             else {
               const id = this.streams.get(frame.streamId);
-              if (id) { const previous = this.queues.get(id) ?? Promise.resolve(); const next = previous.then(() => this.sessionFrame(id, value)).catch(error => this.fail(error)); this.queues.set(id, next); }
+              if (id) { const previous = this.queues.get(id) ?? Promise.resolve(); const next = previous.then(() => { if (this.socket === socket && this.streams.get(frame.streamId) === id) return this.sessionFrame(id, value, () => this.socket === socket && this.streams.get(frame.streamId) === id); }).catch(error => this.fail(error)); this.queues.set(id, next); }
             }
           } catch (error) { clearTimeout(timer); reject(error); this.fail(error); }
         });
         socket.on('error', error => { clearTimeout(timer); reject(error); this.lastError = 'Cannot reach the DSH host; check that DSH is running and the address and token are correct'; });
         socket.on('unexpected-response', (_request, response) => { if (response.statusCode === 401) this.cookie = ''; response.resume(); clearTimeout(timer); reject(new Error(`DSH WebSocket returned HTTP ${response.statusCode}`)); socket.terminate(); });
-        socket.on('close', () => { clearTimeout(timer); reject(new Error('The DSH connection closed')); if (this.socket !== socket) return; this.socket = undefined; this.clientId = undefined; this.streams.clear(); this.live.clear(); this.cancelPending(); this.cancelChildReads();
+        socket.on('close', () => { clearTimeout(timer); reject(new Error('The DSH connection closed')); if (this.socket !== socket) return; this.socket = undefined; this.clientId = undefined; this.clearContext(); this.streams.clear(); this.live.clear(); this.cancelPending(); this.cancelChildReads();
           for (const id of this.listeners.keys()) this.emit(id, { type: 'status', status: 'interrupted' });
           if (!this.closed && this.listeners.size && !this.retry) this.retry = setTimeout(() => { this.retry = undefined; void this.connect().catch(() => {}); }, 2000);
         });
@@ -462,9 +497,10 @@ export class DshRuntime implements AgentRuntime {
     const streamId = randomUUID(); this.streams.set(streamId, sessionId);
     this.send({ type: 'open', streamId, endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId }, maxMessages: 100, assistantStream: true } } } });
   }
-  private async sessionFrame(id: string, value: Record<string, unknown>) {
+  private async sessionFrame(id: string, value: Record<string, unknown>, current = () => true) {
     if (value.type === 'snapshot') {
       const cursor = this.cursors.get(id) ?? this.options.readCursor?.(id) ?? -1;
+      if (record(value.header).id !== id || typeof value.cursor !== 'number' || value.cursor < cursor) throw new TurnwireError('RUNTIME_IDENTITY_MISMATCH', 'Runtime snapshot identity or replay cursor regressed; refusing history reuse');
       const records = z.array(z.object({ type: z.literal('event'), event: wireEventSchema })).parse(value.records);
       let more = value.hasMore === true;
       while (more && records.length && records[0]!.event.seq > cursor + 1) {
@@ -472,6 +508,8 @@ export class DshRuntime implements AgentRuntime {
         const older = z.array(z.object({ type: z.literal('event'), event: wireEventSchema })).parse(page.records);
         if (!older.length) break; records.unshift(...older); more = page.hasMore === true;
       }
+      if (!current()) return;
+      if (this.contextAvailable) this.contextProjection.baseline(id, value.projections);
       for (const entry of records) this.durable(id, entry.event);
       const active = record(record(value.assistantStream).activeAttempt);
       if (typeof active.attemptId === 'string') { const messageId = assistantId(id, active.turn, active.step); const text = compactText(active.stream); this.live.set(active.attemptId, { id: messageId, nextIndex: Number(active.nextIndex), text }); this.emit(id, { type: 'message.completed', messageId, text }); }
@@ -516,7 +554,7 @@ export class DshRuntime implements AgentRuntime {
       if (pending) { if (pending.resolving) pending.cancelled = true; else { this.pending.delete(id); this.emit(pending.sessionId, { type: 'approval.resolved', requestId: id, decision: 'cancelled' }); } }
       // A question the Host has given up on — an aborted turn, for instance — leaves no panel behind.
       const question = this.questions.get(id);
-      if (question) { this.questions.delete(id); this.emit(question.sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' }); }
+      if (question) { if (question.resolving) question.cancelled = true; else { this.questions.delete(id); this.emit(question.sessionId, { type: 'question.resolved', requestId: id, decision: 'cancelled' }); } }
     }
     if (frame.type === 'emit') {
       const args = Array.isArray(frame.args) ? frame.args : [];

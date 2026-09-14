@@ -1,0 +1,36 @@
+.composer-caption.composer-status-line { position: relative; justify-content: flex-start; align-items: center; flex-wrap: nowrap; gap: 12px; white-space: nowrap; max-width: 100%; }
+.composer-status-line > * { flex-shrink: 0; }
+.composer-status-line > .runtime-identity { display: inline-flex; gap: 6px; align-items: center; min-width: 0; flex-shrink: 1; font-size: 11px; color: #596575; }
+.runtime-identity > svg { flex-shrink: 0; }
+.runtime-identity > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings-language { display: flex; justify-content: space-between; align-items: center; gap: 16px; grid-column: 1 / -1; width: 100%; font-size: 13px; color: #647184; }
+.settings-language .locale-switch { display: flex; gap: 4px; }
+.settings-language .locale-switch button { min-width: 40px; min-height: 32px; }
+.settings-language .locale-switch button.active { background: #e8eef8; color: #2f5ec4; }
+.composer-status-line .runtime-mark { display: inline-flex; align-items: center; color: #111; }
+.composer-status-line > .context-usage { margin-left: auto; }
+@media (max-width: 700px) { .composer-status-line > .composer-session-status { display: none; } }
+.context-usage { font-size: 10px; line-height: 1.4; font-variant-numeric: tabular-nums; color: #717987; }
+.context-usage > summary { display: flex; align-items: center; gap: 5px; list-style: none; cursor: pointer; border-radius: 6px; min-height: 32px; min-width: 32px; justify-content: center; box-sizing: border-box; padding: 4px 5px; transition: background .15s; }
+.context-usage > summary::-webkit-details-marker { display: none; }
+.context-usage > summary:hover, .context-usage[open] > summary { background: #e9edf2; }
+.context-usage > summary:focus-visible { outline: 2px solid #647184; outline-offset: 2px; }
+.context-ring { width: 18px; height: 18px; fill: none; stroke: #d9dfe7; stroke-width: 2; }
+.context-ring-value { stroke: #66778d; transform: rotate(-90deg); transform-origin: center; }
+.context-ring-unknown { stroke: #8994a3; }
+.topbar-right .runtime-mark { display: inline-flex; color: #111; align-items: center; }
+.topbar-right .runtime-identity { display: inline-flex; align-items: center; gap: 5px; max-width: 120px; min-width: 0; font-size: 11px; white-space: nowrap; }
+@media (max-width: 700px) { .topbar-right .runtime-identity > span { display: none; } }
+.context-detail { position: absolute; z-index: 40; bottom: calc(100% + 6px); right: 0; width: min(280px, 100%); box-sizing: border-box; padding: 12px 14px; border: 1px solid #e1e5eb; border-radius: 10px; background: #fff; box-shadow: 0 6px 24px #202a3814; color: #647184; white-space: normal; line-height: 1.6; }
+.context-detail.context-floating { position: fixed; z-index: 1000; bottom: auto; right: auto; width: min(280px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; font-size: 11px; }
+.context-detail strong, .context-detail > span { display: block; }
+.context-detail strong { color: #343e4c; font-size: 11px; }
+.context-detail p { margin: 5px 0 0; }
+.connection-current { grid-column: 1 / -1; width: 100%; max-width: 560px; justify-self: center; min-width: 0; }
+.connection-current h1 { font-size: 22px; margin-bottom: 20px; }
+.connection-current h2 { margin-bottom: 12px; }
+.connection-current > strong { overflow-wrap: anywhere; }
+.connection-current > p { margin: 10px 0; font-size: 13px; color: #647184; }
+.connection-current > button { margin: 12px 8px 0 0; min-height: 36px; }
+.connection-current .remember { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+@media (max-width: 480px) { .composer-caption.composer-status-line { gap: 8px; } }

@@ -1,13 +1,16 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { TurnwireError, errorResponse, methodSchemas, requestSchema, queueItemViewSchema, imageAttachmentSchema, MAX_IMAGES, MAX_IMAGE_BASE64_LENGTH, isCanonicalBase64, base64Bytes } from '@turnwire/protocol';
+import { TurnwireError, errorResponse, methodSchemas, requestSchema, sessionContextSchema, queueItemViewSchema, imageAttachmentSchema, MAX_IMAGES, MAX_IMAGE_BASE64_LENGTH, isCanonicalBase64, base64Bytes } from '@turnwire/protocol';
 import type { EventData, TurnwireEvent, Question, RpcRequest, RpcResponse, Session, Snapshot, NotificationStatus, PushSubscriptionData, WorkspaceEntry } from '@turnwire/protocol';
 import type { AgentRuntime, RuntimeEvent } from '@turnwire/runtime';
 import { Store } from './store.js';
 import { MaintenanceGate } from './maintenance.js';
-export { Store } from './store.js';
+import { CoreLifetime } from './lifetime.js';
+import { SessionCreation } from './session-creation.js';
+export { Store, validateStorageFile } from './store.js';
+export { enrollDevice, requireCurrentDevice } from './enrollment.js';
 
 export interface NotificationService { status(clientId?: string): NotificationStatus; subscribe(clientId: string, value: PushSubscriptionData): Promise<NotificationStatus>; unsubscribe(clientId: string): Promise<NotificationStatus> }
 export class TurnwireCore {
@@ -33,12 +36,33 @@ export class TurnwireCore {
   private questions = new Map<string, Question>();
   private runtimes: Map<string, AgentRuntime>;
   private maintenance: MaintenanceGate;
+  private lifetime = new CoreLifetime();
+  private creation: SessionCreation;
+  private disposal?: Promise<void>;
+  private released = false;
+  private versions = new Map<string, number>();
+  private runtimeStatuses = new Map<string, Session['status']>();
+  private answering = new Map<string, { answers: NonNullable<Question['answers']>; confirmed: boolean }>();
   constructor(readonly store: Store, runtimes: AgentRuntime[], readonly device: { id: string; name: string }) {
     this.runtimes = new Map(runtimes.map(runtime => [runtime.id, runtime]));
     this.maintenance = new MaintenanceGate(store, () => this.managedActivity());
+    this.creation = new SessionCreation(store, (event, settings) => this.publish(event, undefined, settings));
+    // Observations persisted in session updates belong to the old runtime connection.
+    for (const session of store.sessions()) if (session.context !== undefined) this.update(session.id, { context: undefined });
   }
-  maintenanceStatus() { return this.maintenance.status(); }
-  configureMaintenance(value: unknown) { return this.maintenance.configure(value); }
+  /** Host services own their work; share only synchronous admission and drain accounting. */
+  seal() { this.lifetime.seal(); }
+  /** Transport crypto/replay needs shutdown ownership, not mutation authorization. */
+  runTask<T>(work: () => Promise<T>): Promise<T> { return this.lifetime.run(work); }
+  enterHostActivity(recovery = false) {
+    // Host teardown/inherited work may finish between seal and disposal; dispose seals
+    // even this privileged path before beginning its drain.
+    const release = this.lifetime.enter(recovery);
+    try { const leave = this.maintenance.enter(recovery); return () => { leave(); release(); }; }
+    catch (error) { release(); throw error; }
+  }
+  maintenanceStatus() { return this.lifetime.run(() => this.maintenance.status()); }
+  configureMaintenance(value: unknown) { return this.lifetime.run(() => this.maintenance.configure(value)); }
   private async managedActivity(): Promise<number> {
     let busy = 0;
     const sessions = this.store.sessions();
@@ -61,36 +85,44 @@ export class TurnwireCore {
     busy += [...this.questions.values()].filter(question => question.status === 'pending').length;
     return busy;
   }
-  async start() {
+  start() { return this.lifetime.run(() => this.startOwned()); }
+  private async startOwned() {
+    // Interactive approvals belong to a live runtime connection and expire even during a durable hold.
+    for (const approval of this.store.approvals()) if (approval.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'cancelled' } });
     // A deployment hold survives daemon replacement. Never resume runtime work implicitly.
     if (this.maintenance.held) { for (const session of this.store.sessions()) this.bind(session); return; }
     const leave = this.maintenance.enter(false);
     try {
-    // Interactive approvals belong to a live runtime connection and expire across daemon restarts.
-    for (const approval of this.store.approvals()) if (approval.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: 'cancelled' } });
     for (const session of this.store.sessions()) {
       this.update(session.id, { status: 'interrupted' });
       this.bind(session);
-      try { const resumed = await this.runtime(session.runtimeId).resumeSession({ id: session.runtimeSessionId, cwd: session.cwd }); this.update(session.id, { status: resumed.status }); }
+      try { await this.creation.resume(this.session(session.id), this.runtime(session.runtimeId)); }
       catch (error) { this.publish({ type: 'session.error', sessionId: session.id, message: error instanceof Error ? error.message : 'Resume failed' }); }
     }
     } finally { leave(); }
   }
-  async snapshot(): Promise<Snapshot> {
+  snapshot(): Promise<Snapshot> { return this.lifetime.run(() => this.snapshotOwned()); }
+  private async snapshotOwned(): Promise<Snapshot> {
     // A read that is about to report whether anything is running repairs a status left behind first.
     await this.reconcileStatuses();
-    const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? await runtime.busy().then(busy => ({ busy, busyKnown: true })).catch(() => ({ busyKnown: false })) : {}), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
+    const runtimes = await Promise.all([...this.runtimes.values()].map(async runtime => ({ id: runtime.id, name: runtime.name, capabilities: runtime.capabilities(), ...(runtime.busy ? await runtime.busy().then(busy => ({ busy, busyKnown: true })).catch(() => ({ busyKnown: false })) : { busyKnown: false }), ...await runtime.health().catch(error => ({ online: false, message: String(error) })) })));
     // Read all state and the cursor together after asynchronous health checks finish.
     return { device: this.device, sessions: this.store.sessions(), approvals: this.store.approvals().filter(a => a.status === 'pending'), questions: [...this.questions.values()].filter(question => question.status === 'pending'), runtimes, cursor: this.store.cursor() };
   }
   subscribe(listener: (event: TurnwireEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async handle(value: unknown, context?: { clientId: string }): Promise<RpcResponse> {
+    try { return await this.lifetime.run(() => this.handleOwned(value, context)); }
+    catch (error) { return errorResponse(typeof (value as { id?: unknown })?.id === 'string' ? (value as { id: string }).id : 'invalid', error); }
+  }
+  private async handleOwned(value: unknown, context?: { clientId: string }): Promise<RpcResponse> {
     const parsed = requestSchema.safeParse(value);
     // A rejected request still has to be answered in the asker's name. An unknown method is exactly
     // how an older host meets a newer client, and a response addressed to `invalid` is one no client
     // can match: a remote client drops it and waits for its own timeout, which reads as a dead button.
     if (!parsed.success) return errorResponse(typeof (value as { id?: unknown })?.id === 'string' ? (value as { id: string }).id : 'invalid', parsed.error);
     const request = parsed.data;
+    // Export workers hold SQLite read connections; do not create/restart them during compaction drain.
+    if (request.method === 'history.record' && this.maintenance.held) return errorResponse(request.id, new TurnwireError('MAINTENANCE', 'History exports are paused during maintenance'));
     try { methodSchemas[request.method].parse(request.params); } catch (error) { return errorResponse(request.id, error); }
     if (request.method === 'system.snapshot' || request.method === 'subagent.list' || request.method === 'subagent.history' || request.method === 'session.queue' || request.method === 'session.image' || request.method === 'workspace.list' || request.method === 'events.list' || request.method === 'history.page' || request.method === 'history.record' || request.method === 'inbox.page' || request.method === 'request.result' || request.method === 'notifications.status') {
       try { return { v: 1, id: request.id, ok: true, result: await this.execute(request, context) }; } catch (error) { return errorResponse(request.id, error); }
@@ -117,7 +149,7 @@ export class TurnwireCore {
   }
   private async execute(request: RpcRequest, context?: { clientId: string }): Promise<unknown> {
     switch (request.method) {
-      case 'system.snapshot': return this.snapshot();
+      case 'system.snapshot': return this.snapshotOwned();
       case 'request.result': { const { requestId } = methodSchemas['request.result'].parse(request.params); const saved = this.store.request(requestId); return !saved ? { state: 'not_found' } : saved.result ? { state: 'completed', response: saved.result } : { state: this.inFlight.has(requestId) ? 'pending' : 'unknown' }; }
       case 'inbox.page': { const p = methodSchemas['inbox.page'].parse(request.params); return this.store.inbox(p.limit, p.status, p.before); }
       case 'notifications.status': return this.notifications?.status(context?.clientId) ?? { enabled: false, available: false, subscribed: false, queued: 0, message: 'Push notifications are not configured on this host' };
@@ -197,18 +229,12 @@ export class TurnwireCore {
         // Checked before the runtime session exists, so an unlisted model cannot leave a
         // half-created session behind.
         if (p.model && runtime.setModel) await this.assertSelectable(runtime, p.model.provider, p.model.model);
-        const id = randomUUID();
-        const created = await runtime.createSession({ id, cwd });
-        // A model chosen at creation time goes through the same path as a later change, so
-        // the session records what the runtime resolved rather than what was requested.
-        const model = p.model && runtime.setModel ? await runtime.setModel(created.id, p.model) : undefined;
-        const now = new Date().toISOString();
-        const session: Session = { id, runtimeId: runtime.id, runtimeSessionId: created.id, title: p.title, cwd, status: created.status, autoApprove: false, createdAt: now, updatedAt: now, ...(model ? { model } : {}) };
-        this.publish({ type: 'session.created', session }); this.bind(session); return session;
+        const session = await this.creation.create(runtime, { cwd, title: p.title, ...(p.model ? { model: p.model } : {}) });
+        this.bind(session); return session;
       }
       case 'session.resume': {
         const p = methodSchemas['session.resume'].parse(request.params);
-        return this.lock(p.sessionId, async () => { const session = this.session(p.sessionId); this.requireActive(session); this.bind(session); const resumed = await this.runtime(session.runtimeId).resumeSession({ id: session.runtimeSessionId, cwd: session.cwd }); return this.update(session.id, { status: resumed.status }); });
+        return this.lock(p.sessionId, async () => { const session = this.session(p.sessionId); this.requireActive(session); this.bind(session); return this.creation.resume(session, this.runtime(session.runtimeId)); });
       }
       case 'session.rename': {
         const p = methodSchemas['session.rename'].parse(request.params);
@@ -230,7 +256,7 @@ export class TurnwireCore {
           this.requireActive(session);
           const runtime = this.runtime(session.runtimeId);
           if (p.images?.length && !runtime.capabilities().imageInput) throw new TurnwireError('IMAGE_INPUT_UNSUPPORTED', 'This runtime does not support image input');
-          if (session.status === 'interrupted' || session.status === 'error') throw new TurnwireError('RESUME_REQUIRED', 'Resume this session before sending a message');
+          if (this.creation.pending(session.id) || session.status === 'interrupted' || session.status === 'error') throw new TurnwireError('RESUME_REQUIRED', 'Resume this session before sending a message');
           // The runtime queues a prompt sent during a turn instead of interrupting it, so record which
           // happened: a client can then say so instead of leaving the user to guess.
           const running = session.status === 'running' || session.status === 'waiting_approval';
@@ -252,7 +278,7 @@ export class TurnwireCore {
           // The client is told which of the two happened, so it can put the prompt where it belongs
           // before the event stream catches up: a queued prompt belongs above the composer, not in
           // the flow, and waiting for a queue read to move it leaves it visible in the wrong place.
-          return { accepted: true, messageId: request.id, ...(running && mode === 'queue' ? { queued: true } : {}) };
+          return { accepted: true, messageId: request.id, queued: running && mode === 'queue' };
         });
       }
       case 'session.cancel': {
@@ -265,11 +291,11 @@ export class TurnwireCore {
       }
       case 'session.queueAction': {
         const p = methodSchemas['session.queueAction'].parse(request.params);
-        const session = this.session(p.sessionId); this.requireActive(session);
-        const runtime = this.runtime(session.runtimeId);
-        const queueAction = runtime.queueAction?.bind(runtime);
-        if (!queueAction) throw new TurnwireError('NOT_AVAILABLE', 'This runtime cannot change a prompt that is already waiting');
         return this.lock(p.sessionId, async () => {
+          const session = this.session(p.sessionId); this.requireActive(session);
+          const runtime = this.runtime(session.runtimeId);
+          const queueAction = runtime.queueAction?.bind(runtime);
+          if (!queueAction) throw new TurnwireError('NOT_AVAILABLE', 'This runtime cannot change a prompt that is already waiting');
           // Runtimes accept a change for an item they have already handed to the model, and taking it
           // would erase a prompt that is being answered right now from every client. The host knows
           // when it started, so that answer is the honest one.
@@ -295,6 +321,7 @@ export class TurnwireCore {
         return this.lock(p.sessionId, async () => {
           const session = this.session(p.sessionId); this.requireActive(session);
           const runtime = this.runtime(session.runtimeId);
+          if (this.creation.pending(session.id)) throw new TurnwireError('RESUME_REQUIRED', 'Resume this incomplete session before changing its model');
           if (!runtime.setModel) throw new TurnwireError('MODEL_SELECTION_UNSUPPORTED', 'This runtime does not support model selection');
           await this.assertSelectable(runtime, p.provider, p.model);
           const selection = await runtime.setModel(session.runtimeSessionId, { provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) }).catch(error => {
@@ -325,20 +352,20 @@ export class TurnwireCore {
       }
       case 'question.answer': {
         const p = methodSchemas['question.answer'].parse(request.params);
-        const question = this.questions.get(p.questionId);
-        if (!question || question.status !== 'pending') throw new TurnwireError('QUESTION_EXPIRED', 'That question was already answered or has expired');
-        const session = this.session(question.sessionId); const runtime = this.runtime(session.runtimeId);
-        const answerQuestion = runtime.answerQuestion?.bind(runtime);
-        if (!answerQuestion) throw new TurnwireError('NOT_AVAILABLE', 'This runtime does not ask questions');
         return this.lock(`question:${p.questionId}`, async () => {
-          await answerQuestion(session.runtimeSessionId, p.questionId.slice(question.sessionId.length + 1), p.answers);
-          // The journal keeps what was asked and what was chosen, so a transcript can show the
-          // decision rather than a tool call that simply ended.
-          const answered = { ...question, status: 'answered' as const, answers: p.answers };
-          this.questions.set(question.id, answered);
-          this.publish({ type: 'question.resolved', question: answered });
-          this.questions.delete(question.id);
-          return { accepted: true };
+          const question = this.questions.get(p.questionId);
+          if (!question || question.status !== 'pending') throw new TurnwireError('QUESTION_EXPIRED', 'That question was already answered or has expired');
+          const session = this.session(question.sessionId); const runtime = this.runtime(session.runtimeId);
+          if (!runtime.answerQuestion) throw new TurnwireError('NOT_AVAILABLE', 'This runtime does not ask questions');
+          const claim = { answers: p.answers, confirmed: false };
+          this.answering.set(question.id, claim);
+          try {
+            try { await runtime.answerQuestion(session.runtimeSessionId, p.questionId.slice(question.sessionId.length + 1), p.answers); }
+            catch (error) { if (!claim.confirmed || !this.questions.has(question.id)) throw error; }
+            if (!this.questions.has(question.id)) throw new TurnwireError('QUESTION_EXPIRED', 'That question was cancelled while answering');
+            this.finishQuestion(question.id, 'answered', p.answers);
+            return { accepted: true };
+          } finally { this.answering.delete(question.id); }
         });
       }
       case 'approval.decide': {
@@ -427,17 +454,17 @@ export class TurnwireCore {
    */
   private async reconcileStatuses() {
     const now = Date.now();
-    const stale = this.store.sessions().filter(session => (session.status === 'running' || session.status === 'waiting_approval') && now - Date.parse(session.updatedAt) > 30_000);
+    const stale = this.store.sessions().filter(session => (session.status === 'running' || session.status === 'waiting_approval') && now - Date.parse(session.updatedAt) > 30_000).map(session => ({ session, version: this.versions.get(session.id) ?? 0 }));
     if (!stale.length || now - this.reconciledAt < 15_000) return;
     this.reconciledAt = now;
     for (const [id, runtime] of this.runtimes) {
-      const claimed = stale.filter(session => session.runtimeId === id);
+      const claimed = stale.filter(({ session }) => session.runtimeId === id);
       if (!claimed.length || !runtime.listSessions) continue;
       // A runtime that cannot be asked leaves the status alone: guessing is worse than waiting.
       const rows = await runtime.listSessions().catch(() => undefined);
       if (!rows) continue;
-      const running = new Set(rows.filter(row => row.status === 'running').map(row => row.id));
-      for (const session of claimed) if (!running.has(session.runtimeSessionId)) this.update(session.id, { status: 'interrupted' });
+      const running = new Set(rows.filter(row => row.status === 'running' || row.status === 'waiting_approval').map(row => row.id));
+      for (const { session, version } of claimed) if (version === (this.versions.get(session.id) ?? 0) && this.store.session(session.id)?.runtimeSessionId === session.runtimeSessionId && !running.has(session.runtimeSessionId)) this.update(session.id, { status: 'interrupted' });
     }
   }
   private session(id: string) { const session = this.store.session(id); if (!session) throw new TurnwireError('SESSION_NOT_FOUND', 'Session not found'); return session; }
@@ -461,8 +488,13 @@ export class TurnwireCore {
     this.subscriptions.set(session.id, runtime.subscribe(session.runtimeSessionId, event => this.accept(session.id, event)));
   }
   private accept(sessionId: string, event: RuntimeEvent) {
+    if (this.released) return;
     this.maintenance.changed();
     if (event.type === 'status') {
+      this.runtimeStatuses.set(sessionId, event.status);
+      // Allocation/model setup is not ready merely because the native root reports idle.
+      // Preserve the visible recoverable state until the creation owner commits completion.
+      if (this.creation.pending(sessionId)) return;
       const previous = this.store.session(sessionId)?.status;
       const status = event.status === 'running' && this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending') ? 'waiting_approval' : event.status;
       this.update(sessionId, { status });
@@ -477,7 +509,7 @@ export class TurnwireCore {
       this.update(sessionId, { status: 'waiting_approval' });
       // The request still reaches the journal first, so a client watching sees what was granted for
       // it even though nobody was asked.
-      if (this.store.session(sessionId)?.autoApprove) void this.grantPending(sessionId).catch(() => {});
+      if (!this.lifetime.sealed && this.store.session(sessionId)?.autoApprove) void this.lifetime.run(async () => { try { await this.grantPending(sessionId); } catch (error) { this.publish({ type: 'session.error', sessionId, message: error instanceof Error ? error.message : 'Automatic approval failed' }); } });
       return;
     }
     if (event.type === 'question.requested') {
@@ -487,9 +519,10 @@ export class TurnwireCore {
       return;
     }
     if (event.type === 'question.resolved') {
-      const question = this.questions.get(`${sessionId}:${event.requestId}`);
-      if (question?.status === 'pending') this.publish({ type: 'question.resolved', question: { ...question, status: event.decision === 'answered' ? 'answered' : 'cancelled' } });
-      this.questions.delete(`${sessionId}:${event.requestId}`);
+      const id = `${sessionId}:${event.requestId}`;
+      const claim = this.answering.get(id);
+      if (event.decision === 'answered' && claim) claim.confirmed = true;
+      else this.finishQuestion(id, event.decision === 'answered' ? 'answered' : 'cancelled');
       return;
     }
     if (event.type === 'approval.resolved') {
@@ -497,11 +530,19 @@ export class TurnwireCore {
       // The runtime echoes its own resolution, and that echo is what the store keeps — so a grant
       // made by the delegation has to be marked here, or it would read as a person's decision.
       if (approval?.status === 'pending') this.publish({ type: 'approval.resolved', approval: { ...approval, status: event.decision, ...(this.delegating.has(approval.id) ? { auto: true } : {}) } });
-      if (!this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending')) this.update(sessionId, { status: 'running' });
+      // Remove only our approval overlay on an authoritatively running turn. Unknown,
+      // duplicate, or ended-turn resolutions cannot establish that a turn is running.
+      if (approval?.status === 'pending' && this.runtimeStatuses.get(sessionId) === 'running' && this.store.session(sessionId)?.status === 'waiting_approval' && !this.store.approvals().some(a => a.sessionId === sessionId && a.status === 'pending')) this.update(sessionId, { status: 'running' });
       return;
     }
     // A selection made anywhere in the Host (including its own Web UI) arrives here and
     // becomes the session's recorded model.
+    if (event.type === 'context') {
+      const parsed = sessionContextSchema.safeParse(event.context);
+      const context = parsed.success ? parsed.data : undefined;
+      if (JSON.stringify(this.session(sessionId).context) !== JSON.stringify(context)) this.update(sessionId, { context });
+      return;
+    }
     if (event.type === 'model.selected') { this.update(sessionId, { model: event.selection }); return; }
     if (event.type === 'message.user') {
       const parsed = imageAttachmentSchema.array().max(MAX_IMAGES).safeParse(event.images ?? []);
@@ -517,12 +558,38 @@ export class TurnwireCore {
     const source = event.type === 'message.user' ? `${sessionId}:user:${event.messageId}` : undefined;
     this.publish({ ...event, sessionId, ...(mode === 'steer' ? { steer: true } : mode === 'queue' ? { queued: true } : {}) }, source);
   }
+  private finishQuestion(id: string, status: 'answered' | 'cancelled', answers?: Question['answers']) {
+    const question = this.questions.get(id);
+    if (!question) return;
+    this.questions.delete(id);
+    this.publish({ type: 'question.resolved', question: { ...question, status, ...(answers ? { answers } : {}) } });
+  }
   private update(id: string, patch: Partial<Session>): Session { const session = { ...this.session(id), ...patch, updatedAt: new Date().toISOString() }; this.publish({ type: 'session.updated', session }); return session; }
-  private publish(data: EventData, source?: string) { const event = this.store.append(data, source); if (event) for (const listener of this.listeners) { try { listener(event); } catch { /* A disconnected client must not interrupt runtime state. */ } } }
+  private publish(data: EventData, source?: string, settings?: Record<string, unknown>) {
+    const event = this.store.append(data, source, settings);
+    if (event && (data.type === 'session.created' || data.type === 'session.updated')) this.versions.set(data.session.id, (this.versions.get(data.session.id) ?? 0) + 1);
+    if (event) for (const listener of this.listeners) { try { listener(event); } catch { /* A disconnected client must not interrupt runtime state. */ } }
+  }
   private async lock<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key) ?? Promise.resolve();
     const result = previous.catch(() => {}).then(operation); this.locks.set(key, result);
     try { return await result; } finally { if (this.locks.get(key) === result) this.locks.delete(key); }
   }
-  async dispose() { this.questions.clear(); this.waiting.clear(); for (const unsubscribe of this.subscriptions.values()) unsubscribe(); await Promise.allSettled(this.inFlight.values()); await Promise.allSettled([...this.runtimes.values()].map(r => r.dispose())); this.listeners.clear(); this.store.close(); }
+  dispose(): Promise<void> {
+    this.seal();
+    return this.disposal ??= this.disposeOwned();
+  }
+  private async disposeOwned() {
+    await this.lifetime.drain();
+    // Admitted work may bind subscriptions. Release only after every owner has drained.
+    this.released = true;
+    const failures: unknown[] = [];
+    for (const unsubscribe of this.subscriptions.values()) { try { unsubscribe(); } catch (error) { failures.push(error); } }
+    this.subscriptions.clear();
+    const results = await Promise.allSettled([...this.runtimes.values()].map(runtime => Promise.resolve().then(() => runtime.dispose())));
+    for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+    this.questions.clear(); this.answering.clear(); this.waiting.clear(); this.listeners.clear();
+    try { await this.store.close(); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, 'Core disposal failed');
+  }
 }

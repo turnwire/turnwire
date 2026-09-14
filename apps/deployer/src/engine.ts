@@ -10,6 +10,7 @@ export interface DeploymentResult { publicUrl: string; release: string; token: s
 export type DeploymentRunner = (config: DeploymentConfig, progress: (message: string) => void, signal: AbortSignal) => Promise<DeploymentResult>;
 export function createDeploymentRunner(options: { directory: string; artifactRoot: string }): DeploymentRunner {
   return async (input,progress,signal) => {
+    signal.throwIfAborted();
     const c=normalizeConfig(input);const state=join(options.directory,'deployments');await mkdir(state,{recursive:true,mode:0o700});
     const working=await mkdtemp(join(state,'work-'));await chmod(working,0o700);
     const knownHosts=join(state,'known_hosts');await writeFile(knownHosts,'',{flag:'a',mode:0o600});await chmod(knownHosts,0o600);
@@ -37,20 +38,22 @@ export function createDeploymentRunner(options: { directory: string; artifactRoo
       progress('Uploading and verifying release files');
       await execute('ssh',[...ssh,privilegedCommand(`umask 077; cat > ${shellQuote(remoteStage+'/payload.tar.gz')}`)],{input:await readFile(archive),signal,timeoutMs:180_000});
       let result:DeploymentResult|undefined;
+      signal.throwIfAborted();
       await execute('ssh',[...ssh,privilegedCommand(`cd ${shellQuote(remoteStage)} && tar -xzf payload.tar.gz && sh bootstrap.sh`)],{signal,timeoutMs:30*60_000,line:line=>{
         let message:{step?:unknown;result?:DeploymentResult;error?:unknown};try{message=JSON.parse(line);}catch{return;}
         if(typeof message.step==='string')progress(message.step.slice(0,300));
         if(typeof message.error==='string')remoteError=message.error.slice(0,500);
         if(message.result && message.result.publicUrl===publicURL(c) && message.result.release===c.installDir+'/releases/'+release && /^[a-zA-Z0-9_.-]{32,500}$/.test(message.result.token))result=message.result;
-      }}).catch(error=>{throw new Error(remoteError ?? error.message);});
-      if(!result)throw new Error('No deployment result received; check the server deployment log and retry');
+      }}).catch(error=>{throw new Error(`${remoteError ?? (error instanceof Error ? error.message : 'Installer connection interrupted')}. Remote installer outcome is unknown; stopping the local SSH process does not confirm remote cancellation. Check the server deployment log before retrying.`, {cause:error});});
+      if(!result)throw new Error('Remote installer outcome is unknown: no deployment result received; check the server deployment log before retrying');
       progress('Verifying public HTTPS from this machine');
-      const response=await fetch(result.publicUrl+'/health',{signal:AbortSignal.timeout(15000)});
+      const response=await fetch(result.publicUrl+'/health',{signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])});
       if(!response.ok || (await response.json() as {status:string}).status!=='ok')throw new Error('The service is installed but this machine cannot verify public HTTPS; check the network and retry');
-      await execute('ssh',[...ssh,privilegedCommand(`rm -rf -- ${shellQuote(remoteStage)}`)]);remoteStage=undefined;
+      await execute('ssh',[...ssh,privilegedCommand(`rm -rf -- ${shellQuote(remoteStage)}`)],{signal});remoteStage=undefined;
       return result;
     } catch(error) {
-      if(remoteStage)progress(`Server diagnostics directory: ${remoteStage} (readable by administrators only)`);
+      // Diagnostics callbacks must not replace the original failure (including unknown remote outcome).
+      if(remoteStage)try { progress(`Server diagnostics directory: ${remoteStage} (readable by administrators only)`); } catch {}
       throw error;
     } finally {await rm(working,{recursive:true,force:true});}
   };

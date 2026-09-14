@@ -56,7 +56,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 | 你想要 | 怎么装 | 需要什么 |
 | --- | --- | --- |
 | Mac 原生应用（最完整） | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+、Xcode 16+ / Swift 6；产物是 ad-hoc 签名，对外发布还需 Developer ID 与 notarization |
-| 常驻主机（Linux，无界面） | 在构建好的 release 里运行 `scripts/install-linux-host.sh` | Linux + systemd，且先写好 `config/dsh.env.json` |
+| 常驻主机（Linux，无界面） | 在构建好的 release 里运行 `scripts/install-linux-host.sh` | Linux + systemd，且先写好私有 DSH 环境文件（默认 `~/.config/turnwire/dsh.env.json`；支持 `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME` 或 `TURNWIRE_DSH_ENV_FILE`） |
 | 自托管 Relay（长期稳定地址） | `deploy/` 下有 Dockerfile、compose.yaml 与 Caddyfile | 一台服务器；详见[一键部署 Relay](docs/RELAY-INSTALL.zh.md) |
 | 终端 / 脚本 | `npm run turnwire -- ...`，或构建后 `node apps/cli/dist/main.js ...` | Node.js 22.13+；命令见[命令行参考](docs/CLI.zh.md) |
 
@@ -106,7 +106,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 
 ## 现状与边界
 
-当前交付包含一次性配对、经设备凭据认证的每连接 ECDH 会话加密、分阶段连接恢复、持久审批收件箱、Web Push 和可配置的 TLS 局域网入口。已有旧配对可以继续使用并从主机显式升级。Relay 的连接路由仍在内存中，推送密钥与投递队列持久化。
+当前交付包含一次性配对、经设备凭据认证的每连接 ECDH 会话加密、分阶段连接恢复、持久审批收件箱、Web Push 和可配置的 TLS 局域网入口。配对与远程传输仅支持 v2，不支持 v1 设备或凭据升级；应从主机创建新的 v2 配对。RPC/事件信封仍为 v1。Store 拒绝旧数据库且不迁移，应使用独立的空数据库。Relay 的连接路由仍在内存中，推送密钥与投递队列持久化。
 
 尚不包含 Codex / Claude adapter、团队账户、原生 iOS、自动更新或发行签名。"哪些只在特定条件下验证过"以 [验证记录](docs/VALIDATION.zh.md) 为准。
 

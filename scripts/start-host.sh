@@ -51,16 +51,16 @@ if [[ $load != not-found ]]; then
 fi
 [[ ! -e "$TURNWIRE_UNITS_DIR/$unit" && ! -L "$TURNWIRE_UNITS_DIR/$unit" && ! -e "$HOME/.config/systemd/user/$unit" && ! -L "$HOME/.config/systemd/user/$unit" ]] || fail 'An unloaded user unit already exists; inspect it and reload systemd manually before retrying.'
 [[ -f "$root/package-lock.json" && -f "$root/scripts/install-linux-host.sh" ]] || fail 'Run from a complete source checkout with package-lock.json and the Linux installer.'
-config_dir=$(dirname -- "$DSH_ENV_FILE")
-[[ ! -L "$config_dir" && ! -L "$DSH_ENV_FILE" ]] || fail 'Refusing a symlinked credential file or config directory.'
-[[ ! -e "$DSH_ENV_FILE" || -f "$DSH_ENV_FILE" ]] || fail 'Credential path must be a regular private JSON file.'
+config_dir=$(dirname -- "$TURNWIRE_DSH_ENV_FILE")
+[[ ! -L "$config_dir" && ! -L "$TURNWIRE_DSH_ENV_FILE" ]] || fail 'Refusing a symlinked credential file or config directory.'
+[[ ! -e "$TURNWIRE_DSH_ENV_FILE" || -f "$TURNWIRE_DSH_ENV_FILE" ]] || fail 'Credential path must be a regular private JSON file.'
 for tool in curl tar xz sha256sum awk mktemp; do command -v "$tool" >/dev/null || fail "Required command missing: $tool"; done
 case $(uname -m) in x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) fail 'Supported Linux architectures are x86_64 and arm64.' ;; esac
 if [[ $mode == check ]]; then
   printf '%s\n' 'Local preflight passed; no changes made. Network, npm access and credential JSON are validated on first start.'
   exit 0
 fi
-if [[ ! -f "$DSH_ENV_FILE" && -z $credential ]]; then
+if [[ ! -f "$TURNWIRE_DSH_ENV_FILE" && -z $credential ]]; then
   if ! { exec 3<>/dev/tty; } 2>/dev/null; then fail 'No credential available. Set TURNWIRE_HARNESS_DEEPSEEK_API_KEY or run from a terminal to enter it privately.'; fi
   printf 'DeepSeek API key (hidden): ' >&3
   IFS= read -rs credential <&3 || fail 'Credential input cancelled.'
@@ -110,7 +110,7 @@ try {
     try { fs.writeFileSync(fd,JSON.stringify({TURNWIRE_HARNESS_DEEPSEEK_API_KEY:key},null,2)+"\n"); } finally {fs.closeSync(fd);}
   }
 } catch { console.error("Credential configuration rejected: use an owned regular mode-600 config/dsh.env.json containing a JSON string map with a nonempty TURNWIRE_HARNESS_DEEPSEEK_API_KEY. Existing files are never overwritten."); process.exit(1); }
-' "$DSH_ENV_FILE"
+' "$TURNWIRE_DSH_ENV_FILE"
 unset credential
 cd -- "$root"
 npm ci --no-audit --no-fund

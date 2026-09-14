@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { Image as ImageIcon, X } from '@phosphor-icons/react';
 import { loadImage, type TurnwireClient } from '@turnwire/sdk';
 import { MAX_IMAGE_BYTES, MAX_IMAGES, MAX_IMAGE_TEXT_LENGTH, type ImageInput, type ImageAttachment } from '@turnwire/protocol';
@@ -62,9 +62,9 @@ export function useImageDraft(sessionKey: unknown) {
     validate: (text: string, supported = true) => { const error = latest.current.images.length && !supported ? t('image.unsupported') : latest.current.images.length && text.length > MAX_IMAGE_TEXT_LENGTH ? t('image.textLimit') : ''; update({ error }); return !error && !latest.current.processing; },
   };
 }
-export function ImagePicker({ draft, disabled, supported }: { draft: ReturnType<typeof useImageDraft>; disabled?: boolean; supported: boolean }) {
+export function ImagePicker({ draft, disabled, supported, controls }: { draft: ReturnType<typeof useImageDraft>; disabled?: boolean; supported: boolean; controls?: ReactNode }) {
   const t = useLocale(); const input = useRef<HTMLInputElement>(null);
-  return <><button className="image-picker" type="button" aria-label={t('image.add')} title={supported ? t('image.hint') : t('image.unsupported')} disabled={disabled || draft.processing} onClick={() => supported ? input.current?.click() : void draft.addFiles([], false)}><ImageIcon size={20} /></button><input ref={input} type="file" hidden multiple accept={IMAGE_ACCEPT} onChange={event => { void draft.addFiles(Array.from(event.target.files ?? []), supported); event.target.value = ''; }} />
+  return <><div className="composer-utility-row">{controls}<button className="image-picker" type="button" aria-label={t('image.add')} title={supported ? t('image.hint') : t('image.unsupported')} disabled={disabled || draft.processing} onClick={() => supported ? input.current?.click() : void draft.addFiles([], false)}><ImageIcon size={20} /></button></div><input ref={input} type="file" hidden multiple accept={IMAGE_ACCEPT} onChange={event => { void draft.addFiles(Array.from(event.target.files ?? []), supported); event.target.value = ''; }} />
     {draft.images.length > 0 && <div className="image-draft-strip">{draft.images.map((image, index) => <div className="image-draft" key={index}><img src={imageDataUrl(image)} alt={image.name || t('image.attachment')} /><button type="button" aria-label={`${t('image.remove')} ${image.name ?? index + 1}`} disabled={disabled || draft.processing} onClick={() => draft.remove(index)}><X size={14} /></button></div>)}<small>{t('image.hint')}</small></div>}
     {draft.processing && <small className="image-feedback" role="status">{t('image.processing')}</small>}{draft.notice && draft.images.length > 0 && <small className="image-feedback" role="status">{draft.notice}</small>}{draft.error && <small className="image-feedback" role="alert">{draft.error}</small>}</>;
 }

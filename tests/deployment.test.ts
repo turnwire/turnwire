@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { Store, TurnwireCore } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import { LocalClient, randomSecret } from '@turnwire/sdk';
+import { LocalClient } from '@turnwire/sdk';
+import { randomSecret } from '@turnwire/wire';
 import { normalizeConfig, publicURL, shellQuote } from '../apps/deployer/src/config.js';
 import { caddySite, mergeCaddy, renewHook, bootstrap } from '../apps/deployer/src/templates.js';
 import { deploymentEnvironment, sshArguments, execute } from '../apps/deployer/src/ssh.js';
@@ -72,22 +73,23 @@ async function setup() {
   const dir=await directory();const core=new TurnwireCore(new Store(':memory:'),[new DemoRuntime()],{id:crypto.randomUUID(),name:'Deploy test'});await core.start();cleanup.push(()=>core.dispose());
   const remote=new RemoteController(core,{directory:dir,webRoot:dir});cleanup.push(()=>remote.close());
   let starts=0;const secret=randomSecret();
-  const deployment=new DeploymentController(core.store,async(c,progress)=>{starts++;progress('Testing isolated installer');await new Promise(r=>setTimeout(r,50));return {publicUrl:publicURL(c),release:'/opt/turnwire-relay/releases/test',token:secret};},remote);cleanup.push(()=>deployment.close());
+  const deployment=new DeploymentController(core.store,async(c,progress)=>{starts++;progress('Testing isolated installer');await new Promise(r=>setTimeout(r,50));return {publicUrl:publicURL(c),release:'/opt/turnwire-relay/releases/test',token:secret};},remote,remote.activity);cleanup.push(()=>deployment.close());
   const token=randomSecret();const server=await startDaemonServer({core,token,port:0,remoteAccess:remote,deployment});cleanup.push(()=>server.close());
   const url=`http://127.0.0.1:${server.port}`;const local=new LocalClient(url,token);cleanup.push(()=>local.close());
   return {dir,core,deployment,remote,local,url,token,secret,starts:()=>starts};
 }
 it('shares asynchronous deployment status across local clients, fences administration and never returns Relay credentials',async()=>{
   const {core,local,url,token,secret,starts}=await setup();
-  await local.request('session.create',{runtimeId:'demo',title:'Preserved',cwd:process.cwd()});
+  await local.call('session.create',{runtimeId:'demo',title:'Preserved',cwd:process.cwd()});
   expect((await fetch(url+'/deployment')).status).toBe(401);
   expect((await fetch(url+'/deployment',{headers:{authorization:'Bearer '+token,origin:'https://untrusted.example'}})).status).toBe(403);
   const started=await local.deployRelay(configuration);expect(started.state).toBe('running');
   await expect(local.deployRelay(configuration)).rejects.toThrow('already running');
   await expect.poll(async()=>(await local.deploymentStatus()).state).toBe('succeeded');
   expect(starts()).toBe(1);expect(core.store.sessions()).toHaveLength(1);expect(JSON.stringify(await local.deploymentStatus())).not.toContain(secret);
-  expect((await local.request('events.list'))).toEqual({events:expect.any(Array),cursor:expect.any(Number)});
-  await expect(local.request('deployment.start' as never,configuration)).rejects.toThrow();
+  expect((await local.call('events.list'))).toEqual({events:expect.any(Array),cursor:expect.any(Number)});
+  // @ts-expect-error Administration methods must not be available through typed RPC.
+  await expect(local.call('deployment.start',configuration)).rejects.toThrow();
 });
 it('CLI, TUI command dispatcher and terminal form call the same local deployment service',async()=>{
   const {dir,local,url,token,starts}=await setup();const file=join(dir,'private.json');await writeFile(file,JSON.stringify(configuration),{mode:0o600});
@@ -99,6 +101,6 @@ it('CLI, TUI command dispatcher and terminal form call the same local deployment
 });
 it('marks an interrupted daemon deployment as recoverable and rejects concurrent restarts',async()=>{
   const {core,remote}=await setup();core.store.setSetting('relay-deployment',{state:'running',message:'old process',steps:[],config:normalizeConfig(configuration)});
-  const restored=new DeploymentController(core.store,async()=>{throw new Error('unused');},remote);
+  const restored=new DeploymentController(core.store,async()=>{throw new Error('unused');},remote,remote.activity);
   expect(restored.status().state).toBe('interrupted');expect(restored.status().config?.host).toBe(configuration.host);
 });

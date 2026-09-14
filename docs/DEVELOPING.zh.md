@@ -25,7 +25,7 @@ npm run turnwire -- new '检查这条会话的审批同步' --runtime demo --tit
 npm run turnwire -- ls
 ```
 
-`npm run dev` 运行 daemon，`npm run dev:web` 单独运行 Vite 开发服务器。生产构建的 PWA 由 daemon 同源提供。默认状态目录为 `~/.turnwire`；可用 `TURNWIRE_HOME` 指定独立目录。**不要同时用多个 daemon 操作同一状态目录。**
+`npm run dev` 运行 daemon，`npm run dev:web` 单独运行 Vite 开发服务器。生产构建的 PWA 由 daemon 同源提供。路径独立解析：`TURNWIRE_STATE_HOME`、`TURNWIRE_CONFIG_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 分别覆盖状态、配置、运行时数据和缓存。否则使用对应的绝对路径 `XDG_*_HOME` 基目录加 `/turnwire`，默认依次为 `~/.local/state/turnwire`、`~/.config/turnwire`、`~/.local/share/turnwire`、`~/.cache/turnwire`。`TURNWIRE_HOME` 已删除，设置它会被拒绝；不自动识别旧布局或源码目录内的 DSH 环境文件。见 [XDG 目录](XDG.zh.md)。**不要同时用多个 daemon 操作同一状态目录。预览必须同时隔离 config 和 state，避免 daemon 覆盖活动的 `client.json`。** Store 只接受当前数据库格式，拒绝旧库且不提供迁移；须使用独立空状态目录。见[维护指南](FIRST-UPGRADE.zh.md)。
 
 ## 接真实 DSH
 
@@ -72,8 +72,8 @@ node --import tsx scripts/remote-resilience-check.mjs
 node --import tsx scripts/question-ui-check.mjs
 
 # 完整 UI 走查需要先起一个隔离的 Demo：
-TURNWIRE_HOME=/tmp/turnwire-preview-state TURNWIRE_RUNTIME=demo npm run dev   # 另开终端
-TURNWIRE_HOME=/tmp/turnwire-preview-state node scripts/ui-check.mjs
+TURNWIRE_STATE_HOME=/tmp/turnwire-preview-state TURNWIRE_CONFIG_HOME=/tmp/turnwire-preview-config TURNWIRE_RUNTIME=demo npm run dev   # 另开终端
+TURNWIRE_STATE_HOME=/tmp/turnwire-preview-state TURNWIRE_CONFIG_HOME=/tmp/turnwire-preview-config node scripts/ui-check.mjs
 ```
 
 测试覆盖请求去重、审批竞态、数据库恢复、事件补发、本机鉴权、DNS rebinding 防护、Relay 撤销、密文完整性、跨设备隔离、重放拒绝、模型目录与选择校验（未注册的模型会被拒绝）、DSH 合约和 UI 主要流程。文档里的脚本名、仓库路径、CLI 命令、DSH 版本与凭据变量名由 `tests/docs.test.ts` 机械核对，说明过时会直接让 CI 失败。
@@ -92,7 +92,10 @@ packages/protocol    版本化消息、类型和运行时校验
 packages/runtime     AgentRuntime 接口和明确标注的 Demo
 packages/runtime-dsh 官方 DSH HTTP / WebSocket 适配器
 packages/core        会话、权限、SQLite、事件和请求去重
-packages/sdk         本机 / Remote 客户端、加密、会话展示模型
+packages/sdk         本机 / Remote 客户端、类型化 call API、会话展示模型
+packages/wire        共享加密与加密会话传输
 ```
+
+SDK 请求只使用类型化 `call` API；加密与加密会话原语属于 `packages/wire`，不通过 SDK 兼容导出。远程配对与传输仅支持 v2，不兼容旧主机/设备，也没有设备升级或 PUT 替换入口。
 
 代码归属、每项能力在各客户端的覆盖，以及"新增行为该放哪一层"，见 [多端功能对等](CLIENTS.zh.md) 与 [协议与状态边界](PROTOCOL.zh.md)。

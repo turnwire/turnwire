@@ -2,6 +2,8 @@
 
 # 验证记录
 
+> 本文保留历史证据，不是当前部署检查单。以下有日期的结果只描述当时测试的修订和环境；测试数量、模型目录与现场主机观察不是当前保证。最终版使用 XDG 目录、不识别旧布局、拒绝旧数据库且不迁移、SDK 只提供 `call`、加密/会话原语位于 `packages/wire`，配对仅支持 v2。历史升级成功不承诺恢复旧数据或服务无中断。当前操作以[维护与不兼容状态拒绝指南](FIRST-UPGRADE.zh.md)为准。
+
 于 2026-09-09 和 2026-09-10 使用 Node 22.22.1 与 Apple Swift 6.3.3 执行。
 
 | 面向 | 证据 |
@@ -38,7 +40,7 @@
 
 中国大陆指引基于所链接的 Cloudflare 文档，而非多 ISP 的中国大陆连通性测试。第一次原生实机测试失败，是因为测试 Relay 使用了错误的端口变量启动；改用其支持的 `PORT` 后，全部十一项 Swift 测试针对隔离服务通过。
 
-要重新运行两项原生实机测试，请启动隔离的 Demo daemon 与 Relay，把 `TURNWIRE_TEST_DAEMON_CONFIG` 设为 daemon 的 `client.json`，并设置 `TURNWIRE_TEST_RELAY_URL` 和 `TURNWIRE_TEST_RELAY_TOKEN`，然后调用 `swift test`。没有这些设置时，相关实机测试会跳过；仍有十项独立测试运行。`scripts/ui-check.mjs` 使用 `TURNWIRE_HOME`，并写入 `TURNWIRE_SCREENSHOTS`（默认 `/tmp/turnwire-screenshots`）。
+要重新运行两项原生实机测试，请启动隔离的 Demo daemon 与 Relay，把 `TURNWIRE_TEST_DAEMON_CONFIG` 设为 daemon 的 `client.json`，并设置 `TURNWIRE_TEST_RELAY_URL` 和 `TURNWIRE_TEST_RELAY_TOKEN`，然后调用 `swift test`。没有这些设置时，相关实机测试会跳过；仍有十项独立测试运行。当前重跑时，`scripts/ui-check.mjs` 通过隔离的 `TURNWIRE_CONFIG_HOME` 查找 `client.json`；Demo daemon 应使用同一配置路径及独立的 `TURNWIRE_STATE_HOME`。截图写入 `TURNWIRE_SCREENSHOTS`（默认 `/tmp/turnwire-screenshots`）。
 
 2026-09-10 的重设计验证使用端口 19998 上的隔离 Demo daemon 和 19999 上的 Relay。原生视觉 fixture 与用户会话分离，且不执行工具。CLI、浏览器和 Swift 契约检查在没有真实模型推理的情况下通过。预览截图位于 `turnwire/desktop` 下的任务可视化目录；移动浏览器截图位于 `turnwire/web` 下。
 
@@ -104,7 +106,7 @@ Let's Encrypt 的 staging 与生产 IP 证书签发通过。外部 curl、Node f
 
 所有客户端现在使用共享的 `history.page` 投影，初始读取 40 条完整记录，并显式获取更早的页面。工具输入/结果对保持在一起；页面大小也以 512 KiB 为目标。原始 journal 得到保留。桌面/PWA 压缩实时 delta，并以 50 ms 批量提交呈现更新；原生视图读取使用缓存消息，未变化的 Markdown 视图跳过重复解析。快照不能被更早的状态事件覆盖。原生重连会使缓存历史失效并获取当前快照；页面读取与实时事件连接并行运行。完整导出仍会显式加载所有页。
 
-验证通过：完整 TypeScript 检查（63 项测试），随后是第六项历史回归（15 个文件中共 64 项测试）；16 项 Swift 测试，包括通过 `scripts/native-live-check.mjs` 的四项实机检查。覆盖包括数千个 delta、原始顺序、失败工具、并发页面/实时合并、旧 journal 迁移、受限字节大小、无未请求完整重放的加密初始连接、快照/监听器竞态、CLI/TUI 分页、原生完整导出以及离线完成后重连。`scripts/history-ui-check.mjs` 通过了加密 Chrome 390 px 检查：最近 40 条记录的第一页、加载更多后共 93 条记录、保持滚动位置、实时完成与重新加载。其隔离首屏渲染在此开发机上测得 126 ms；这不是公网或手机速度保证。既有 Markdown 浏览器回归也在 320/375/390/1440 px 下通过。
+验证通过：完整 TypeScript 检查（63 项测试），随后是第六项历史回归（15 个文件中共 64 项测试）；16 项 Swift 测试，包括通过 `scripts/native-live-check.mjs` 的四项实机检查。覆盖包括数千个 delta、原始顺序、失败工具、并发页面/实时合并、当时的 journal 转换（最终 Store 已移除，现拒绝旧 schema）、受限字节大小、无未请求完整重放的加密初始连接、快照/监听器竞态、CLI/TUI 分页、原生完整导出以及离线完成后重连。`scripts/history-ui-check.mjs` 通过了加密 Chrome 390 px 检查：最近 40 条记录的第一页、加载更多后共 93 条记录、保持滚动位置、实时完成与重新加载。其隔离首屏渲染在此开发机上测得 126 ms；这不是公网或手机速度保证。既有 Markdown 浏览器回归也在 320/375/390/1440 px 下通过。
 
 生产升级等待会话空闲，然后保留了两个会话和既有 DSH 进程。升级后，实机首页 RPC 分别返回 62/63 个投影事件（40 条记录，含工具对），约 167/70 KB，耗时 4/2 ms。原生 release 被重新打开。公网 Relay/PWA 使用既有的一键部署 profile 更新，复用凭据和证书。这些检查未调用模型 prompt 或真实 shell/文件工具。物理 iPhone/Safari/蜂窝行为仍未测试。
 
@@ -126,7 +128,7 @@ Linux 用户服务重启恢复了其原主机身份、会话和 Relay 配置。�
 - `npm run check`：20 个文件中的 75 项测试通过，包含 TypeScript 检查和生产构建。在把存在状态过期切换为单调时钟后，额外的针对性检查通过；墙上时钟跳变测试会让存在状态保持连接，直到单调时钟过期。
 - `node --import tsx scripts/native-live-check.mjs`：17 项 Swift 测试通过，包括新的实机收件箱、已决议审批历史、直达设置、通知偏好和回执查询契约。release 应用已构建、本地签名，并在远程控制处重新打开。
 - 会话密码学测试演练经过认证的 ECDH、被篡改的转录、错误凭据/设备上下文、反射、重放、乱序消息、并发加密排序、不同墙上时钟和新会话密钥。实机登记检查覆盖一次性邀请、客户端凭据的持久替换、最终登记响应丢失，以及对复制已消耗二维码的拒绝。
-- 一次真实回归暴露了旧 Relay 响应在其新握手完成之前到达替换设备连接的问题。Relay 连接 UUID 现在把 payload 转发和关闭请求绑定到正确的 socket。修复后快速重连/登记集成测试通过。既有 v1 传输/审批/重放兼容性测试也通过。
+- 一次真实回归暴露了旧 Relay 响应在其新握手完成之前到达替换设备连接的问题。Relay 连接 UUID 现在把 payload 转发和关闭请求绑定到正确的 socket。修复后快速重连/登记集成测试通过。当时的 v1 传输/审批/重放测试也通过；该兼容路径现已删除，不描述最终的 v2-only 版本。
 - `tests/direct.test.ts` 启动一个独立的 TLS 服务器，使用显式受信任的测试 CA 和正常的证书/主机名校验。演练了直达连通性、私有 HTTP 路由 404 和自动 Relay 恢复。产品代码没有 TLS 绕过。该 loopback fixture 不是真实的 Wi-Fi 或 iPhone 局域网权限测试。
 - 推送测试使用模拟 provider。它们验证私有 SQLite 文件权限、持久 VAPID 身份/队列、去重投递、过期订阅移除、端点限制、按设备范围的订阅授权和通用通知。收件箱测试在 daemon 重启后保留已决议/已取消记录，并取消待处理的 runtime 审批。
 - `scripts/remote-resilience-check.mjs` 在 390×844 的真实 Chrome 中通过：一次性配对、重新加载、离线/在线恢复、模拟可见性事件、收件箱审批、跨标签页记住凭据、无页面错误且无水平溢出。收件箱截图是在等待抽屉过渡完成后检查的。此浏览器检查未把通知投递/权限模拟为成功的 OS 推送。
@@ -139,8 +141,8 @@ Linux 用户服务重启恢复了其原主机身份、会话和 Relay 配置。�
 - 从固定为 `@high` 的会话里选择 bridge 模型时被拒绝并提示"所选模型当前不可用"，读起来像是模型不存在。bridge 这条 route 根本不声明任何 reasoning 强度，客户端于是把一个它没有的 `high` 一起发了过去，主机便拒绝了整次选择：在线上主机上 `bridge/gpt-6-astra` 能选中，而 `bridge/gpt-6-astra --effort high` 正好报出这句话。现在新的选择只有在目标模型自己也声明了该强度时才沿用原来的强度；已在线上主机上验证：把会话从 `high` 的 DeepSeek 模型切到 GPT-6 Astra，没有拒绝提示、也没有强度选择行（该模型没有强度），随后还通过了主机的真实回合。`tests/model-choice.test.ts` 覆盖沿用、丢弃与本来就没有强度三种情况。
 - 在 bridge 清单重新生成之后，有一次选择模型被拒绝并提示"所选模型当前不可用"。在线上主机上复现：`bridge/gpt-6-astra` 选择正常，而被端点停止服务、已从清单中移除的 `bridge/gpt-5.4` 正好报出这句话——说明页面还在用重载之前抓取的目录。选择器现在会在打开时重新拉取目录，并在主机以 `MODEL_UNAVAILABLE` 拒绝选择时再拉一次；`scripts/ui-model-check.mjs` 断言打开选择器会产生一次新的 `model.catalog` 请求。
 - 主机在 14:33 那次构建上卡了好几个小时，原因是一个过期的状态：重载只在"没有会话在运行"时重启，而某个会话的回合恰好在那次重启中夭折，却在存储里一直保持 `running`，于是每次重载都等满 900 秒然后放弃。对该会话执行一次 `session.cancel`（对一个已不存在的回合取消会得到一条状态事件）就清掉了它，主机随即完成重载。现在状态在**读取它的地方**被修复：即将报告"是否有东西在运行"的快照会先问各 runtime 它们实际在跑哪些会话，把其余的标为 `interrupted`——每 15 秒最多一次，且只处理看起来已经忙了 30 秒以上的会话，因此刚开始的回合不会被误判。`tests/core.test.ts` 覆盖了这两种情况；另外 store 现在可以安全地被重复关闭，因为每个持有者都会在退出时释放它。
-- DSH 从 `0.1.5-rc.1`（源码 `183f08e9`）升级到 `0.1.5-rc.2`（源码 `fb2c4b9e`）；npm 把它发布在 `next` tag 上，而 `latest` 仍指向 rc.1——固定说明里写明了这一点。适配器无需改动：合约测试、`scripts/dsh-model-probe.mjs`（目录、`session/selectModel`、`session/model-unavailable` 错误形状）、`scripts/ui-model-check.sh`（认证、目录、选择、思考强度解析、重载）以及 `scripts/dsh-live-check.mjs`（真实回合、审批链路、队列投影、派发记录、已开始提示不可撤回）在新 Host 上全部原样通过。把线上 DSH 状态复制一份用 rc.2 打开可读出 **21 个会话**、无迁移错误，因此跨版本升级后既有会话仍然可用。
-- bridge 的模型清单现在由端点生成，而不是手工维护。DSH 无法为已声明的 route 提供纯动态清单——`resolveRouteModels` 会拒绝没有模型的 route，插件的 discovery API 也只服务于它的 Models 页面——因此 `scripts/dsh-model-sync.mjs` 改为读取每个 OpenAI 形状 route 自己的 `/v1/models` 并原样写入这份回答：保留手写显示名，端点在不了就完全不动那个 route。`scripts/host-reload.sh` 会在 Host 重启前运行它，因此"GPT-6 消失"那类漂移不会再无人察觉；`--check` 只报告差异、不写文件。把 `gpt-6-astra` 从 overlay 删掉再运行它会恢复该条目；三项测试覆盖 route/清单解析、重写（保留名字、丢弃已下线的 id）与兜底显示名。
+- DSH 从 `0.1.5-rc.1`（源码 `183f08e9`）升级到 `0.1.5-rc.2`（源码 `fb2c4b9e`）；npm 把它发布在 `next` tag 上，而 `latest` 仍指向 rc.1——固定说明里写明了这一点。适配器无需改动：合约测试、`scripts/dsh-model-probe.mjs`（目录、`session/selectModel`、`session/model-unavailable` 错误形状）、`scripts/ui-model-check.sh`（认证、目录、选择、思考强度解析、重载）以及 `scripts/dsh-live-check.mjs`（真实回合、审批链路、队列投影、派发记录、已开始提示不可撤回）在新 Host 上全部原样通过。当时用该修订打开 DSH 状态副本可读出 **21 个会话**。这项历史 DSH 观察不代表 Turnwire Store 迁移，也不保证恢复旧数据。
+- bridge 的模型清单现在由端点生成，而不是手工维护。DSH 无法为已声明的 route 提供纯动态清单——`resolveRouteModels` 会拒绝没有模型的 route，插件的 discovery API 也只服务于它的 Models 页面——因此 `scripts/dsh-model-sync.mjs` 改为读取每个 OpenAI 形状 route 自己的 `/v1/models` 并原样写入这份回答：保留手写显示名，端点在不了就完全不动那个 route。当时的修订在 Host 重载期间调用它；最终重载路径不再执行模型同步，也不重启 DSH。同步属于显式、另行协调的运行时维护；`--check` 只报告差异、不写文件。把 `gpt-6-astra` 从 overlay 删掉再运行它会恢复该条目；三项测试覆盖 route/清单解析、重写（保留名字、丢弃已下线的 id）与兜底显示名。
 - Codex bridge 的模型清单写在 `config/dsh-deepseek.patch.yml` 里，而它已经和它声明的那个端点脱节：`/v1/models` 去掉了 `gpt-5.4` 和 `gpt-5.4-mini`、新增了 `gpt-6-astra`，于是主机同时提供两个已不存在的 id、却完全没有新模型——所以 GPT-6 不是"坏掉"，而是根本没有被列出来。现在这份清单与端点的实际回答完全一致（`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5`，通过查询端点核对），`scripts/dsh-model-probe.mjs` 也支持用 `DSH_MODEL=provider/model` 验证新加入的路由：主机成功解析了 `{provider: bridge, model: gpt-6-astra}`。直接调用还确认该 bridge 对带工具的请求仍只回文本，因此这条路由适合对话、不适合必须执行工具的回合。
 - 连接栏无论是解释问题还是仅仅报告一切正常，都占用同样的空间；而它已经答复过的失败也会一直留在屏幕上，直到有人手动关闭。现在"已连接"只剩一条细线（主机、往返延迟，点击可重新验证——浏览器检查实测低于 30px），连接栏只留给需要解释的状态；当重新连接验证通过时，那些已被链路答复的失败（`DISCONNECTED`、`OUTCOME_UNKNOWN`、`HOST_OFFLINE`、`STAGE_TIMEOUT`、`PROBE_TIMEOUT`、`CONNECTION_FAILED`、`REMOTE_ERROR`）会自行清除。`scripts/remote-resilience-check.mjs` 会在离线状态下失败一次重连、要求出现横幅，然后不做任何点击地恢复网络，并要求细线出现且横幅消失；把这条规则禁用后它会报 `Expected: 0, Received: 1`。
 - Agent 等待回答的问题以前只是输入框上方的一个控件：回答发出后面板消失，聊天记录里既看不到问了什么、也看不到选了什么。现在问题是记录：`question.requested`/`question.resolved` 共用同一个 history key，一页会带上这一对，客户端投影把 `question` 行放在 Agent 提问的位置——选择后显式提交回答，之后作为记录留存，`turnwire history` 与导出记录都会打印它。PWA 的实时事件过滤和 daemon 的历史投影都必须学会识别 question（它们此前只从 `sessionId`/`approval` 推导会话），这也是为什么即使投影支持了、那一行仍然不可见。包含提问的回合不再把步骤折叠掉。`scripts/ui-check.mjs` 断言卡片位于对话内、显式提交后变为 `answered`、显示所选标签并移除按钮；`tests/history.test.ts` 覆盖投影与导出。

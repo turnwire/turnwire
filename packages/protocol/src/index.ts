@@ -9,9 +9,9 @@ export const PROTOCOL_VERSION = 1 as const;
 export const idSchema = z.string().min(1).max(200);
 export const statusSchema = z.enum(['idle', 'running', 'waiting_approval', 'interrupted', 'error']);
 export type SessionStatus = z.infer<typeof statusSchema>;
-export const capabilitiesSchema = z.object({ approvals: z.boolean(), streaming: z.boolean(), resume: z.boolean(), shell: z.boolean(), diff: z.boolean(), fileEdits: z.boolean(), toolCalls: z.boolean(), backgroundTasks: z.boolean(), modelSelection: z.boolean(), imageInput: z.boolean().optional().default(false) });
+export const capabilitiesSchema = z.object({ approvals: z.boolean(), streaming: z.boolean(), resume: z.boolean(), shell: z.boolean(), diff: z.boolean(), fileEdits: z.boolean(), toolCalls: z.boolean(), backgroundTasks: z.boolean(), modelSelection: z.boolean(), imageInput: z.boolean() });
 /** Capability advertisement only, not a guarantee that the selected model accepts images. */
-export type RuntimeCapabilities = Omit<z.infer<typeof capabilitiesSchema>, 'imageInput'> & { imageInput?: boolean };
+export type RuntimeCapabilities = z.infer<typeof capabilitiesSchema>;
 /** The model a session runs on. `reasoningEffort` is adapter-owned; absent means adapter default. */
 export const modelSelectionSchema = z.object({ provider: idSchema, model: idSchema, reasoningEffort: idSchema.optional() }).strict();
 export type ModelSelection = z.infer<typeof modelSelectionSchema>;
@@ -29,19 +29,29 @@ export const modelCatalogFailureSchema = z.object({ id: idSchema, name: z.string
  */
 export const modelCatalogSchema = z.object({ default: modelSelectionSchema, routableProviders: z.array(idSchema), groups: z.array(modelProviderGroupSchema), failures: z.array(modelCatalogFailureSchema) }).strict();
 export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
+/** Runtime-reported context occupancy, not cumulative token usage. Missing fields are unknown. */
+export const sessionContextSchema = z.object({
+  contextWindow: z.number().finite().positive().optional(),
+  pressureTokens: z.number().finite().nonnegative().optional(),
+  /** Runtime estimate for the next request; prefer this over the last provider sample when present. */
+  projectedTokens: z.number().finite().nonnegative().optional(),
+});
+export type SessionContext = z.infer<typeof sessionContextSchema>;
 export const sessionSchema = z.object({
   id: idSchema, runtimeId: idSchema, runtimeSessionId: idSchema,
   title: z.string(), cwd: z.string(), status: statusSchema,
   createdAt: z.string(), updatedAt: z.string(),
-  archived: z.boolean().optional(),
+  archived: z.boolean(),
   /**
    * While true, this session's approval requests are granted as they arrive instead of waiting for
    * someone to answer them. Persisted per session across host restarts and resume; defaults to
-   * false for older sessions. Archiving clears it permanently; unarchiving does not reenable it.
+   * false when created. Archiving clears it permanently; unarchiving does not reenable it.
    */
-  autoApprove: z.boolean().optional(),
+  autoApprove: z.boolean(),
   /** Absent until the runtime reports a selection for this session. */
   model: modelSelectionSchema.optional(),
+  /** Absent until observed from the current runtime connection; never inferred from a model id. */
+  context: sessionContextSchema.optional(),
 });
 export type Session = z.infer<typeof sessionSchema>;
 export const approvalSchema = z.object({
@@ -105,11 +115,12 @@ export const eventDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('question.resolved'), question: questionSchema }),
 ]);
 export type EventData = z.infer<typeof eventDataSchema>;
-export const eventSchema = z.object({ seq: z.number().int().nonnegative(), time: z.string(), originSeq: z.number().int().nonnegative().optional(), data: eventDataSchema, truncation: z.object({ originalBytes: z.number().int().nonnegative(), reason: z.literal('transport-preview') }).optional() });
+/** originSeq is stable record/paging identity; displaySeq locates a queued prompt's execution start. */
+export const eventSchema = z.object({ seq: z.number().int().nonnegative(), time: z.string(), originSeq: z.number().int().nonnegative().optional(), displaySeq: z.number().int().nonnegative().optional(), data: eventDataSchema, truncation: z.object({ originalBytes: z.number().int().nonnegative(), reason: z.literal('transport-preview') }).optional() });
 export type TurnwireEvent = z.infer<typeof eventSchema>;
 export interface RuntimeInfo { id: string; name: string; online: boolean; message: string; capabilities: RuntimeCapabilities;
   /** Background agents the runtime still owns; restarting the host would kill them. */
-  busy?: number; busyKnown?: boolean }
+  busy?: number; busyKnown: boolean }
 /**
  * One background agent under a session, as the runtime describes it. A delegation tool returns as
  * soon as it hands work to a child, so the parent's own transcript cannot say what the child is
@@ -279,10 +290,7 @@ export function errorResponse(id: string, error: unknown): RpcResponse {
 }
 
 const pairingFields = { relayUrl: z.string().url(), hostId: idSchema, clientId: idSchema, token: z.string().min(32).max(500), key: z.string().regex(/^[a-f0-9]{64}$/), name: z.string() };
-export const pairingSchema = z.discriminatedUnion('v', [
-  z.object({ v: z.literal(1), ...pairingFields }).strict(),
-  z.object({ v: z.literal(2), ...pairingFields, bootstrap: z.boolean().optional(), expiresAt: z.string().datetime().optional(), pendingKey: z.string().regex(/^[a-f0-9]{64}$/).optional(), directUrls: z.array(z.string().url()).max(4).optional() }).strict(),
-]);
+export const pairingSchema = z.object({ v: z.literal(2), ...pairingFields, bootstrap: z.boolean().optional(), expiresAt: z.string().datetime().optional(), pendingKey: z.string().regex(/^[a-f0-9]{64}$/).optional(), directUrls: z.array(z.string().url()).max(4).optional() }).strict();
 export type Pairing = z.infer<typeof pairingSchema>;
 // Host administration is shared by every local UI, but is never a remote RPC.
 export const remoteModeSchema = z.enum(['off', 'temporary', 'relay']);
@@ -316,29 +324,27 @@ export const remoteHealthSchema = z.object({
 });
 export type RemoteHealth = z.infer<typeof remoteHealthSchema>;
 export const remoteStatusSchema = z.object({
-  health: remoteHealthSchema.optional(),
+  health: remoteHealthSchema,
   mode: remoteModeSchema, state: z.enum(['off', 'starting', 'online', 'offline', 'error']), message: z.string(),
   relayUrl: z.string().optional(), remoteUrl: z.string().optional(), relayServerUrl: z.string().optional(), hasRelayToken: z.boolean(),
-  notices: z.array(z.string()).default([]),
-  provider: tunnelProviderSchema.optional(), hasCpolarToken: z.boolean().default(false), providers: z.array(tunnelProviderInfoSchema).default([]),
+  notices: z.array(z.string()),
+  provider: tunnelProviderSchema.optional(), hasCpolarToken: z.boolean(), providers: z.array(tunnelProviderInfoSchema),
 });
 export type RemoteStatus = z.infer<typeof remoteStatusSchema>;
 export const pairDeviceSchema = z.object({ name: z.string().trim().min(1).max(100) }).strict();
 export const revokeDeviceSchema = z.object({ id: idSchema }).strict();
-export const pairedDeviceSchema = z.object({ id: idSchema, name: z.string(), protocol: z.number().optional(), enrollment: z.enum(['pending', 'enrolled', 'legacy']).optional(), connection: z.enum(['connected', 'offline', 'unconfirmed']).optional(), lastConfirmedAt: z.string().optional(), latencyMs: z.number().nonnegative().optional() });
+export const pairedDeviceSchema = z.object({ id: idSchema, name: z.string(), protocol: z.literal(2), enrollment: z.enum(['pending', 'enrolled']), connection: z.enum(['connected', 'offline', 'unconfirmed']), lastConfirmedAt: z.string().optional(), latencyMs: z.number().nonnegative().optional() });
 export type PairedDevice = z.infer<typeof pairedDeviceSchema>;
 export const pairingResultSchema = z.object({ pairing: pairingSchema, code: z.string(), url: z.string().optional() });
 export type PairingResult = z.infer<typeof pairingResultSchema>;
-export const encryptedSchema = z.object({ nonce: z.string().max(100), ciphertext: z.string().max(2_800_000) }).strict();
-export const transportPayloadSchema = z.union([encryptedSchema, clientHelloSchema, serverHelloSchema, sessionPayloadSchema]);
-export type EncryptedPayload = z.infer<typeof encryptedSchema>;
+export const transportPayloadSchema = z.union([clientHelloSchema, serverHelloSchema, sessionPayloadSchema]);
 export const connectionPingSchema = z.object({ nonce: idSchema }).strict();
 export const connectionPongSchema = z.object({ nonce: idSchema, challenge: idSchema, hostId: idSchema }).strict();
 export const connectionAckSchema = z.object({ challenge: idSchema }).strict();
 export const secureMessageSchema = z.object({ id: idSchema, sentAt: z.number(), kind: z.enum(['request', 'response', 'event', 'subscribe', 'subscribed', 'ping', 'pong', 'ack', 'confirmed', 'enroll', 'enrolled', 'error', 'routes']), body: z.unknown() }).strict();
 export type SecureMessage = z.infer<typeof secureMessageSchema>;
 export const relayAuthSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('host'), protocol: z.literal(2).optional(), hostId: idSchema, token: z.string().max(500), clients: z.array(z.object({ id: idSchema, token: z.string().min(32).max(500) })).max(100) }).strict(),
+  z.object({ kind: z.literal('host'), protocol: z.literal(2), hostId: idSchema, token: z.string().max(500), clients: z.array(z.object({ id: idSchema, token: z.string().min(32).max(500) })).max(100) }).strict(),
   z.object({ kind: z.literal('client'), hostId: idSchema, clientId: idSchema, token: z.string().max(500) }).strict(),
 ]);
 export type RelayAuth = z.infer<typeof relayAuthSchema>;

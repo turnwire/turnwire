@@ -6,16 +6,16 @@ const attachment = { attachmentId: 'image-1', mediaType: 'image/png' as const, b
 const args = { sessionId: 'session-1', attachmentId: attachment.attachmentId };
 const chunk = { attachment, data: 'YWJjZA==', offset: 0, nextOffset: null };
 function client(...chunks: unknown[]) {
-  const request = vi.fn();
-  for (const value of chunks) request.mockResolvedValueOnce(value);
-  return { request } as RpcClient & { request: typeof request };
+  const call = vi.fn();
+  for (const value of chunks) call.mockResolvedValueOnce(value);
+  return { call } as RpcClient & { call: typeof call };
 }
 
 describe('shared image helpers', () => {
   it('loads and validates contiguous chunks using only RpcClient', async () => {
     const c = client({ ...chunk, data: 'YWJ', nextOffset: 3 }, { ...chunk, data: 'jZA==', offset: 3 });
     expect(await loadImage(c, args)).toEqual({ attachment, data: chunk.data });
-    expect(c.request.mock.calls).toEqual([
+    expect(c.call.mock.calls).toEqual([
       ['session.image', { ...args, offset: 0, limit: MAX_IMAGE_CHUNK_LENGTH }],
       ['session.image', { ...args, offset: 3, limit: MAX_IMAGE_CHUNK_LENGTH }],
     ]);
@@ -53,16 +53,16 @@ describe('shared image helpers', () => {
     chunks[chunks.length - 1]!.nextOffset = MAX_IMAGE_BASE64_LENGTH;
     const c = client(...chunks);
     await expect(loadImage(c, args)).rejects.toThrow();
-    expect(c.request).toHaveBeenCalledTimes(chunks.length);
+    expect(c.call).toHaveBeenCalledTimes(chunks.length);
   });
 
   it('validates and sends image-only steer messages through a generic client', async () => {
-    const c = client({ accepted: true, messageId: 'message' });
+    const c = client({ accepted: true, messageId: 'message', queued: false });
     const input = { sessionId: args.sessionId, text: '', images: [{ mediaType: 'image/png' as const, data: chunk.data, name: attachment.name }], steer: true };
-    expect(await sendImageMessage(c, input)).toEqual({ accepted: true, messageId: 'message' });
-    expect(c.request).toHaveBeenCalledWith('session.message', input);
+    expect(await sendImageMessage(c, input)).toEqual({ accepted: true, messageId: 'message', queued: false });
+    expect(c.call).toHaveBeenCalledWith('session.message', input);
     await expect(sendImageMessage(c, { ...input, images: [{ ...input.images[0]!, data: 'invalid' }] })).rejects.toThrow();
-    expect(c.request).toHaveBeenCalledTimes(1);
+    expect(c.call).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -14,22 +14,22 @@ let directory: string;
 beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), 'turnwire-cli-images-')); });
 afterEach(async () => { vi.restoreAllMocks(); await rm(directory, { recursive: true, force: true }); });
 async function file(name = 'tiny raster.png', bytes: Buffer = png) { const path = join(directory, name); await writeFile(path, bytes); return path; }
-function snapshotFixture(imageInput: boolean | undefined) {
+function snapshotFixture(imageInput: boolean) {
   return {
     device: { id: 'device', name: 'Test host' },
-    sessions: [{ id: 's', runtimeId: 'runtime', runtimeSessionId: 'runtime-session', title: 'Test session', cwd: '/tmp', status: 'idle', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }],
-    runtimes: [{ id: 'runtime', name: 'Test runtime', online: true, message: '', capabilities: {
+    sessions: [{ id: 's', runtimeId: 'runtime', runtimeSessionId: 'runtime-session', title: 'Test session', cwd: '/tmp', status: 'idle', archived: false, autoApprove: false, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }],
+    runtimes: [{ id: 'runtime', name: 'Test runtime', online: true, busyKnown: true, message: '', capabilities: {
       approvals: false, streaming: true, resume: true, shell: false, diff: false,
       fileEdits: false, toolCalls: false, backgroundTasks: false, modelSelection: false,
-      ...(imageInput === undefined ? {} : { imageInput }),
+      imageInput,
     } }],
     approvals: [], questions: [], cursor: 0,
   } satisfies Snapshot;
 }
-function setup(imageInput: boolean | undefined = true) {
+function setup(imageInput: boolean = true) {
   const snapshot = snapshotFixture(imageInput);
-  const accepted = { accepted: true, messageId: 'm' } satisfies MethodResult<'session.message'>;
-  const request = vi.spyOn(LocalClient.prototype, 'request').mockImplementation(async method => method === 'system.snapshot' ? snapshot : accepted);
+  const accepted = { accepted: true, messageId: 'm', queued: false } satisfies MethodResult<'session.message'>;
+  const request = vi.spyOn(LocalClient.prototype, 'call').mockImplementation(async method => method === 'system.snapshot' ? snapshot : accepted);
   const close = vi.spyOn(LocalClient.prototype, 'close').mockImplementation(() => {});
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const dispatch = (args: string[], lang = 'en', json = true) => createProgram({ url: 'http://localhost:1', token: 'test', lang, json }).parseAsync(args, { from: 'user' });
@@ -57,10 +57,10 @@ it.each([
   await dispatch(['send', 's', '--image', await file(`raster.${extension}`, bytes as Buffer)]);
   expect(request).toHaveBeenLastCalledWith('session.message', expect.objectContaining({ images: [expect.objectContaining({ mediaType })] }));
 });
-it('normalizes ordinary send text and does not require a capability snapshot', async () => {
+it('passes ordinary send text to the SDK without requiring a capability snapshot', async () => {
   const { request, dispatch } = setup();
   await dispatch(['send', 's', ' ordinary text ']);
-  expect(request).toHaveBeenCalledExactlyOnceWith('session.message', { sessionId: 's', text: 'ordinary text' });
+  expect(request).toHaveBeenCalledExactlyOnceWith('session.message', { sessionId: 's', text: ' ordinary text ' });
 });
 it('rejects count, size, unsupported signature, missing files, directories, URLs and long text before any request', async () => {
   const { request, dispatch } = setup();
@@ -79,11 +79,11 @@ it('rejects count, size, unsupported signature, missing files, directories, URLs
   ] as const) await expect(dispatch([...args])).rejects.toThrow(error);
   expect(request).not.toHaveBeenCalled();
 });
-it.each([false, undefined])('rejects unsupported or absent runtime image capability (%s)', async capability => {
+it('rejects unsupported runtime image capability', async () => {
   const { request, close, dispatch } = setup(false);
-  request.mockResolvedValueOnce(snapshotFixture(capability));
+  request.mockResolvedValueOnce(snapshotFixture(false));
   await expect(dispatch(['send', 's', '--image', await file()])).rejects.toThrow(/transport support/);
-  expect(request).toHaveBeenCalledExactlyOnceWith('system.snapshot', {});
+  expect(request).toHaveBeenCalledExactlyOnceWith('system.snapshot');
   expect(close).toHaveBeenCalledOnce();
 });
 it('accepts the exact per-image, total and image-text boundaries', async () => {

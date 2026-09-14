@@ -2,6 +2,8 @@
 
 # Turnwire 实现
 
+> 本文保留历史骨架与设计背景。以下清单和观察描述初始交付，不是当前部署状态或测试总数。当前边界见[CLIENTS](CLIENTS.zh.md)、[PROTOCOL](PROTOCOL.zh.md)和[维护指南](FIRST-UPGRADE.zh.md)：仅按 XDG 解析目录、不迁移旧数据库、SDK 只有 `call`、共享加密/会话代码在 `packages/wire`、配对仅支持 v2。历史连续性观察不承诺恢复旧数据或无中断升级。
+
 ## 目标
 
 按最初设计对话中描述的 Turnwire 骨架进行构建，并按要求于 2026-09-09 使用 TypeScript。

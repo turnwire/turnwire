@@ -1,9 +1,11 @@
 import { Command, InvalidArgumentError } from 'commander';
+import { showContext } from './context.js';
 import { readFile, writeFile, chmod, rename } from 'node:fs/promises';
 import { resolveTurnwirePaths } from '../../../packages/sdk/src/node-paths.js';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { call, LocalClient, RemoteClient, decodePairing, encodePairing, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
+import { call, LocalClient, RemoteClient, loadHistoryPage, loadSubagentHistoryPage, loadHistory, conversation, transcriptMarkdown } from '@turnwire/sdk';
+import { decodePairing, encodePairing } from '@turnwire/wire';
 import type { TurnwireClient } from '@turnwire/sdk';
 import { eventSessionId, tunnelProviderSchema, methodSchemas, MAX_IMAGE_TEXT_LENGTH } from '@turnwire/protocol';
 import { readImageInputs, imageSummary } from './images.js';
@@ -36,8 +38,9 @@ interface Config { url: string; token: string }
 async function config(): Promise<Config> {
   const opts = program.opts();
   if (opts.url && opts.token) return { url: String(opts.url), token: String(opts.token) };
+  const configPath = resolveTurnwirePaths().clientConfig;
   let saved: Config;
-  try { saved = JSON.parse(await readFile(resolveTurnwirePaths().clientConfig, 'utf8')) as Config; }
+  try { saved = JSON.parse(await readFile(configPath, 'utf8')) as Config; }
   catch { throw localizedError('CLI_MISSING_CONFIG'); }
   return { url: opts.url as string ?? saved.url, token: opts.token as string ?? saved.token };
 }
@@ -50,7 +53,7 @@ program.command('status').description(t('command.status')).action(() => withClie
 program.command('ls').description(t('command.ls')).option('--archived', t('option.archived')).option('--all', t('option.all')).option('--search <query>', t('option.search')).action((options: { archived?: boolean; all?: boolean; search?: string }) => withClient(async c => {
   const snapshot = await call(c, 'system.snapshot'); const query = options.search?.toLocaleLowerCase();
   const sessions = snapshot.sessions.filter(s => (options.all || !!s.archived === !!options.archived) && (!query || (s.title + ' ' + s.cwd).toLocaleLowerCase().includes(query)));
-  if (program.opts().json) print(sessions); else for (const s of sessions) console.log(`${s.id}  ${padEnd(s.archived ? t('session.archived') : s.status, 17)} ${safe(s.title)}  ${safe(s.cwd)}`);
+  if (program.opts().json) print(sessions); else for (const s of sessions) console.log(`${s.id}  ${padEnd(s.archived ? t('session.archived') : s.status, 17)} ${safe(s.title)}  ${safe(s.cwd)}  ${showContext(s.context)}`);
 }));
 program.command('rename <session> <title>').description(t('command.rename')).action((sessionId: string, title: string) => withClient(async c => print(await call(c, 'session.rename', { sessionId, title }))));
 for (const archived of [true, false]) program.command(`${archived ? 'archive' : 'unarchive'} <session>`).description(archived ? t('command.archive') : t('command.unarchive')).action((sessionId: string) => withClient(async c => print(await call(c, 'session.archive', { sessionId, archived }))));
@@ -211,6 +214,8 @@ program.command('attach <session>').description(t('command.attach')).action(asyn
   if (page.hasMore && !program.opts().json) console.log(t('history.earlier', { session: sessionId, cursor: page.nextBefore ?? '' }));
   if (program.opts().json) for (const event of history) print(event);
   else for (const message of conversation(history, sessionId)) console.log(`\n${message.role === 'user' ? t('role.you') : message.role === 'tool' ? message.tool : message.role === 'error' ? t('role.error') : message.role === 'question' ? t('role.question') : t('role.assistant')}${message.isError ? t('history.failed') : ''}\n${safe(message.input !== undefined ? t('history.io', { input: message.input, output: message.output ?? t('history.pending') }) : message.text + imageSummary(message.images))}${message.role === 'question' && message.question?.answers?.length ? `\n${t('history.answered')}: ${safe(message.question.answers.map(entry => [...entry.selected, ...(entry.custom ? [entry.custom] : [])].join(', ')).join(' · '))}` : ''}`);
+  let contextText = showContext(snapshot.sessions.find(s => s.id === sessionId)?.context);
+  if (!program.opts().json) console.log(contextText);
   const rendered = new Map(conversation(history, sessionId).map(m => [m.id, m.text]));
   const cursor = page.cursor;
   const unsubscribe = c.subscribe((event: TurnwireEvent) => {
@@ -219,6 +224,7 @@ program.command('attach <session>').description(t('command.attach')).action(asyn
     if (eventSessionId(d) !== sessionId) return;
     if ('session' in d && d.session.id !== sessionId) return;
     if (program.opts().json) { print(event); return; }
+    if (d.type === 'session.updated') { const next = showContext(d.session.context); if (next !== contextText) { contextText = next; console.log(`\n${next}`); } }
     if (d.type === 'message.delta') { const prior = rendered.get(d.messageId) ?? ''; if (!rendered.has(d.messageId)) process.stdout.write(`\n${t('role.assistant')}\n`); process.stdout.write(safe(d.text)); rendered.set(d.messageId, prior + d.text); }
     if (d.type === 'message.completed') { const prior = rendered.get(d.messageId) ?? ''; console.log(safe(d.text.startsWith(prior) ? d.text.slice(prior.length) : d.text)); rendered.set(d.messageId, d.text); }
     if (d.type === 'message.user') console.log(`\n${t('role.you')}\n${safe(d.text + imageSummary(d.images))}`);
@@ -262,7 +268,6 @@ devices.command('pair').option('--name <name>', t('option.deviceName'), t('devic
   const pairing = await (await localClient()).pairDevice(options.name);
   if (program.opts().json) print(pairing); else await printPairing(pairing, options);
 });
-devices.command('upgrade <id>').description(t('command.devices.upgrade')).option('--qr', t('option.qrNew')).action(async (id: string, options: { qr?: boolean }) => { const result = await (await localClient()).upgradeDevice(id); if (program.opts().json) print(result); else await printPairing(result, options); });
 devices.command('revoke <id>').action(async (id: string) => { await (await localClient()).revokeDevice(id); print({ removed: true }); });
 const remote = program.command('remote').description(t('command.remote'));
 program.command('deploy').description(t('command.deploy'))

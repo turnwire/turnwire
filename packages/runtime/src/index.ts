@@ -1,6 +1,6 @@
-import type { ImageInput, ImageAttachment, ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
+import type { SessionContext, ImageInput, ImageAttachment, ApprovalDecision, ModelCatalog, ModelSelection, QueueAction, QueueItemView, QuestionAnswerItem, QuestionItem, RuntimeCapabilities, SessionStatus, SubagentView, SubagentHistoryPage } from '@turnwire/protocol';
 export type Unsubscribe = () => void;
-export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection }
+export interface RuntimeSession { id: string; cwd: string; status: SessionStatus; model?: ModelSelection; context?: SessionContext }
 export type RuntimeEvent =
   | { type: 'status'; status: SessionStatus }
   | { type: 'message.delta' | 'message.completed'; messageId: string; text: string }
@@ -12,6 +12,8 @@ export type RuntimeEvent =
   | { type: 'question.requested'; requestId: string; questions: QuestionItem[] }
   | { type: 'question.resolved'; requestId: string; decision: 'answered' | 'cancelled' }
   | { type: 'model.selected'; selection: ModelSelection }
+  /** Omitted context explicitly clears a disconnected or unavailable observation. */
+  | { type: 'context'; context?: SessionContext }
   | { type: 'error'; message: string };
 export interface AgentRuntime {
   readonly id: string;

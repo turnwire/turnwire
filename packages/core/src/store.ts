@@ -1,51 +1,109 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, chmodSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
-import { eventSessionId, historyKey, reduceHistory, projectHistoryEvent, HISTORY_PAGE_BYTES, TurnwireError } from '@turnwire/protocol';
+import { mkdirSync, chmodSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { HistoryExporter } from './history-export.js';
+import { eventSessionId, historyKey, reduceHistory, projectHistoryEvent, HISTORY_PAGE_BYTES, TurnwireError, sessionSchema, pairingSchema } from '@turnwire/protocol';
 import type { HistoryPage } from '@turnwire/protocol';
 import type { ImageAttachment, Approval, EventData, TurnwireEvent, Pairing, RpcResponse, Session } from '@turnwire/protocol';
+
+// Final storage format only. A different or unversioned format requires a separate
+// database, never an in-place migration or a replay of the event journal.
+const APPLICATION_ID = 0x54575245; // TWRE
+const STORAGE_VERSION = 2;
+const SCHEMA = `
+  CREATE TABLE sessions (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+  CREATE TABLE approvals (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+  CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, time TEXT NOT NULL, body TEXT NOT NULL, source TEXT UNIQUE);
+  CREATE INDEX event_session ON events(session_id, seq);
+  CREATE TABLE history (session_id TEXT NOT NULL, key TEXT PRIMARY KEY, first_seq INTEGER NOT NULL, body TEXT NOT NULL);
+  CREATE INDEX history_session ON history(session_id, first_seq);
+  CREATE TABLE history_deltas (key TEXT NOT NULL, seq INTEGER NOT NULL PRIMARY KEY);
+  CREATE INDEX history_delta_key ON history_deltas(key, seq);
+  CREATE TABLE history_export_state (key TEXT PRIMARY KEY, revision INTEGER NOT NULL, prefix TEXT, identity TEXT NOT NULL);
+  CREATE TABLE history_fragments (key TEXT NOT NULL, kind TEXT NOT NULL, seq INTEGER NOT NULL, part INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(key,kind,seq,part));
+  CREATE TABLE requests (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT);
+  CREATE TABLE settings (key TEXT PRIMARY KEY, body TEXT NOT NULL);
+  CREATE TABLE devices (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+  CREATE TABLE inbox (position INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
+`;
+const schemaSql = (sql: string) => sql.trim().replace(/\s+/g, ' ').toLowerCase();
+const expectedSchema = SCHEMA.split(';').map(schemaSql).filter(Boolean).sort();
+function unsupportedStorage(reason: string): TurnwireError {
+  return new TurnwireError('UNSUPPORTED_STORAGE', `Unsupported storage: ${reason}. No migration is available; use a separate empty database.`);
+}
+/** Read-only validation must precede chmod, WAL, DDL, and all persistent writes. */
+function validateStorage(db: DatabaseSync): 'empty' | 'current' {
+  try {
+    const applicationId = Number(db.prepare('PRAGMA application_id').get()!.application_id);
+    const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
+    const objects = db.prepare("SELECT name,sql FROM sqlite_schema").all();
+    if (!objects.length && applicationId === 0 && version === 0) return 'empty';
+    if (applicationId !== APPLICATION_ID || version !== STORAGE_VERSION) {
+      throw unsupportedStorage(`application_id=${applicationId}, user_version=${version}; expected ${APPLICATION_ID}/${STORAGE_VERSION}`);
+    }
+    const actualSchema = objects.filter(row => !String(row.name).startsWith('sqlite_')).map(row => schemaSql(String(row.sql))).sort();
+    if (JSON.stringify(actualSchema) !== JSON.stringify(expectedSchema)) throw unsupportedStorage('malformed final schema');
+    for (const row of db.prepare('SELECT body FROM sessions').iterate()) sessionSchema.parse(JSON.parse(String(row.body)));
+    for (const row of db.prepare('SELECT body FROM devices').iterate()) pairingSchema.parse(JSON.parse(String(row.body)));
+    return 'current';
+  } catch (error) {
+    if (error instanceof TurnwireError && error.code === 'UNSUPPORTED_STORAGE') throw error;
+    throw unsupportedStorage('invalid database or persisted session/device record');
+  }
+}
+
+/** Validate an existing database without creating it, changing modes, or opening a writer. */
+export function validateStorageFile(path: string): 'empty' | 'current' {
+  let probe: DatabaseSync | undefined;
+  try { probe = new DatabaseSync(path, { readOnly: true }); return validateStorage(probe); }
+  catch (error) { throw error instanceof TurnwireError ? error : unsupportedStorage('cannot read database'); }
+  finally { probe?.close(); }
+}
 
 export class Store {
   readonly db: DatabaseSync;
   private closed = false;
+  private readonly temporaryDirectory?: string;
+  private readonly path: string;
+  private exporter?: HistoryExporter;
+  private exportGeneration = 0;
+  private retiringExporter?: HistoryExporter;
+  private exportCleanup: Promise<Error | undefined> = Promise.resolve(undefined);
+  private exportCleanupRunning = false;
+  private closeAttempt?: Promise<void>;
   constructor(path: string) {
+    // Ephemeral stores share the exact disk-backed format/worker path. Never copy a
+    // live in-memory database or maintain a separate synchronous export implementation.
+    if (path === ':memory:') {
+      this.temporaryDirectory = mkdtempSync(join(tmpdir(), 'turnwire-store-'));
+      path = join(this.temporaryDirectory, 'store.sqlite');
+    }
+    this.path = resolve(path);
+    if (path !== ':memory:' && existsSync(path)) validateStorageFile(path);
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
-    if (path !== ':memory:') chmodSync(path, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, body TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, body TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, time TEXT NOT NULL, body TEXT NOT NULL, source TEXT UNIQUE);
-      CREATE INDEX IF NOT EXISTS event_session ON events(session_id, seq);
-      CREATE TABLE IF NOT EXISTS history (session_id TEXT NOT NULL, key TEXT PRIMARY KEY, first_seq INTEGER NOT NULL, body TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS history_session ON history(session_id, first_seq);
-      CREATE TABLE IF NOT EXISTS history_deltas (key TEXT NOT NULL, seq INTEGER NOT NULL PRIMARY KEY);
-      CREATE INDEX IF NOT EXISTS history_delta_key ON history_deltas(key, seq);
-      CREATE TABLE IF NOT EXISTS history_export (key TEXT PRIMARY KEY, revision INTEGER NOT NULL, units INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS history_export_chunks (key TEXT NOT NULL, start INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(key,start));
-      CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT);
-      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, body TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, body TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS inbox (position INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
-      INSERT OR IGNORE INTO inbox(id,body) SELECT id,body FROM approvals ORDER BY json_extract(body,'$.createdAt');
-    `);
-    // Legacy consent was transient. Never reconstruct it from old autoApprove journal events.
-    // Materialize the safe default in the durable session row, and keep archived sessions off.
-    this.db.exec(`UPDATE sessions SET body=json_set(body,'$.autoApprove',json('false'))
-      WHERE json_type(body,'$.autoApprove') IS NULL OR json_extract(body,'$.archived')=1`);
-    // One-time, transactional projection migration. Existing event journals stay intact.
-    if (!this.setting<boolean>('history-projection-v2')) {
-      this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const format = validateStorage(this.db);
+      if (path !== ':memory:') chmodSync(path, 0o600);
+      this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000');
+      if (format === 'empty') {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+          this.db.exec(`${SCHEMA} PRAGMA application_id=${APPLICATION_ID}; PRAGMA user_version=${STORAGE_VERSION}; COMMIT`);
+        } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+      }
+    } catch (error) {
+      // Construction has no asynchronous exporter owner yet.
       try {
-        let after = 0;
-        while (true) { const page = this.events(after, 1000); for (const event of page) this.project(event); if (page.length < 1000) break; after = page.at(-1)!.seq; }
-        this.setSetting('history-projection-v2', true); this.db.exec('COMMIT');
-      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+        this.db.close();
+        if (this.temporaryDirectory) rmSync(this.temporaryDirectory, { recursive: true, force: true });
+      } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Store initialization and cleanup failed'); }
+      throw error;
     }
   }
-  sessions(): Session[] { return this.db.prepare('SELECT body FROM sessions').all().map(row => JSON.parse(row.body as string) as Session).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
-  session(id: string): Session | undefined { const row = this.db.prepare('SELECT body FROM sessions WHERE id=?').get(id); return row ? JSON.parse(row.body as string) as Session : undefined; }
+  sessions(): Session[] { return this.db.prepare('SELECT body FROM sessions').all().map(row => sessionSchema.parse(JSON.parse(row.body as string))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+  session(id: string): Session | undefined { const row = this.db.prepare('SELECT body FROM sessions WHERE id=?').get(id); return row ? sessionSchema.parse(JSON.parse(row.body as string)) : undefined; }
   approvals(): Approval[] { return this.db.prepare('SELECT body FROM approvals').all().map(row => JSON.parse(row.body as string) as Approval); }
   approval(id: string): Approval | undefined { const row = this.db.prepare('SELECT body FROM approvals WHERE id=?').get(id); return row ? JSON.parse(row.body as string) as Approval : undefined; }
   inbox(limit: number, status: 'pending' | 'all', before = Number.MAX_SAFE_INTEGER) {
@@ -79,8 +137,7 @@ export class Store {
   }
   private project(event: TurnwireEvent) {
     const key = historyKey(event); if (!key) return;
-    this.db.prepare('DELETE FROM history_export_chunks WHERE key=?').run(key);
-    this.db.prepare('DELETE FROM history_export WHERE key=?').run(key);
+
     const sessionId = eventSessionId(event.data);
     const row = event.data.type === 'message.delta'
       ? this.db.prepare('SELECT first_seq FROM history WHERE key=?').get(key)
@@ -89,13 +146,32 @@ export class Store {
     // read/serialize/write per token, and no asynchronous buffer that can lose data on restart.
     if (event.data.type === 'message.delta' && row) {
       this.db.prepare('INSERT OR IGNORE INTO history_deltas VALUES(?,?)').run(key, event.seq);
+      this.fragments(key, 'text', event.seq, JSON.stringify(event.data.text).slice(1, -1));
+      const identity = JSON.parse(String(this.db.prepare('SELECT identity FROM history_export_state WHERE key=?').get(key)!.identity));
+      const { text: _text, ...data } = event.data;
+      const prefix = `[{"seq":${event.seq},"time":${JSON.stringify(identity.time)},"originSeq":${identity.originSeq},${identity.displaySeq === undefined ? '' : `"displaySeq":${identity.displaySeq},`}"data":${JSON.stringify(data).slice(0, -1)},"text":"`;
+      this.db.prepare('UPDATE history_export_state SET revision=?,prefix=? WHERE key=?').run(event.seq, prefix, key);
       return;
     }
     // Completed messages replace the accumulated text; only their baseline identity is needed.
     const existing = row ? (event.data.type === 'message.completed' ? JSON.parse(String(row.body)) as TurnwireEvent[] : this.materialize(key, String(row.body))) : [];
     const events = reduceHistory(existing, event);
     this.db.prepare('DELETE FROM history_deltas WHERE key=?').run(key);
-    this.db.prepare('INSERT OR REPLACE INTO history VALUES(?,?,?,?)').run(sessionId!, key, row ? Number(row.first_seq) : event.seq, JSON.stringify(events));
+    const body = JSON.stringify(events);
+    this.db.prepare('INSERT OR REPLACE INTO history VALUES(?,?,?,?)').run(sessionId!, key, row ? Number(row.first_seq) : event.seq, body);
+    this.db.prepare('DELETE FROM history_fragments WHERE key=?').run(key);
+    this.fragments(key, 'baseline', 0, body);
+    const first = events[0];
+    if (first && 'text' in first.data) this.fragments(key, 'text', 0, JSON.stringify(first.data.text).slice(1, -1));
+    this.db.prepare('INSERT OR REPLACE INTO history_export_state VALUES(?,?,NULL,?)').run(key, Math.max(...events.map(e => e.seq)), JSON.stringify({ time: first?.time ?? event.time, originSeq: first?.originSeq ?? first?.seq ?? event.seq, ...(first?.displaySeq === undefined ? {} : { displaySeq: first.displaySeq }) }));
+  }
+  private fragments(key: string, kind: string, seq: number, body: string) {
+    const insert = this.db.prepare('INSERT INTO history_fragments VALUES(?,?,?,?,?)');
+    for (let start = 0, part = 0; start < body.length; part++) {
+      let end = Math.min(start + 8192, body.length);
+      if (end < body.length && /[\uD800-\uDBFF]/.test(body.charAt(end - 1))) end--;
+      insert.run(key, kind, seq, part, body.slice(start, end)); start = end;
+    }
   }
   private materialize(key: string, body: string): TurnwireEvent[] {
     let events = JSON.parse(body) as TurnwireEvent[];
@@ -106,7 +182,7 @@ export class Store {
       const data = JSON.parse(String(last.body)) as EventData;
       if (data.type === 'message.delta') {
         const text = (first && 'text' in first.data ? first.data.text : '') + rows.map(row => (JSON.parse(String(row.body)) as { text: string }).text).join('');
-        events = [{ seq: Number(last.seq), time: first?.time ?? String(last.time), originSeq: first?.originSeq ?? first?.seq ?? Number(rows[0]!.seq), data: { ...data, text } }];
+        events = [{ seq: Number(last.seq), time: first?.time ?? String(last.time), originSeq: first?.originSeq ?? first?.seq ?? Number(rows[0]!.seq), ...(first?.displaySeq === undefined ? {} : { displaySeq: first.displaySeq }), data: { ...data, text } }];
       }
     }
     return events;
@@ -116,77 +192,39 @@ export class Store {
     const row = this.db.prepare('SELECT key,body FROM history WHERE session_id=? AND first_seq=?').get(sessionId, originSeq);
     return row ? this.materialize(String(row.key), String(row.body)) : undefined;
   }
-  /** Export without transferring a complete entity from SQLite into Node.
-   * SQLite still materializes JSON/concatenation internally: this is a Node allocation bound,
-   * not a bound on SQLite's working memory. The rebuild is synchronous and proportional to
-   * entity size, once per revision. The journal and projection remain the source of truth.
-   */
-  historyRecordChunk(sessionId: string, originSeq: number, offset: number, limit: number, cursor?: number): { data: string; cursor: number; nextOffset: number | null } {
+  /** Isolated, read-only source connection; cache writes never acquire the daemon writer. */
+  async historyRecordChunk(sessionId: string, originSeq: number, offset: number, limit: number, cursor?: number, signal?: AbortSignal) {
+    if (this.closed) throw new TurnwireError('HISTORY_EXPORT_CLOSED', 'Store is closed');
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 65_536) throw new TurnwireError('INVALID_REQUEST', 'Invalid history chunk range');
-    const row = this.db.prepare(`SELECT h.key, COALESCE((SELECT MAX(seq) FROM history_deltas WHERE key=h.key),
-      (SELECT MAX(json_extract(value,'$.seq')) FROM json_each(h.body))) AS revision
-      FROM history h WHERE session_id=? AND first_seq=?`).get(sessionId, originSeq);
-    if (!row || row.revision === null) throw new TurnwireError('HISTORY_NOT_FOUND', 'History record does not belong to this session');
-    const key = String(row.key); const revision = Number(row.revision);
-    if (cursor !== undefined && cursor !== revision) throw new TurnwireError('HISTORY_CHANGED', 'History record changed while being read; restart from offset zero');
-    let cached = this.db.prepare('SELECT units FROM history_export WHERE key=? AND revision=?').get(key, revision);
-    if (!cached) {
-      // Keep the giant serialized value inside SQLite. JSON string fragments are concatenated
-      // *escaped*, so NUL, backslashes and lone/split surrogate escapes survive exactly.
-      this.db.exec('SAVEPOINT history_export_build');
-      try {
-        this.db.exec('CREATE TEMP TABLE IF NOT EXISTS history_export_build (body TEXT NOT NULL); DELETE FROM history_export_build');
-        this.db.prepare(`INSERT INTO history_export_build(body)
-          SELECT CASE WHEN EXISTS(SELECT 1 FROM history_deltas WHERE key=h.key) THEN
-            '[{"seq":' || e.seq || ',"time":' || COALESCE(h.body -> '$[0].time', json_quote(e.time)) ||
-            ',"originSeq":' || COALESCE(h.body -> '$[0].originSeq', h.body -> '$[0].seq',
-              (SELECT MIN(seq) FROM history_deltas WHERE key=h.key)) ||
-            ',"data":' || substr(json_remove(e.body,'$.text'),1,length(json_remove(e.body,'$.text'))-1) ||
-            ',"text":"' || COALESCE(substr(h.body -> '$[0].data.text',2,length(h.body -> '$[0].data.text')-2),'') ||
-            COALESCE((SELECT group_concat(fragment,'') FROM
-              (SELECT substr(j.body -> '$.text',2,length(j.body -> '$.text')-2) AS fragment
-               FROM history_deltas d JOIN events j ON j.seq=d.seq WHERE d.key=h.key ORDER BY d.seq)), '') || '"}}]'
-          ELSE h.body END
-          FROM history h LEFT JOIN events e ON e.seq=(SELECT MAX(seq) FROM history_deltas WHERE key=h.key)
-          WHERE h.key=?`).run(key);
-        this.db.prepare('DELETE FROM history_export_chunks WHERE key=?').run(key);
-        // Store UTF-8 as a BLOB once: TEXT substr rescans preceding codepoints on every
-        // call. BLOB ranges use byte offsets; a streaming decoder carries split UTF-8 bytes.
-        this.db.exec('UPDATE history_export_build SET body=CAST(body AS BLOB)');
-        const read = this.db.prepare('SELECT substr(body,?,8192) AS body FROM history_export_build');
-        const insert = this.db.prepare('INSERT INTO history_export_chunks VALUES(?,?,?)');
-        const decoder = new StringDecoder('utf8');
-        let bytes = 1; let units = 0;
-        while (true) {
-          const encoded = read.get(bytes)!.body as Uint8Array;
-          if (!encoded.length) break;
-          const part = decoder.write(Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength));
-          if (part.length) { insert.run(key, units, part); units += part.length; }
-          bytes += encoded.length;
-        }
-        const tail = decoder.end();
-        if (tail.length) { insert.run(key, units, tail); units += tail.length; }
-        // The public cursor remains UTF-16 units, never SQLite codepoints or UTF-8 bytes.
-        this.db.prepare('INSERT OR REPLACE INTO history_export VALUES(?,?,?)').run(key, revision, units);
-        this.db.exec('DELETE FROM history_export_build; RELEASE history_export_build');
-        cached = { units };
-      } catch (error) {
-        this.db.exec('ROLLBACK TO history_export_build; RELEASE history_export_build');
-        throw error;
-      }
+    if (!this.exporter) {
+      const generation = this.exportGeneration;
+      const cleanupError = await this.exportCleanup;
+      if (cleanupError) throw new TurnwireError('HISTORY_EXPORT_FAILED', 'History export cleanup failed');
+      if (generation !== this.exportGeneration) throw new TurnwireError('HISTORY_EXPORT_CANCELLED', 'History export cancelled');
+      if (this.closed) throw new TurnwireError('HISTORY_EXPORT_CLOSED', 'Store is closed');
+      this.exporter ??= new HistoryExporter(this.path);
     }
-    const units = Number(cached.units);
-    if (offset > units) throw new TurnwireError('INVALID_CURSOR', 'History offset exceeds record size');
-    let data = '';
-    const chunks = this.db.prepare(`SELECT start,body FROM history_export_chunks WHERE key=? AND start>=
-      (SELECT MAX(start) FROM history_export_chunks WHERE key=? AND start<=?) AND start<? ORDER BY start`).iterate(key, key, offset, offset + limit);
-    for (const chunk of chunks) {
-      const start = Number(chunk.start);
-      data += String(chunk.body).slice(Math.max(0, offset - start), offset + limit - start);
+    return this.exporter.read({ sessionId, originSeq, offset, limit, cursor }, signal);
+  }
+  /** Await before maintenance takes an exclusive lock; subsequent reads start a fresh worker. */
+  async cancelHistoryExports() {
+    this.exportGeneration++;
+    if (!this.exportCleanupRunning) {
+      this.retiringExporter ??= this.exporter;
+      this.exporter = undefined;
+      this.exportCleanupRunning = true;
+      this.exportCleanup = Promise.resolve().then(async () => {
+        try {
+          await this.retiringExporter?.close();
+          this.retiringExporter = undefined;
+          return undefined;
+        } catch (error) {
+          return error instanceof Error ? error : new Error(String(error));
+        } finally { this.exportCleanupRunning = false; }
+      });
     }
-    if (offset + data.length < units && /[\uD800-\uDBFF]/.test(data.charAt(data.length - 1))) data = data.slice(0, -1);
-    if (!data.length && offset < units) throw new TurnwireError('INVALID_REQUEST', 'Chunk limit is too small for the next character');
-    return { data, cursor: revision, nextOffset: offset + data.length < units ? offset + data.length : null };
+    const error = await this.exportCleanup;
+    if (error) throw error;
   }
   history(sessionId: string, limit: number, before = Number.MAX_SAFE_INTEGER, preview = false): HistoryPage {
     const rows = this.db.prepare('SELECT key,first_seq FROM history WHERE session_id=? AND first_seq<? ORDER BY first_seq DESC LIMIT ?').all(sessionId, before, limit + 1);
@@ -204,7 +242,7 @@ export class Store {
     const nextBefore = hasMore ? selected.at(-1)!.firstSeq : null;
     return { events: selected.reverse().flatMap(row => row.events), cursor: this.cursor(), hasMore, nextBefore };
   }
-  append(data: EventData, source?: string): TurnwireEvent | undefined {
+  append(data: EventData, source?: string, settings?: Record<string, unknown>): TurnwireEvent | undefined {
     const sessionId = eventSessionId(data) ?? null;
     const time = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -217,6 +255,8 @@ export class Store {
         this.db.prepare('INSERT INTO inbox(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(data.approval.id, JSON.stringify(data.approval));
       }
       const event = { seq: Number(row.seq), time, data }; this.project(event);
+      // Domain intents and their public session identity become durable together.
+      if (settings) for (const [key, value] of Object.entries(settings)) this.setSetting(key, value);
       this.db.exec('COMMIT');
       return event;
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -229,10 +269,21 @@ export class Store {
   finishRequest(id: string, result: RpcResponse) { this.db.prepare('UPDATE requests SET result=? WHERE id=?').run(JSON.stringify(result), id); }
   setting<T>(key: string): T | undefined { const row = this.db.prepare('SELECT body FROM settings WHERE key=?').get(key); return row ? JSON.parse(String(row.body)) as T : undefined; }
   setSetting(key: string, value: unknown) { this.db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run(key, JSON.stringify(value)); }
-  devices(): Pairing[] { return this.db.prepare('SELECT body FROM devices').all().map(row => JSON.parse(String(row.body)) as Pairing); }
+  devices(): Pairing[] { return this.db.prepare('SELECT body FROM devices').all().map(row => pairingSchema.parse(JSON.parse(String(row.body)))); }
   addDevice(pairing: Pairing) { this.db.prepare('INSERT INTO devices VALUES(?,?)').run(pairing.clientId, JSON.stringify(pairing)); }
   updateDevice(pairing: Pairing) { this.db.prepare('UPDATE devices SET body=? WHERE id=?').run(JSON.stringify(pairing), pairing.clientId); }
   removeDevice(id: string) { this.db.prepare('DELETE FROM devices WHERE id=?').run(id); }
-  /** Closing twice is a no-op: every owner of a store may dispose it on its way out. */
-  close() { if (this.closed) return; this.closed = true; this.db.close(); }
+  /** Concurrent closes share an attempt; failed resource release can be retried. */
+  close(): Promise<void> {
+    if (this.closeAttempt) return this.closeAttempt;
+    if (!this.closed) { this.db.close(); this.closed = true; }
+    const attempt = this.cancelHistoryExports().then(() => {
+      if (this.temporaryDirectory) rmSync(this.temporaryDirectory, { recursive: true, force: true });
+    });
+    this.closeAttempt = attempt;
+    // Observe asynchronous disposal without changing the rejected promise returned
+    // to callers. Retain resource ownership so a later close retries.
+    void attempt.catch(() => { if (this.closeAttempt === attempt) this.closeAttempt = undefined; });
+    return attempt;
+  }
 }

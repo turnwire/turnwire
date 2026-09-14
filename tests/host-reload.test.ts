@@ -3,9 +3,12 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { hermeticEnv } from './helpers/hermetic-env.mjs';
 // Source-only helpers: no system services, network requests or production build.
 // @ts-expect-error standalone developer script
 import { fingerprints, health, healthUrl, reload } from '../scripts/host-reload.mjs';
+// @ts-expect-error standalone build helper
+import { requiredContract } from '../scripts/build-identity.mjs';
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -15,20 +18,20 @@ function fixture() {
   put('apps/remote-web/src/main.ts', 'one'); put('apps/daemon/src/main.ts', 'one');
   execFileSync('git', ['add', '.'], { cwd: root });
   let builds = 0;
-  const build = (stage: string) => { builds++; mkdirSync(join(stage, 'assets'), { recursive: true }); writeFileSync(join(stage, 'index.html'), 'new'); writeFileSync(join(stage, 'assets/new-hash.js'), 'asset'); };
-  const options = { build, checkHealth: async () => {}, log: () => {} };
+  const build = (stage: string) => { builds++; mkdirSync(join(stage, 'assets'), { recursive: true }); writeFileSync(join(stage, 'index.html'), 'new'); writeFileSync(join(stage, 'assets/new-hash.js'), 'asset'); writeFileSync(join(stage, 'turnwire-build.json'), JSON.stringify({ requiredContract: requiredContract(root) })); };
+  const options = { stateDir: join(root, 'reload-state'), build, checkHealth: async () => ({ status: 'ok', protocol: 1, identity: { kind: 'built', buildId: 'a'.repeat(64), contractDigest: requiredContract(root) } }), log: () => {} };
   return { root, put, options, builds: () => builds };
 }
 describe('developer reload safety', () => {
   it('discovers custom daemon port from local client config without forwarding token', () => {
     const f = fixture(); f.put('state/client.json', JSON.stringify({ url: 'http://127.0.0.1:9998', token: 'never-forward' }));
-    expect(healthUrl({ HOME: f.root, TURNWIRE_HOME: join(f.root, 'state') })).toBe('http://127.0.0.1:9998/health');
+    expect(healthUrl({ HOME: f.root, TURNWIRE_CONFIG_HOME: join(f.root, 'state') })).toBe('http://127.0.0.1:9998/health');
     f.put('xdg/turnwire/client.json', JSON.stringify({ url: 'http://[::1]:9987' }));
     expect(healthUrl({ HOME: f.root, XDG_CONFIG_HOME: join(f.root, 'xdg') })).toBe('http://[::1]:9987/health');
     expect(() => healthUrl({ HOME: f.root })).toThrow('health unknown');
     for (const url of ['https://example.com', 'http://example.com', 'http://user:secret@127.0.0.1:9998']) {
       f.put('state/client.json', JSON.stringify({ url }));
-      expect(() => healthUrl({ HOME: f.root, TURNWIRE_HOME: join(f.root, 'state') })).toThrow('local HTTP');
+      expect(() => healthUrl({ HOME: f.root, TURNWIRE_CONFIG_HOME: join(f.root, 'state') })).toThrow('local HTTP');
     }
     expect(healthUrl({ HOME: f.root, TURNWIRE_RELOAD_HEALTH_URL: 'http://localhost:9001/health' })).toBe('http://localhost:9001/health');
   });
@@ -73,33 +76,49 @@ describe('developer reload safety', () => {
   it('failed or unknown health never builds or stamps', async () => {
     const f = fixture();
     await expect(reload(f.root, { ...f.options, frontend: true, checkHealth: async () => { throw Error('unknown'); } })).rejects.toThrow('unknown');
-    expect(f.builds()).toBe(0); expect(existsSync(join(f.root, '.turnwire/reload.frontend.json'))).toBe(false);
+    expect(f.builds()).toBe(0); expect(existsSync(join(f.root, 'reload-state/reload.frontend.json'))).toBe(false);
     for (const value of [{}, { status: 'ok' }, { status: 'failed', protocol: 1 }]) await expect(health('http://127.0.0.1/health', async () => ({ ok: true, json: async () => value }))).rejects.toThrow('blocked');
-    await expect(health('http://127.0.0.1/health', async () => ({ ok: true, json: async () => ({ status: 'ok', protocol: 1 }) }))).resolves.toBeUndefined();
+    await expect(health('http://127.0.0.1/health', async () => ({ ok: true, json: async () => ({ status: 'ok', protocol: 1 }) }))).rejects.toThrow('identity');
+    await expect(health('http://127.0.0.1/health', async () => ({ ok: true, json: f.options.checkHealth }))).resolves.toEqual(await f.options.checkHealth());
+  });
+  it('rejects new SDK against old daemon even with explicit frontend override', async () => {
+    const f = fixture(); const old = await f.options.checkHealth();
+    await reload(f.root, { ...f.options, frontend: true });
+    f.put('packages/sdk/src/index.ts', 'export const newer = true;');
+    await expect(reload(f.root, { ...f.options, frontend: true, checkHealth: async () => old })).rejects.toThrow('required contract');
+    expect(f.builds()).toBe(1);
+  });
+  it('rejects old health and unbuilt source before explicit frontend publication', async () => {
+    const f = fixture();
+    for (const identity of [undefined, { kind: 'source', buildId: 'source', contractDigest: null }]) {
+      await expect(reload(f.root, { ...f.options, frontend: true, checkHealth: async () => ({ status: 'ok', protocol: 1, identity }) })).rejects.toThrow('identity');
+    }
+    expect(f.builds()).toBe(0);
   });
   it('rolls index back and retains old stamp if post-publication health fails', async () => {
     const f = fixture(); await reload(f.root, { ...f.options, frontend: true });
     f.put('apps/remote-web/dist/index.html', 'old'); f.put('apps/remote-web/src/main.ts', 'two');
-    const stamp = readFileSync(join(f.root, '.turnwire/reload.frontend.json'), 'utf8'); let calls = 0;
-    await expect(reload(f.root, { ...f.options, checkHealth: async () => { if (++calls === 3) throw Error('not ready'); } })).rejects.toThrow('not ready');
+    const stamp = readFileSync(join(f.root, 'reload-state/reload.frontend.json'), 'utf8'); let calls = 0;
+    await expect(reload(f.root, { ...f.options, checkHealth: async () => { if (++calls === 3) throw Error('not ready'); return f.options.checkHealth(); } })).rejects.toThrow('not ready');
     expect(readFileSync(join(f.root, 'apps/remote-web/dist/index.html'), 'utf8')).toBe('old');
-    expect(readFileSync(join(f.root, '.turnwire/reload.frontend.json'), 'utf8')).toBe(stamp);
+    expect(readFileSync(join(f.root, 'reload-state/reload.frontend.json'), 'utf8')).toBe(stamp);
   });
   it('does not publish failed builds or source that changes during build', async () => {
     const f = fixture(); f.put('apps/remote-web/dist/index.html', 'old');
     await expect(reload(f.root, { ...f.options, frontend: true, build: () => { throw Error('build failed'); } })).rejects.toThrow('build failed');
     await expect(reload(f.root, { ...f.options, frontend: true, build: (stage: string) => { f.options.build(stage); f.put('apps/remote-web/src/main.ts', 'raced'); } })).rejects.toThrow('source changed');
     expect(readFileSync(join(f.root, 'apps/remote-web/dist/index.html'), 'utf8')).toBe('old');
-    expect(existsSync(join(f.root, '.turnwire/reload.frontend.json'))).toBe(false);
+    expect(existsSync(join(f.root, 'reload-state/reload.frontend.json'))).toBe(false);
   });
   it('executes installer against mocked systemctl and temporary HOME only', () => {
     const f = fixture();
     f.put('scripts/install-dev-host.sh', readFileSync(new URL('../scripts/install-dev-host.sh', import.meta.url), 'utf8'));
     f.put('config/dsh-runtime/node_modules/.bin/dsh', '#!/bin/sh\nexit 0\n'); chmodSync(join(f.root, 'config/dsh-runtime/node_modules/.bin/dsh'), 0o755);
-    f.put('config/dsh.env.json', '{}'); f.put('apps/daemon/dist/host-service.mjs', '');
+    f.put('scripts/host-paths.sh', readFileSync(new URL('../scripts/host-paths.sh', import.meta.url), 'utf8'));
+    f.put('home/.config/turnwire/dsh.env.json', '{}'); f.put('apps/daemon/dist/host-service.mjs', '');
     const calls = join(f.root, 'systemctl-calls');
     f.put('mock/systemctl', '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MOCK_CALLS"\n'); chmodSync(join(f.root, 'mock/systemctl'), 0o755);
-    const env = { ...process.env, HOME: join(f.root, 'home'), PATH: `${join(f.root, 'mock')}:${process.env.PATH}`, MOCK_CALLS: calls };
+    const env = hermeticEnv(f.root, { PATH: `${join(f.root, 'mock')}:${process.env.PATH}`, MOCK_CALLS: calls });
     const args = [join(f.root, 'scripts/install-dev-host.sh'), '--state', join(f.root, 'state'), '--dsh-home', join(f.root, 'dsh')];
     execFileSync('bash', args, { cwd: f.root, env });
     let commands = readFileSync(calls, 'utf8');

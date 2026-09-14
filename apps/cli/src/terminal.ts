@@ -89,7 +89,6 @@ export async function remoteMenu(client: LocalClient, io: TerminalIO = terminalI
         }
         case '9': await directMenu(client, io); break;
         case '10': await notificationsMenu(client, io); break;
-        case '11': { const devices = await client.devices(); devices.forEach((device, index) => io.write(`${index + 1} ${safe(device.name)} · v${device.protocol ?? 1}`)); const selected = await io.ask(t('remote.upgradeDevice')); if (!selected?.trim()) break; const device = devices[Number(selected) - 1]; if (!device) throw localizedError('CLI_DEVICE_SELECTION'); await printPairing(await client.upgradeDevice(device.id), { qr: true }); break; }
         case '3': await client.configureRemote({ mode: 'off' }); break;
         case '4': {
           const name = await io.ask(t('remote.deviceName', { default: t('device.defaultName') }));

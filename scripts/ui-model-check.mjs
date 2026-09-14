@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // Verifies the phone PWA's model picker against a DSH-backed daemon. Requires a running
-// daemon whose TURNWIRE_HOME holds client.json and whose runtime advertises modelSelection.
-const config = JSON.parse(await readFile(join(process.env.TURNWIRE_HOME, 'client.json'), 'utf8'));
+// daemon whose TURNWIRE_CONFIG_HOME holds client.json and whose runtime advertises modelSelection.
+const config = JSON.parse(await readFile(join(process.env.TURNWIRE_CONFIG_HOME, 'client.json'), 'utf8'));
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 // Connect and create at a desktop width: the phone layout hides the session list, so the
 // new-session button is off-screen until the list is opened.
@@ -48,23 +48,20 @@ try {
 
   // The picker has to survive the phone layout, which is where it is actually used.
   await page.setViewportSize({ width: 390, height: 844 });
-  const actions = page.locator('.session-actions');
-  const actionsToggle = actions.locator('summary');
+  await expect(page.locator('.topbar .session-more, .topbar .session-row-menu')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open session list', exact: true }).click();
+  const actionsToggle = page.getByRole('button', { name: 'More actions for 模型选择验证', exact: true });
+  const actions = page.getByRole('dialog', { name: 'Manage session 模型选择验证', exact: true });
   await actionsToggle.click();
-  await expect(actions).toHaveAttribute('open', '');
   await actions.getByRole('button', { name: 'Rename', exact: true }).click();
-  await expect(actions).toHaveAttribute('open', '');
-  await actions.locator('input').click();
-  await expect(actions).toHaveAttribute('open', '');
   await actions.locator('input').press('Escape');
-  await expect(actions).not.toHaveAttribute('open', '');
+  await expect(actions).toHaveCount(0);
   await expect(actionsToggle).toBeFocused();
+  await expect(page.locator('.sidebar')).toHaveClass(/visible/);
   await actionsToggle.click();
-  await page.locator('.composer textarea').click();
-  await expect(actions).not.toHaveAttribute('open', '');
-  await actionsToggle.click();
-  await page.locator('.composer textarea').dispatchEvent('pointerdown', { pointerType: 'touch', bubbles: true });
-  await expect(actions).not.toHaveAttribute('open', '');
+  await page.locator('.brand').dispatchEvent('pointerdown', { pointerType: 'touch', bubbles: true });
+  await expect(actions).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close list', exact: true }).click();
   const sidebar = page.locator('.sidebar');
   await expect(sidebar).toHaveAttribute('inert', '');
   const sidebarOpen = page.getByRole('button', { name: 'Open session list', exact: true });

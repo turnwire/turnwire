@@ -64,7 +64,7 @@ turnwire deploy --status
 6. 在新发布目录安装服务，验证 Caddy 配置后切换当前版本，启用开机启动、故障重启与每小时证书续期检查。
 7. 验证服务器和本机的公网 HTTPS；默认自动保存本机 Relay 设置并确认主机注册。
 
-密钥文件只临时复制到 daemon 的私有任务目录，结束后删除，不上传 SSH 私钥。Relay 密钥只在服务器与 daemon 间传递，不写入网页、命令行参数、部署状态或日志。模型环境变量不会传给 SSH、打包或服务器安装进程。机器配置和部署状态保存在 daemon 的私有 SQLite；SSH `known_hosts` 位于 `TURNWIRE_HOME/deployments/`。
+密钥文件只临时复制到 daemon 的私有任务目录，结束后删除，不上传 SSH 私钥。Relay 密钥只在服务器与 daemon 间传递，不写入网页、命令行参数、部署状态或日志。模型环境变量不会传给 SSH、打包或服务器安装进程。机器配置和部署状态保存在 daemon 的私有 SQLite；SSH `known_hosts` 位于 `TURNWIRE_STATE_HOME/deployments/`（默认 `~/.local/state/turnwire/deployments/`；见 [XDG 目录规则](XDG.zh.md)）。
 
 IP 证书需要自动续期；参见 [Let's Encrypt 的 Certbot 指南](https://letsencrypt.org/2026/03/11/shorter-certs-certbot)。安装器配置小时计时器和证书部署钩子。Caddy 的 IP 默认 SNI 配置参见[官方文档](https://caddyserver.com/docs/caddyfile/options#default-sni)。
 
@@ -89,4 +89,4 @@ journalctl -u turnwire-certbot-renew -n 50 --no-pager
 
 ## Web Push 持久状态
 
-新版安装器创建 `${installDir}/state`（0700、服务账号所有），并给 systemd 只增加此目录的写权限。环境文件自动设置 `TURNWIRE_PUSH_DB=${installDir}/state/push.db`、`TURNWIRE_VAPID_SUBJECT` 为配置的公网 HTTPS 地址。首次启动生成 VAPID 密钥；原地更新保留数据库，避免使手机订阅失效。备份此目录时按凭据文件保护。Relay 更新不替换用户已配对设备的 E2EE 凭据。
+新版安装器创建 `${installDir}/state`（0700、服务账号所有），并给 systemd 只增加此目录的写权限。环境文件自动设置 `TURNWIRE_PUSH_DB=${installDir}/state/push.db`、`TURNWIRE_VAPID_SUBJECT` 为配置的公网 HTTPS 地址。首次启动生成 VAPID 密钥；原地更新保留数据库，避免使手机订阅失效。备份此目录时按凭据文件保护。当前 v2 契约内的更新不替换有效的 v2 设备凭据。这不代表兼容旧主机、旧设备凭据或旧配对格式：所有参与方必须使用当前 v2 契约，设备通过新 v2 配对登记，不使用升级命令或 PUT 替换。主机 Store 拒绝旧库，不提供迁移。替换主机之前，分别备份解析后的 Turnwire config、state 目录及 DSH 状态/附件；Relay 推送数据库不是主机备份。见[维护指南](FIRST-UPGRADE.zh.md)。

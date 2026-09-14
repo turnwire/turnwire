@@ -38,7 +38,7 @@ describe('shared client internationalisation', () => {
   });
 
   it('renders English transcript labels by default and accepts a localized label set', () => {
-    const session: Session = { id: 's', title: 'Test', cwd: '/tmp', runtimeId: 'demo', runtimeSessionId: 's', status: 'idle', createdAt: '', updatedAt: '' };
+    const session: Session = { id: 's', title: 'Test', cwd: '/tmp', runtimeId: 'demo', runtimeSessionId: 's', status: 'idle', archived: false, autoApprove: false, createdAt: '', updatedAt: '' };
     const messages: ConversationMessage[] = [
       { id: 'm', role: 'user', text: 'hello', time: '', complete: true },
       { id: 'c', role: 'tool', text: 'ok', tool: 'shell', time: '', complete: true, input: 'run' },

@@ -16,7 +16,8 @@ function fixture(count = 0, write?: (message: SecureMessage) => Promise<void>) {
   const events = vi.fn((after: number, limit: number) => journal.filter(event => event.seq > after).slice(0, limit));
   const core = {
     device: { id: 'host' },
-    store: { devices: () => [{ v: 1, clientId: 'phone' }], cursor: () => journal.at(-1)?.seq ?? 0, events },
+    runTask: <T>(work: () => Promise<T>) => work(),
+    store: { devices: () => [{ v: 2, clientId: 'phone' }], cursor: () => journal.at(-1)?.seq ?? 0, events },
     subscribe: (callback: typeof listener) => { listener = callback; return unsubscribe; },
     handle: vi.fn(async () => ({ id: 'cancel', ok: true, result: {} })),
   };
@@ -27,8 +28,10 @@ function fixture(count = 0, write?: (message: SecureMessage) => Promise<void>) {
     channel: { encrypt: (message: SecureMessage) => Promise<SecureMessage>; decrypt: (message: unknown) => Promise<SecureMessage> };
     send: (kind: SecureMessage['kind'], body: unknown) => Promise<void>;
     queue: Promise<void>; outgoing: Promise<void>;
+    authenticatedDevice: ReturnType<typeof core.store.devices>[number];
   };
   internal.channel = { encrypt: async message => message, decrypt: async message => message as SecureMessage };
+  internal.authenticatedDevice = core.store.devices()[0]!;
   cleanup.push(() => peer.close());
   return { peer, internal, core, sent, events, disconnect, unsubscribe,
     append: () => { const next = event(journal.length + 1); journal.push(next); listener(next); return next; } };

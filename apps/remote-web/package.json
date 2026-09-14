@@ -12,6 +12,7 @@
   "dependencies": {
     "@turnwire/protocol": "*",
     "@turnwire/sdk": "*",
+    "@turnwire/wire": "*",
     "@phosphor-icons/react": "^2.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

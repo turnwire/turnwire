@@ -60,16 +60,13 @@ it('clears archive durably and never restores consent on unarchive', async () =>
   expect(third.store.session(session.id)).toMatchObject({ archived: false, autoApprove: false });
 });
 
-it('migrates missing consent off even when an old journal explicitly enabled it', async () => {
+it('rejects missing consent instead of migrating or replaying an old journal', async () => {
   const path = await database(); const first = open(path); const session = await create(first.core);
   const { autoApprove: _, ...legacy } = session;
   first.store.db.prepare('UPDATE sessions SET body=? WHERE id=?').run(JSON.stringify(legacy), session.id);
   first.store.append({ type: 'session.autoApprove', sessionId: session.id, auto: true });
   await first.core.dispose();
-  const second = open(path); await second.core.start();
-  expect(second.store.session(session.id)?.autoApprove).toBe(false);
-  await call(second.core, 'session.message', { sessionId: session.id, text: 'approval' });
-  expect(second.store.approvals()[0]?.status).toBe('pending');
+  expect(() => new Store(path)).toThrow('Unsupported storage');
 });
 
 it('expires pre-restart requests without replay while retaining consent for future requests', async () => {

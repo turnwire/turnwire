@@ -1,18 +1,15 @@
 import { z } from 'zod';
-import { parseMethodResult, pairingSchema, connectionPongSchema, responseSchema, eventSchema, TurnwireError } from '@turnwire/protocol';
+import { methodSchemas, parseMethodResult, pairingSchema, connectionPongSchema, responseSchema, eventSchema, TurnwireError } from '@turnwire/protocol';
 import type { MethodArgs, MethodResult, Pairing, Method, TurnwireEvent, SecureMessage } from '@turnwire/protocol';
-import { SecureChannel, secureMessage, randomSecret } from './crypto.js';
-import { createClientHandshake } from './session-crypto.js';
-import type { SessionChannel } from './session-crypto.js';
-import { retryDelay } from './retry.js';
-import { call, validateEndpoint } from './index.js';
+import { secureMessage, randomSecret, createClientHandshake, retryDelay, validateEndpoint } from '@turnwire/wire';
+import type { SessionChannel } from '@turnwire/wire';
 import type { TurnwireClient, ConnectionState } from './index.js';
 
 export interface ConnectionHealth {
   phase: 'connecting' | 'verifying' | 'connected' | 'offline' | 'error'; message: string;
   lastVerifiedAt?: string; latencyMs?: number; route?: 'relay' | 'direct';
   stage?: 'transport' | 'relay' | 'handshake' | 'verification' | 'ready';
-  attempt?: number; retryInMs?: number; protocol?: 1 | 2; elapsedMs?: number; code?: string;
+  attempt?: number; retryInMs?: number; protocol?: 2; elapsedMs?: number; code?: string;
 }
 export interface RemoteClientOptions {
   heartbeatIntervalMs?: number; heartbeatTimeoutMs?: number; connectTimeoutMs?: number;
@@ -24,7 +21,7 @@ class Transport {
   verifiedHealth: Partial<ConnectionHealth> = {};
   private resolve!: () => void; private reject!: (error: Error) => void;
   private socket: WebSocket; private active = true; private verified = false;
-  private channel?: SecureChannel | SessionChannel;
+  private channel?: SessionChannel;
   private handshake?: Awaited<ReturnType<typeof createClientHandshake>>;
   private incoming = Promise.resolve(); private outgoing = Promise.resolve();
   private deadline?: ReturnType<typeof setTimeout>; private heartbeat?: ReturnType<typeof setInterval>;
@@ -45,15 +42,13 @@ class Transport {
         if (frame.type === 'ready') {
           if (!frame.online) throw new TurnwireError('HOST_OFFLINE', 'The host is offline');
           if (this.channel || this.handshake) throw new Error('Duplicate relay ready');
-          if (pairing.v === 2) {
-            this.stage('handshake', 'Verifying the device identity and deriving session keys…');
-            this.handshake = await createClientHandshake([pairing.key, ...(pairing.pendingKey ? [pairing.pendingKey] : [])], `${pairing.hostId}:${pairing.clientId}`);
-            if (this.active) this.socket.send(JSON.stringify({ type: 'payload', payload: this.handshake.hello }));
-          } else { this.channel = new SecureChannel(pairing.key, `${pairing.hostId}:${pairing.clientId}`, 'client'); await this.initialize(); }
+          this.stage('handshake', 'Verifying the device identity and deriving session keys…');
+          this.handshake = await createClientHandshake([pairing.key, ...(pairing.pendingKey ? [pairing.pendingKey] : [])], `${pairing.hostId}:${pairing.clientId}`);
+          if (this.active) this.socket.send(JSON.stringify({ type: 'payload', payload: this.handshake.hello }));
           return;
         }
         if (frame.type !== 'payload') return;
-        if (pairing.v === 2 && frame.payload?.type === 'hello.reply') {
+        if (frame.payload?.type === 'hello.reply') {
           if (!this.handshake || this.channel) throw new Error('Unexpected handshake reply');
           this.channel = await this.handshake.complete(frame.payload); this.handshake = undefined;
           if (pairing.bootstrap) await this.send('enroll', { key: pairing.pendingKey }); else await this.initialize();
@@ -62,7 +57,7 @@ class Transport {
         if (!this.channel) throw new Error('Encrypted session required');
         const value = await this.channel.decrypt(frame.payload); if (!this.active) return;
         if (value.kind === 'enrolled') {
-          if (pairing.v !== 2 || !pairing.pendingKey || !pairing.bootstrap) throw new Error('Unexpected enrollment');
+          if (!pairing.pendingKey || !pairing.bootstrap) throw new Error('Unexpected enrollment');
           await this.save({ ...pairing, key: pairing.pendingKey, bootstrap: false, pendingKey: undefined, expiresAt: undefined });
           await this.initialize();
         } else if (value.kind === 'subscribed') {
@@ -72,9 +67,8 @@ class Transport {
           const pong = connectionPongSchema.parse(value.body); const probe = this.probe;
           if (!probe || pong.nonce !== probe.nonce || pong.hostId !== pairing.hostId) throw new TurnwireError('AUTHENTICATION_FAILED', 'Encrypted connection verification failed: mismatched response');
           probe.challenge = pong.challenge; await this.send('ack', { challenge: pong.challenge });
-          if (pairing.v === 1) this.confirm();
         } else if (value.kind === 'confirmed') {
-          if (pairing.v !== 2 || !this.probe?.challenge || (value.body as { challenge?: string })?.challenge !== this.probe.challenge) throw new Error('Invalid confirmation');
+          if (!this.probe?.challenge || (value.body as { challenge?: string })?.challenge !== this.probe.challenge) throw new Error('Invalid confirmation');
           this.confirm();
         } else if (value.kind === 'error') throw new TurnwireError('REMOTE_ERROR', 'The host refused the connection; check host diagnostics');
         else this.message(value);
@@ -141,9 +135,9 @@ export class RemoteClient implements TurnwireClient {
     const generation = ++this.generation; const started = performance.now(); this.setState('connecting');
     this.healthChanged({ phase: 'connecting', message: 'Connecting to the remote entry…', attempt: this.attempts + 1, retryInMs: undefined, protocol: this.pairing.v, code: undefined });
     const task = (async () => {
-      if (this.pairing.v === 2 && this.pairing.bootstrap && !this.pairing.pendingKey) await this.save({ ...this.pairing, pendingKey: randomSecret() });
+      if (this.pairing.bootstrap && !this.pairing.pendingKey) await this.save({ ...this.pairing, pendingKey: randomSecret() });
       if (generation !== this.generation) throw new Error('Connection cancelled');
-      const direct = this.pairing.v === 2 && !this.pairing.bootstrap ? this.pairing.directUrls ?? [] : [];
+      const direct = !this.pairing.bootstrap ? this.pairing.directUrls ?? [] : [];
       const endpoints = [...new Set([...direct, this.pairing.relayUrl])];
       const transports = endpoints.map(url => {
         const route = url === this.pairing.relayUrl ? 'relay' as const : 'direct' as const;
@@ -187,20 +181,20 @@ export class RemoteClient implements TurnwireClient {
       this.pending.delete(response.id); clearTimeout(pending.timer);
       if (response.ok) pending.resolve(response.result); else pending.reject(new TurnwireError(response.error.code, response.error.message));
     }
-    if (message.kind === 'routes' && this.pairing.v === 2) {
+    if (message.kind === 'routes') {
       const { urls } = z.object({ urls: z.array(z.string().url()).max(4) }).parse(message.body);
       for (const url of urls) validateEndpoint(url, true);
       if (JSON.stringify(urls) !== JSON.stringify(this.pairing.directUrls ?? [])) void this.save({ ...this.pairing, directUrls: urls }).catch(() => {});
     }
   }
-  call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> { return call(this, method, ...args); }
-  /** @deprecated Use call() for inferred method parameters and results. */
-  async request<T = unknown>(method: Method, params: unknown = {}, id: string = crypto.randomUUID()): Promise<T> {
+  async call<M extends Method>(method: M, ...args: MethodArgs<M>): Promise<MethodResult<M>> {
+    const [input = {}, id = crypto.randomUUID()] = args;
+    const params = methodSchemas[method].parse(input);
     await this.connect();
     if (this.pending.has(id)) throw new TurnwireError('REQUEST_PENDING', 'This request is already awaiting a result');
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<MethodResult<M>>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new TurnwireError('OUTCOME_UNKNOWN', `Request result unknown; check it with request ID ${id}`)); }, 35_000);
-      this.pending.set(id, { resolve: value => { try { resolve(parseMethodResult(method, value) as T); } catch (error) { reject(error); } }, reject, timer });
+      this.pending.set(id, { resolve: value => { try { resolve(parseMethodResult(method, value)); } catch (error) { reject(error); } }, reject, timer });
       void this.transport!.send('request', { v: 1, id, method, params }).catch(() => { this.pending.delete(id); clearTimeout(timer); reject(new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`)); });
     });
   }

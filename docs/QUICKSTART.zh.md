@@ -14,13 +14,13 @@ bash scripts/start-host.sh
 
 已经安装 Node/npm 时，也可以运行 `npm start`，两者是同一入口。Bash 入口可以自行准备固定版本 Node。首次下载/构建耗时取决于网络和 CPU；「一命令」不代表无需前置条件或瞬间安装。
 
-脚本检查环境、准备 Node 与依赖、构建 PWA/主机、隐藏输入模型密钥，并调用已有 Linux 安装器注册常驻服务。默认受管主机需要 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，不因此新增或注册模型。新安装的配置、状态、运行时和下载缓存分别进入 XDG config/state/data/cache 目录。已有源码目录内的私有 `config/dsh.env.json` 和既有布局保持不变，不自动迁移，详见 [XDG 目录规则](XDG.zh.md)。不要把密钥放进命令行参数、公开部署文件或截图。
+脚本检查环境、准备 Node 与依赖、构建 PWA/主机、隐藏输入模型密钥，并调用已有 Linux 安装器注册常驻服务。默认受管主机需要 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，不因此新增或注册模型。私有配置、状态、运行时和下载缓存分别用独立的 `TURNWIRE_CONFIG_HOME`、`TURNWIRE_STATE_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 覆盖。未覆盖时使用对应的绝对路径 XDG 基目录加 `/turnwire`，默认依次为 `~/.config/turnwire`、`~/.local/state/turnwire`、`~/.local/share/turnwire`、`~/.cache/turnwire`。`TURNWIRE_HOME` 已删除，设置它会被拒绝。不自动识别旧布局；DSH 环境文件只默认使用解析后的 config 目录中的 `dsh.env.json`，也可用 `TURNWIRE_DSH_ENV_FILE` 显式指定。Store 以 `UNSUPPORTED_STORAGE` 拒绝旧库，不提供迁移；当前格式须使用独立空状态目录。详见 [XDG 目录规则](XDG.zh.md)。不要把密钥放进命令行参数、公开部署文件或截图。
 
 需要 Bash、正常工作的 systemd 用户服务及下载/解压 Node 所需工具，不以 root 运行。安装路径使用不含空格的简单路径，与既有服务安装器限制一致。该入口仅支持 Linux；Mac 使用原生/源码安装说明，不会假装安装 Linux 服务。
 
 ## 后续启动
 
-同一时间只运行一个启动脚本，首次构建未做并发串行化。上次运行结束后，再次执行同一命令：匹配的服务已运行时保持不动；匹配的已安装服务停止时直接启动，不重新构建。若服务属于其他安装目录，拒绝覆盖或重启。这个入口不是升级命令；替换版本应先等当前任务结束，再执行受控更新。
+同一时间只运行一个启动脚本，首次构建未做并发串行化。上次运行结束后，再次执行同一命令：匹配的服务已运行时保持不动；匹配的已安装服务停止时直接启动，不重新构建。若服务属于其他安装目录，拒绝覆盖或重启。这个入口不是升级命令；替换版本应先等当前任务结束，再按[维护指南](FIRST-UPGRADE.zh.md)操作。
 
 ```bash
 bash scripts/start-host.sh --check
@@ -41,7 +41,7 @@ bin/turnwire devices pair --name phone --qr
 
 在远程表单里连接已有固定 Relay，或选择临时通道。稳定公网入口仍需要可达的服务器/域名和凭据；启动脚本不会擅自购买 VPS、配置 DNS、开放防火墙或部署公网服务。详见[Relay 部署](RELAY-INSTALL.zh.md)。
 
-daemon 和 DSH 保持回环监听，不默认启用代审批。主机需要常醒，保护私有凭据，同时备份 Turnwire 状态和 DSH 状态/附件。
+daemon 和 DSH 保持回环监听，不默认启用代审批。主机需要常醒，保护私有凭据，分别备份 Turnwire config、state 和 DSH 状态/附件，包括显式配置的 `TURNWIRE_DSH_HOME`。配对仅支持 v2，要求 Relay、主机和客户端使用匹配的当前版本；不支持旧主机或旧设备凭据。
 
 ## 验证边界
 

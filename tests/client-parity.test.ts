@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store, TurnwireCore } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import { LocalClient, RemoteClient, randomSecret } from '@turnwire/sdk';
+import { LocalClient, RemoteClient } from '@turnwire/sdk';
+import { randomSecret } from '@turnwire/wire';
 import type { PairingResult, Session, Snapshot } from '@turnwire/protocol';
 import { RemoteController } from '../apps/daemon/src/remote-control.js';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
@@ -38,7 +39,7 @@ async function setup() {
   await writeFile(join(directory, 'client.json'), JSON.stringify({ url, token }), { mode: 0o600 });
   const local = new LocalClient(url, token); cleanup.push(() => local.close());
   const cli = async (...args: string[]) => {
-    const result = await run(process.execPath, ['--import', 'tsx', resolve('apps/cli/src/main.ts'), '--json', ...args], { env: hermeticEnv(directory, { TURNWIRE_HOME: directory, TURNWIRE_CONFIG_HOME: directory, TURNWIRE_DATA_HOME: directory, TURNWIRE_CACHE_HOME: directory }), timeout: 12000 });
+    const result = await run(process.execPath, ['--import', 'tsx', resolve('apps/cli/src/main.ts'), '--json', ...args], { env: hermeticEnv(directory, { TURNWIRE_STATE_HOME: directory, TURNWIRE_CONFIG_HOME: directory, TURNWIRE_DATA_HOME: directory, TURNWIRE_CACHE_HOME: directory }), timeout: 12000 });
     return JSON.parse(result.stdout) as unknown;
   };
   return { core, remote, local, cli, url, token, stopped: () => stopped };
@@ -58,7 +59,7 @@ it('CLI, interactive terminal and SDK share session and remote state through the
   const pair = await cli('devices', 'pair', '--name', 'Terminal phone') as PairingResult;
   await until(() => remote.status().state === 'online');
   const phone = new RemoteClient(pair.pairing); cleanup.push(() => phone.close());
-  expect((await phone.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(session.id);
+  expect((await phone.call('system.snapshot')).sessions[0]?.id).toBe(session.id);
 
   const lines = scripted([`send ${session.id} 'A literal $(command), with spaces'`, 'remote off', 'ls', 'quit']);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -67,9 +68,9 @@ it('CLI, interactive terminal and SDK share session and remote state through the
   expect(lines.output.filter(line => /无效|invalid/i.test(line))).toEqual([]);
   await until(() => stopped() === 1);
   expect((await cli('remote', 'status') as { state: string }).state).toBe('off');
-  const events = await local.request<{ events: Array<{ data: { text?: string } }> }>('events.list', { sessionId: session.id });
-  expect(events.events.some(event => event.data.text === 'A literal $(command), with spaces')).toBe(true);
-  expect((await local.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(session.id);
+  const events = await local.call('events.list', { sessionId: session.id });
+  expect(events.events.some(event => event.data.type === 'message.user' && event.data.text === 'A literal $(command), with spaces')).toBe(true);
+  expect((await local.call('system.snapshot')).sessions[0]?.id).toBe(session.id);
   expect(log.mock.calls.some(call => String(call[0]).includes(session.id))).toBe(true);
   await cli('devices', 'revoke', pair.pairing.clientId);
   expect(await local.devices()).toEqual([]);
@@ -118,7 +119,7 @@ it('CLI and TUI select the same tunnel providers and keep cpolar token entry pri
 
 it('CLI and TUI share bounded history pages and explicit full export', async () => {
   const { core, local, cli, url, token } = await setup();
-  const session = await local.request<Session>('session.create', { runtimeId: 'demo', title: 'Pages', cwd: process.cwd() });
+  const session = await local.call('session.create', { runtimeId: 'demo', title: 'Pages', cwd: process.cwd() });
   for (let i = 0; i < 85; i++) core.store.append({ type: 'message.user', sessionId: session.id, messageId: `m-${i}`, text: `record ${i}` });
   const first = await cli('history', session.id) as { events: unknown[]; nextBefore: number };
   expect(first.events).toHaveLength(40);
@@ -133,8 +134,8 @@ it('CLI and TUI share bounded history pages and explicit full export', async () 
 
 it('shares inbox, receipts, direct settings and notification preferences through CLI, TUI and SDK', async () => {
   const { local, cli } = await setup();
-  const session = await local.request<Session>('session.create', { title: 'Inbox parity', cwd: process.cwd(), runtimeId: 'demo' });
-  const requestId = crypto.randomUUID(); await local.request('session.message', { sessionId: session.id, text: 'approval' }, requestId);
+  const session = await local.call('session.create', { title: 'Inbox parity', cwd: process.cwd(), runtimeId: 'demo' });
+  const requestId = crypto.randomUUID(); await local.call('session.message', { sessionId: session.id, text: 'approval' }, requestId);
   expect(await cli('result', requestId)).toMatchObject({ state: 'completed', response: { ok: true } });
   expect(await cli('inbox')).toMatchObject({ items: [{ approval: { status: 'pending', sessionId: session.id } }] });
   await cli('notifications', 'off'); expect((await local.notificationStatus()).enabled).toBe(false);

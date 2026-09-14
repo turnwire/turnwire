@@ -6,8 +6,8 @@ export interface LoadImageArgs { sessionId: string; attachmentId: string }
 export interface SendImageMessageArgs { sessionId: string; text: string; images: ImageInput[]; steer?: boolean }
 
 /** Shared across local and encrypted remote transports; validate before sending bytes. */
-export function sendImageMessage(client: RpcClient, args: SendImageMessageArgs) {
-  return call(client, 'session.message', args);
+export async function sendImageMessage(client: RpcClient, args: SendImageMessageArgs) {
+  return call(client, 'session.message', methodSchemas['session.message'].parse(args));
 }
 
 /** Explicit, bounded retrieval. Transcript/history projections never fetch image bytes. */

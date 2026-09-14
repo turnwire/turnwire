@@ -83,6 +83,58 @@ it('persists the bound hold through a fresh daemon core and never resumes on sta
   expect(await create(second.core, 'new')).toMatchObject({ ok: true });
 });
 
+it('clears stale pending approvals after a persisted hold restart without resuming runtime work', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'turnwire-maintenance-')); cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'state.db'); const first = setup(path);
+  const created = await create(first.core, 'root');
+  if (!created.ok) throw new Error('create failed');
+  const session = first.store.sessions()[0]!;
+  const approval = { id: `${session.id}:stale`, sessionId: session.id, tool: 'shell', reason: 'lost runtime connection', status: 'pending' as const, createdAt: new Date().toISOString() };
+  first.store.append({ type: 'approval.requested', approval });
+  const hold = await first.core.configureMaintenance({ action: 'begin' });
+  expect(hold).toMatchObject({ state: 'draining', busy: 1 });
+  // Fault boundary: the daemon exits after persisting its hold, before the approval resolves.
+  await first.core.dispose(); cleanup.pop();
+
+  const second = setup(path);
+  expect(second.store.approval(approval.id)?.status).toBe('pending');
+  // Model a surviving, now-idle runtime without attaching/resuming the managed session.
+  vi.spyOn(second.runtime, 'listSessions').mockResolvedValue([{ id: session.runtimeSessionId, cwd: session.cwd, status: 'idle' }]);
+  const resume = vi.spyOn(second.runtime, 'resumeSession');
+  const approve = vi.spyOn(second.runtime, 'approve');
+  const events = vi.fn(); second.core.subscribe(events);
+  await second.core.start();
+  expect(second.store.approvals().filter(row => row.status === 'pending')).toEqual([]);
+  expect(second.store.approval(approval.id)?.status).toBe('cancelled');
+  expect(events).toHaveBeenCalledWith(expect.objectContaining({ data: { type: 'approval.resolved', approval: { ...approval, status: 'cancelled' } } }));
+  expect((await second.core.snapshot()).approvals).toEqual([]);
+  expect(await second.core.maintenanceStatus()).toMatchObject({ token: hold.token, state: 'ready', busy: 0 });
+  expect(await create(second.core, 'blocked')).toMatchObject({ ok: false, error: { code: 'MAINTENANCE' } });
+  expect(resume).not.toHaveBeenCalled();
+  expect(approve).not.toHaveBeenCalled();
+  await second.core.dispose(); cleanup.pop();
+
+  const third = setup(path);
+  expect(third.store.approval(approval.id)?.status).toBe('cancelled');
+  expect(third.store.setting('maintenance-hold')).toBe(hold.token);
+});
+
+it('revalidates the lease after asynchronous history export cancellation before VACUUM', async () => {
+  const { core, store } = setup(); const hold = await core.configureMaintenance({ action: 'begin' });
+  let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+  const cancel = vi.spyOn(store, 'cancelHistoryExports').mockImplementationOnce(() => barrier);
+  const exec = vi.spyOn(store.db, 'exec');
+  const compact = core.configureMaintenance({ action: 'compact', token: hold.token });
+  expect(cancel).toHaveBeenCalledOnce();
+  const exportRead = vi.spyOn(store, 'historyRecordChunk');
+  expect(await command(core, 'export-during-compact', 'history.record', {})).toMatchObject({ ok: false, error: { code: 'MAINTENANCE' } });
+  expect(exportRead).not.toHaveBeenCalled(); exportRead.mockRestore();
+  await core.configureMaintenance({ action: 'cancel', token: hold.token });
+  release(); await expect(compact).rejects.toThrow('stable drained');
+  expect(exec.mock.calls.some(([sql]) => sql.includes('VACUUM'))).toBe(false);
+  exec.mockRestore(); cancel.mockRestore();
+});
+
 it('requires local bearer authentication and rejects remote/proxied administration', async () => {
   const { core } = setup(); const server = await startDaemonServer({ core, token: 'secret', port: 0 }); cleanup.push(server.close);
   const url = `http://127.0.0.1:${server.port}/maintenance`;

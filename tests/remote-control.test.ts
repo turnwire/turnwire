@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, TurnwireCore } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import { LocalClient, RemoteClient, randomSecret } from '@turnwire/sdk';
+import { LocalClient, RemoteClient } from '@turnwire/sdk';
+import { randomSecret } from '@turnwire/wire';
 import { remoteStatusSchema, type Pairing, type Session, type Snapshot } from '@turnwire/protocol';
 import { RemoteController } from '../apps/daemon/src/remote-control.js';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
@@ -32,11 +33,31 @@ async function setup(startTunnel?: (options: TunnelOptions) => Promise<TunnelHan
   return { directory, webRoot, core, controller, local, admin, url, token };
 }
 
-it('accepts legacy status responses and validates optional structured health', () => {
-  const legacy = { mode: 'off', state: 'off', message: 'Off', hasRelayToken: false };
-  expect(remoteStatusSchema.parse(legacy).health).toBeUndefined();
-  expect(remoteStatusSchema.safeParse({ ...legacy, health: { relayRegistration: 'ready', tunnelProcess: 'off', publicReachability: 'unknown', deviceConfirmed: 'error' } }).success).toBe(true);
-  expect(remoteStatusSchema.safeParse({ ...legacy, health: { relayRegistration: 'online' } }).success).toBe(false);
+it('keeps deferred tunnel configuration and cleanup in maintenance drain until shutdown settles', async () => {
+  let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+  let closed = 0;
+  const { controller, core } = await setup(async ({ port }) => { entered(); await barrier; return { url: `http://127.0.0.1:${port}`, close: async () => { closed++; } }; });
+  controller.configure({ mode: 'temporary' }); await started;
+  const held = await core.configureMaintenance({ action: 'begin' });
+  expect(held.state).toBe('draining'); expect(held.inFlight).toBeGreaterThan(0);
+  expect(() => controller.configure({ mode: 'temporary' })).toThrow('Maintenance');
+  controller.activity.stopIntake();
+  let stopped = false; const stop = controller.close().then(() => { stopped = true; });
+  await Promise.resolve(); expect(stopped).toBe(false);
+  release(); await stop; await controller.activity.drain();
+  expect(closed).toBe(1); expect((await core.maintenanceStatus()).inFlight).toBe(0);
+  expect(() => controller.configure({ mode: 'temporary' })).toThrow();
+});
+
+it('requires the complete current remote status contract', () => {
+  const status = { mode: 'off', state: 'off', message: 'Off', hasRelayToken: false, hasCpolarToken: false, notices: [], providers: [], health: { relayRegistration: 'ready', tunnelProcess: 'off', publicReachability: 'unknown', deviceConfirmed: 'error' } };
+  expect(remoteStatusSchema.safeParse(status).success).toBe(true);
+  for (const key of ['health', 'notices', 'providers', 'hasCpolarToken'] as const) {
+    const incomplete: Record<string, unknown> = { ...status }; delete incomplete[key];
+    expect(remoteStatusSchema.safeParse(incomplete).success).toBe(false);
+  }
+  expect(remoteStatusSchema.safeParse({ ...status, health: { relayRegistration: 'online' } }).success).toBe(false);
 });
 
 it('reports relay authentication failure without claiming public or device connectivity', async () => {
@@ -50,33 +71,33 @@ it('reports relay authentication failure without claiming public or device conne
 it('switches both remote modes and off without restarting sessions or sharing the host secret', async () => {
   let tunnelClosed = 0;
   const { controller, local, admin, core } = await setup(async ({ port }) => ({ url: 'http://127.0.0.1:' + port, close: async () => { tunnelClosed++; } }));
-  const session = await local.request<Session>('session.create', { cwd: process.cwd(), title: 'Keep this session', runtimeId: 'demo' });
+  const session = await local.call('session.create', { cwd: process.cwd(), title: 'Keep this session', runtimeId: 'demo' });
   controller.configure({ mode: 'temporary' }); await until(() => controller.status().state === 'online');
   const paired = await (await admin('/devices', 'POST', { name: 'Phone' })).json() as { pairing: Pairing; url: string };
   await until(() => controller.status().state === 'online');
   const phone = new RemoteClient(paired.pairing); cleanup.push(() => phone.close());
-  expect((await phone.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(session.id);
-  await phone.request('session.message', { sessionId: session.id, text: 'From my phone' });
+  expect((await phone.call('system.snapshot')).sessions[0]?.id).toBe(session.id);
+  await phone.call('session.message', { sessionId: session.id, text: 'From my phone' });
 
   const secret = randomSecret(); const relay = await startRelay({ token: secret, port: 0 }); cleanup.push(() => relay.close());
   const serverUrl = 'http://127.0.0.1:' + relay.port;
   controller.configure({ mode: 'relay', serverUrl, token: secret }); await until(() => controller.status().state === 'online');
   expect(tunnelClosed).toBe(1);
   expect(controller.status().health).toEqual({ relayRegistration: 'ready', tunnelProcess: 'off', publicReachability: 'unknown', deviceConfirmed: 'unknown' });
-  expect((await local.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(session.id);
+  expect((await local.call('system.snapshot')).sessions[0]?.id).toBe(session.id);
   expect(JSON.stringify(controller.status())).not.toContain(secret);
   expect(controller.status().hasRelayToken).toBe(true);
   const secondPair = await (await admin('/devices', 'POST', { name: 'Phone at fixed server' })).json() as { pairing: Pairing };
   expect(secondPair.pairing.relayUrl).toBe(serverUrl.replace('http:', 'ws:') + '/relay');
   await until(() => controller.status().state === 'online');
   const second = new RemoteClient(secondPair.pairing); cleanup.push(() => second.close());
-  expect((await second.request<Snapshot>('system.snapshot')).sessions[0]?.id).toBe(session.id);
+  expect((await second.call('system.snapshot')).sessions[0]?.id).toBe(session.id);
 
   controller.configure({ mode: 'off' }); await until(() => !controller.endpoints());
   expect(controller.status().state).toBe('off');
   expect(controller.status().health).toEqual({ relayRegistration: 'off', tunnelProcess: 'off', publicReachability: 'off', deviceConfirmed: 'off' });
   expect((await admin('/devices', 'POST', { name: 'Too early' })).status).toBe(409);
-  await local.request('session.message', { sessionId: session.id, text: 'Local still works' });
+  await local.call('session.message', { sessionId: session.id, text: 'Local still works' });
   expect(core.store.sessions()).toHaveLength(1);
   controller.configure({ mode: 'relay', serverUrl }); await until(() => controller.status().state === 'online');
   expect(controller.status().hasRelayToken).toBe(true);

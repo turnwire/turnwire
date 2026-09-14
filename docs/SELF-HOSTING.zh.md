@@ -2,7 +2,7 @@
 
 # 用 Turnwire 开发 Turnwire
 
-主机可以运行这份检出，而不是已安装的发布版，于是编辑 Turnwire 的 Agent 正是 Turnwire 正在运行的 Agent。本文介绍这个循环、让它仅限开发用途的防护，以及让远程操作者保持连接的自动回滚。
+主机可以运行这份检出，而不是已安装的发布版，于是编辑 Turnwire 的 Agent 正是 Turnwire 正在运行的 Agent。本文介绍这个循环、让它仅限开发用途的防护，以及恢复流程。切换或重载可能中断远程连接；回滚不保证恢复不兼容的状态。
 
 ## 为什么这不是产品功能
 
@@ -18,18 +18,18 @@
 
 ```bash
 npm ci --prefix config/dsh-runtime          # the DSH the host will run
-cp <release>/config/dsh.env.json config/dsh.env.json   # 0600, gitignored
+export TURNWIRE_DSH_ENV_FILE=/absolute/private/dsh.env.json # 已准备好的文件，权限 0600
 npm run build
 scripts/install-dev-host.sh --state <state> --dsh-home <dsh-state>
 ```
 
-`--state` 和 `--dsh-home` 必须是当前主机已经在使用的目录，否则主机会在没有已配对设备、没有 Relay token、也没有会话日志的情况下启动。不会启动任何东西：unit 存在但保持 inactive，直到你切换过去。
+显式选择 `--state` 和 `--dsh-home`。只有确认状态使用当前最终存储 schema、v2 配对且 DSH home 兼容后，才能复用。Store 拒绝旧数据库且不迁移；不兼容的安装应使用独立空状态，重新配置主机并创建新配对，不应把新主机指向旧状态来升级。见[首次升级](FIRST-UPGRADE.zh.md)。config/data/cache 使用分离的 XDG 路径或显式 `TURNWIRE_CONFIG_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 覆盖；`--state` 设置 `TURNWIRE_STATE_HOME`，不设置其他路径，也不检测旧布局。不会启动任何东西：unit 存在但保持 inactive，直到你切换过去。
 
 加上 `--enable-watch` 会同时启用 `turnwire-dev-reload.path` 和补充轮询的 `.timer`。默认关闭；禁用会立即停止两种触发器及正在运行的重载任务。监听只允许兼容的前端静态资源发布，后端或 DSH 变动不会自动重启服务。
 
 ## DSH 环境文件
 
-`config/dsh.env.json`（0600，被 gitignore）是 DSH 启动时的环境，而不是"一个 key 的位置"：里面每个字符串都会转发给 DSH 进程；Turnwire 自己的密钥（relay token、DSH 启动 token 和 URL）即使写在这个文件里也会被剥掉。文件里的任何东西都不会进入 daemon 或任何客户端 —— 模型凭据始终留在 DSH 内部。
+私有 `TURNWIRE_DSH_ENV_FILE`（权限 0600，默认 `~/.config/turnwire/dsh.env.json`，通过 `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME` 解析）是 DSH 启动时的环境，而不是"一个 key 的位置"：里面每个字符串都会转发给 DSH 进程；Turnwire 自己的密钥（relay token、DSH 启动 token 和 URL）即使写在这个文件里也会被剥掉。文件里的任何东西都不会进入 daemon 或任何客户端 —— 模型凭据始终留在 DSH 内部。
 
 正因为如此，"接入第二个 endpoint"是改配置而不是改代码。DSH 默认挂载了 `llm-pi-ai`，它的路由是一个以 provider 为键的 dict，所以加一个 endpoint 就是加一条配置加上它的凭据：
 
@@ -52,7 +52,7 @@ scripts/install-dev-host.sh --state <state> --dsh-home <dsh-state>
             name: Some model
 ```
 ```json
-// config/dsh.env.json
+// TURNWIRE_DSH_ENV_FILE
 { "TURNWIRE_HARNESS_DEEPSEEK_API_KEY": "…", "TURNWIRE_HARNESS_GATEWAY_KEY": "…" }
 ```
 
@@ -62,17 +62,19 @@ Turnwire 侧不需要知道任何事：runtime 的模型目录会为每条已注
 
 ```bash
 scripts/host-reload.sh             # 检查内容变化；只发布兼容的前端资源
-scripts/host-reload.sh --frontend  # 显式确认前后端兼容并初始化/发布前端
+scripts/host-reload.sh --frontend  # 验证运行中后端契约后初始化/发布前端
 scripts/host-reload.sh --daemon --dry-run  # 仅验证暂存构建，不访问或修改运行主机
 scripts/host-reload.sh --daemon    # 显式租约排空、只替换 daemon、验证后恢复提交
 ```
 
 - **按组件计算内容指纹。** 文档和测试不触发部署；同一个已修改文件的后续内容变化也能识别。部署锁防止并行发布。
 - **默认不重启后台。** 后端或 DSH 内容变化只报告需要人工维护，不再把查询失败当成空闲，也不在重载时同步模型列表。`busyKnown: false` 表示运行状态未知，不能用它证明可以停止任务。
-- **分阶段发布前端。** 构建到临时目录，保留旧哈希资源，最后替换入口；本地健康检查成功才更新部署标记。检查失败回滚入口；不会因为改 README 重启主机。
+- **分阶段发布前端。** 构建到临时目录，保留旧哈希资源，最后替换入口；本地 `/health` 必须返回实际运行构建的 `identity.buildId` 与 `identity.contractDigest`。前端 `turnwire-build.json` 的所需契约必须匹配，显式 `--frontend` 也不能绕过。daemon 构建身份覆盖实际打包依赖图、捕获的源码输入、构建配置及声明依赖锁，不再依赖手工枚举源码目录；已安装外部依赖的实际字节不属于此源码/构建身份，必须与 lockfile 保持一致。源码运行模式或不提供构建身份的后端不能用于发布验证。构建前、发布前后均验证实际身份，成功才更新部署标记；检查失败回滚入口，不会因为改 README 重启主机。
 - **daemon 与 DSH 生命周期分离。** daemon 意外退出进行有限退避重试，耗尽后保持 DSH 存活。维护时可向监督进程发送 `SIGUSR2` 只重新启动 daemon，现有连接仍会短暂中断，待决审批仍可能取消；它不是零中断部署。DSH 退出则停止依赖它的 daemon，由 systemd 恢复整组。
 - **显式托管范围排空。** `--daemon` 先构建独立暂存产物，再获取持久 `/maintenance` 租约并等待已接纳操作、托管根会话/后代/队列全部已知空闲。未知不放行。随后仅替换 daemon，确认监督进程/DSH 身份不变、daemon 代数推进且运行时就绪，才释放租约。失败保留私有恢复日志和租约，只有仍确认拥有关闭入口时才回滚；不猜测丢失响应后能否重开。它不能阻止其他 DSH 客户端直接提交，也不重启 DSH。
 - **经认证的就绪检测。** stdout 只用于发现固定版本启动凭据；真正就绪要求 cookie 握手及认证的 `session/list` RPC 成功，并持续更新私有 `run/host-readiness.json`（不含令牌）。查询失败或记录过期禁止部署。旧监督进程没有该记录时拒绝执行；首次安装新监督进程需另行确认维护窗口，不伪造记录或强制中断活动任务。
+
+暂存 daemon 在获取维护租约前，以及排空后、安装前，各执行一次 `--check-storage`。兼容性检查失败时不安装、不发送信号，也不迁移数据库。daemon-only 更新还校验当前前端契约与新 daemon 匹配，替换后核对精确构建 ID；跨契约更新需要在维护窗口完成整套离线发布，不能用单侧发布强行切换。`--dry-run` 只构建，不读取活动数据库。
 
 ## 安全地切换主机
 
@@ -80,7 +82,7 @@ scripts/host-reload.sh --daemon    # 显式租约排空、只替换 daemon、验
 scripts/host-switch.sh
 ```
 
-它停止发布版 unit 并启动开发版 unit，然后一个瞬态 systemd unit —— 位于主机 unit 的 cgroup 之外，因此重启无法杀死它 —— 会恢复发布版主机，除非开发主机在 `TURNWIRE_SWITCH_WINDOW`（默认 600s）内连上 Relay。Relay 链路是正确的检查，因为它证明主机已启动并用存储的 token 完成认证，而不依赖手机是否唤醒。如果你不在机器旁时切换出了问题，机器会自行恢复。
+它停止发布版 unit 并启动开发版 unit，然后一个瞬态 systemd unit —— 位于主机 unit 的 cgroup 之外，因此重启无法杀死它 —— 会恢复发布版主机，除非开发主机在 `TURNWIRE_SWITCH_WINDOW`（默认 600s）内连上 Relay。Relay 链路只检查主机启动及存储 token 的认证，不依赖手机是否唤醒；它不证明设备登记、E2EE 连通性或数据兼容。看门狗会尝试恢复服务，但不保证旧发布版能读取所选状态，或远程操作者能重新连上。切换前应安排本地恢复手段。
 
 `--no-watchdog` 会跳过这个防护。
 
@@ -92,7 +94,7 @@ scripts/host-switch.sh
 npm run turnwire -- deploy --config <private config>
 ```
 
-已有配对不受影响：配对凭据是一个 token 和一个密钥，其中没有协议常量，所以两端就同一份源码达成一致就足够了。即使加密通道失败，Relay 仍会通过普通 HTTPS 继续提供页面，因此手机端总是可以重载。
+配对携带协议版本，只有兼容的 v2 配对才能复用；两端源码相同不会转换 v1 凭据或旧状态。v1 配对被拒绝且没有升级路径，应配置新安装并从本地主机创建新的 v2 邀请。可达的 Relay 在 E2EE 失败时仍可能通过 HTTPS 提供 PWA，但重载页面既不修复不兼容凭据，也不保证恢复远程访问。见[首次升级](FIRST-UPGRADE.zh.md)。
 
 ## 手工回滚
 
@@ -101,4 +103,4 @@ systemctl --user stop turnwire-dev.service
 systemctl --user start turnwire-host.service
 ```
 
-发布版目录树不会被上述任何操作修改，所以发布版主机永远只差一条命令。
+这些开发脚本不修改发布版目录树，但只有配置、运行时和状态兼容时，才能安全启动该发布版。文件回滚不是数据库迁移或凭据恢复，也不保证会话不中断。切换前应保留独立可用的发布环境，安排维护窗口和本地访问手段。

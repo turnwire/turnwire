@@ -27,6 +27,7 @@ async function host(options: { seeded?: boolean; mode?: 'error' | 'end' | 'cance
     const frame = JSON.parse(raw.toString()); frames.push(frame);
     if (frame.type === 'cancel') { socket.send(JSON.stringify({ type: 'end', streamId: frame.streamId })); return; }
     if (frame.endpoint === '$events') { socket.send(JSON.stringify({ type: 'item', streamId: 'events', value: { type: 'ready', clientId: 'test' } })); return; }
+    if (frame.endpoint === 'session/control') { socket.send(JSON.stringify({ type: 'item', streamId: frame.streamId, value: { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } } })); return; }
     requests.push({ endpoint: frame.endpoint, request: frame.payload.args.request });
     if (options.mode === 'pending') return;
     if (options.mode === 'disconnect') { socket.close(); return; }

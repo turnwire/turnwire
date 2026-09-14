@@ -2,7 +2,7 @@ import { chromium, expect } from '@playwright/test';
 import { readFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const config = JSON.parse(await readFile(join(process.env.TURNWIRE_HOME ?? '/tmp/turnwire-preview-state', 'client.json'), 'utf8'));
+const config = JSON.parse(await readFile(join(process.env.TURNWIRE_CONFIG_HOME ?? '/tmp/turnwire-preview-state', 'client.json'), 'utf8'));
 const output = process.env.TURNWIRE_SCREENSHOTS ?? '/tmp/turnwire-screenshots';
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -176,7 +176,7 @@ try {
   // would otherwise wait for a person raises no panel. Taking it back makes the next one wait.
   // Approval mode stays beside the composer rather than hidden in session administration.
   const delegate = page.locator('.approval-mode [data-auto-approve]');
-  await expect(page.locator('.session-actions [data-auto-approve]')).toHaveCount(0);
+  await expect(page.locator('.session-row-menu [data-auto-approve]')).toHaveCount(0);
   await expect(delegate).toHaveAttribute('role', 'switch');
   await expect(delegate).toHaveAttribute('data-auto-approve', 'off');
   await expect(delegate).toHaveAccessibleName('Approve for me');
@@ -274,16 +274,24 @@ try {
   await page.reload();
   await expect(page.getByRole('heading', { name: '验证 Turnwire 的多端接续' })).toBeVisible();
   await expect(page.getByText("This is Turnwire's offline demo session.", { exact: false }).first()).toBeVisible();
-  await page.locator('.session-actions summary').click();
+  await expect(page.locator('.topbar .session-more')).toHaveCount(0);
+  await expect(page.locator('.composer-area').getByRole('button', { name: 'Unarchive', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open session list', exact: true }).click();
+  await page.getByRole('button', { name: 'More actions for 验证 Turnwire 的多端接续', exact: true }).click();
   await page.getByRole('button', { name: 'Rename', exact: true }).click();
   await page.getByLabel('New session name').fill('跨端会话管理验证');
   await page.getByRole('button', { name: 'Save name', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '跨端会话管理验证' })).toBeVisible();
+  await page.getByRole('button', { name: 'More actions for 跨端会话管理验证', exact: true }).click();
   await page.getByRole('button', { name: 'Archive session', exact: true }).click();
+  await page.getByRole('button', { name: 'Close list', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '跨端会话管理验证' })).toBeVisible();
   await expect(page.getByText('This session is archived; its history is still viewable.')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
-  await page.locator('.session-actions summary').click();
-  await page.locator('.composer-area').getByRole('button', { name: 'Unarchive', exact: true }).click();
+  await page.getByRole('button', { name: 'Open session list', exact: true }).click();
+  await page.locator('.sidebar').getByRole('button', { name: 'Archived', exact: true }).click();
+  await page.getByRole('button', { name: 'More actions for 跨端会话管理验证', exact: true }).click();
+  await page.getByRole('button', { name: 'Unarchive', exact: true }).click();
+  await page.getByRole('button', { name: 'Close list', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   // The shell survives going offline, and it is the shell this run was using: every successful
   // navigation replaces the cached page, so the fallback cannot resurrect an older interface.

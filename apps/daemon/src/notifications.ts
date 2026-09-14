@@ -3,6 +3,7 @@ import type { TurnwireCore, NotificationService } from '@turnwire/core';
 import { notificationStatusSchema, pushSubscriptionSchema } from '@turnwire/protocol';
 import type { NotificationStatus, PushSubscriptionData } from '@turnwire/protocol';
 import type { RemoteBridge } from './remote.js';
+import { HostActivity } from './host-activity.js';
 
 /** The daemon owns approval state and a durable outbox; Relay receives generic hints only. */
 export class NotificationController implements NotificationService {
@@ -10,12 +11,24 @@ export class NotificationController implements NotificationService {
   private enabled: boolean; private subscriptions: Record<string, PushSubscriptionData> = {};
   private pending = new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private lastError?: string; private timer: ReturnType<typeof setInterval>; private running?: Promise<void>; private stopped = false; private generation = 0;
-  constructor(private core: TurnwireCore) {
+  private operations = new Set<Promise<unknown>>();
+  constructor(private core: TurnwireCore, private activity = new HostActivity(recovery => core.enterHostActivity(recovery))) {
     this.enabled = core.store.setting<boolean>('notifications-enabled') ?? true;
-    this.timer = setInterval(() => { void this.flush(); }, 1000); this.timer.unref(); core.notifications = this;
+    this.timer = setInterval(() => { void this.flush().catch(() => {}); }, 1000); this.timer.unref(); core.notifications = this;
+  }
+  private run<T>(work: () => Promise<T>, recovery = false): Promise<T> {
+    try {
+      if (this.stopped) return Promise.reject(new Error('Notification controller is closed'));
+      const operation = this.activity.run(work, recovery);
+      this.operations.add(operation);
+      void operation.then(() => this.operations.delete(operation), () => this.operations.delete(operation));
+      return operation;
+    } catch (error) { return Promise.reject(error); }
   }
   private key(name: string) { return `notifications:${this.namespace}:${name}`; }
   attach(bridge: RemoteBridge, namespace: string) {
+    return this.activity.run(() => {
+    if (this.stopped) throw new Error('Notification controller is closed');
     ++this.generation; this.bridge = bridge; this.namespace = namespace; this.publicKey = undefined;
     this.subscriptions = this.core.store.setting(this.key('subscriptions')) ?? {};
     if (this.core.store.setting(this.key('cursor')) === undefined) this.core.store.setSetting(this.key('cursor'), this.core.store.cursor());
@@ -27,6 +40,7 @@ export class NotificationController implements NotificationService {
         if (frame.ok) pending.resolve(frame.result as Record<string, unknown>); else pending.reject(new Error(typeof frame.error === 'string' ? frame.error : 'Push service request failed'));
       }
     };
+    });
   }
   detach() { ++this.generation; this.bridge = undefined; this.publicKey = undefined; for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Relay disconnected')); } this.pending.clear(); }
   status(clientId?: string): NotificationStatus {
@@ -34,21 +48,34 @@ export class NotificationController implements NotificationService {
       queued: this.namespace ? Object.keys(this.core.store.setting<Record<string, string>>(this.key('outbox')) ?? {}).length : 0, lastError: this.lastError,
       message: !this.enabled ? 'Host notifications are off' : !this.bridge?.connected ? 'Relay is offline; pending items stay in the host inbox' : !this.publicKey ? 'This Relay does not have Web Push configured; temporary addresses do not support long-term notifications' : 'Push service is ready; authorize notifications on your phone' });
   }
-  configure(enabled: boolean) { this.enabled = enabled; this.core.store.setSetting('notifications-enabled', enabled); if (!enabled && this.namespace) this.core.store.setSetting(this.key('outbox'), {}); void this.restore().catch(() => {}); return this.status(); }
-  async subscribe(clientId: string, value: PushSubscriptionData) {
+  configure(enabled: boolean) {
+    return this.activity.run(() => {
+      if (this.stopped) throw new Error('Notification controller is closed');
+      this.enabled = enabled; this.core.store.setSetting('notifications-enabled', enabled);
+      if (!enabled && this.namespace) this.core.store.setSetting(this.key('outbox'), {});
+      void this.restore().catch(() => {}); return this.status();
+    }, !enabled);
+  }
+  subscribe(clientId: string, value: PushSubscriptionData) {
+    return this.run(async () => {
+    const generation = this.generation;
     if (!this.enabled) throw new Error('Host notifications are off');
     const subscription = pushSubscriptionSchema.parse(value);
     await this.rpc({ action: 'subscribe', clientId, subscription });
+    if (generation !== this.generation || this.stopped) throw new Error('Relay disconnected');
     this.subscriptions[clientId] = subscription; this.core.store.setSetting(this.key('subscriptions'), this.subscriptions);
     if (this.core.store.approvals().some(a => a.status === 'pending')) this.queue(clientId);
     return this.status(clientId);
+    });
   }
-  async unsubscribe(clientId: string) {
+  unsubscribe(clientId: string) {
+    return this.run(async () => {
     // Persist the local opt-out even if Relay is temporarily unavailable.
     delete this.subscriptions[clientId]; this.core.store.setSetting(this.key('subscriptions'), this.subscriptions);
     const outbox = this.core.store.setting<Record<string, string>>(this.key('outbox')) ?? {}; delete outbox[clientId]; this.core.store.setSetting(this.key('outbox'), outbox);
     const removed = new Set(this.core.store.setting<string[]>(this.key('removed')) ?? []); removed.add(clientId); this.core.store.setSetting(this.key('removed'), [...removed]);
     if (this.bridge?.connected && this.publicKey) await this.restore(); return this.status(clientId);
+    }, true);
   }
   private queue(clientId: string) { const outbox = this.core.store.setting<Record<string, string>>(this.key('outbox')) ?? {}; outbox[clientId] = randomUUID(); this.core.store.setSetting(this.key('outbox'), outbox); }
   private rpc(value: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -60,7 +87,8 @@ export class NotificationController implements NotificationService {
       try { this.bridge!.sendControl({ type: 'push.request', id, ...value }); } catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
-  private async restore() {
+  private restore() {
+    return this.run(async () => {
     if (!this.publicKey || !this.bridge?.connected) return;
     const generation = this.generation;
     try {
@@ -76,10 +104,11 @@ export class NotificationController implements NotificationService {
       }
       this.core.store.setSetting(this.key('subscriptions'), this.subscriptions); this.lastError = undefined;
     } catch (error) { this.lastError = error instanceof Error ? error.message : 'Failed to restore the push service'; }
+    });
   }
   flush(): Promise<void> {
     if (this.running) return this.running;
-    this.running = (async () => {
+    this.running = this.run(async () => {
       if (!this.namespace || this.stopped) return;
       const generation = this.generation; const store = this.core.store; let cursor = store.setting<number>(this.key('cursor')) ?? store.cursor();
       const events = store.events(cursor, 1000);
@@ -99,7 +128,12 @@ export class NotificationController implements NotificationService {
         if (latest[clientId] === notificationId) delete latest[clientId]; store.setSetting(this.key('outbox'), latest);
       }
       this.lastError = undefined;
-    })().catch(error => { this.lastError = error instanceof Error ? error.message : 'Push not delivered yet'; }).finally(() => { this.running = undefined; }); return this.running;
+    }).catch(error => { if (!this.stopped) this.lastError = error instanceof Error ? error.message : 'Push not delivered yet'; }).finally(() => { this.running = undefined; }); return this.running;
   }
-  async close() { this.stopped = true; clearInterval(this.timer); this.detach(); await this.running; }
+  async close() {
+    this.stopped = true; clearInterval(this.timer); this.detach();
+    // The activity is shared with other host controllers; only drain our own work.
+    while (this.operations.size) await Promise.allSettled([...this.operations]);
+    await this.running;
+  }
 }

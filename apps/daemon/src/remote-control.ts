@@ -1,4 +1,5 @@
 import { NotificationController } from './notifications.js';
+import { HostActivity } from './host-activity.js';
 import { DirectController } from './direct.js';
 import { remoteConfigurationSchema } from '@turnwire/protocol';
 import type { RemoteMode, RemoteStatus, TunnelProvider, TunnelProviderInfo, PairedDevice } from '@turnwire/protocol';
@@ -55,10 +56,14 @@ export class RemoteController implements RemoteAccess {
   private bridge?: RemoteBridge; private relay?: Awaited<ReturnType<typeof startRelay>>; private tunnel?: TunnelHandle;
   private operation: Promise<void> = Promise.resolve(); private aborter?: AbortController; private disposed = false;
   private retryTimer?: ReturnType<typeof setTimeout>; private retryAttempt = 0;
+  private finishRetry?: () => void;
+  private cancelRetry() { clearTimeout(this.retryTimer); this.retryTimer = undefined; this.finishRetry?.(); this.finishRetry = undefined; }
   private tunnelHealth: NonNullable<RemoteStatus['health']>['tunnelProcess'] = 'off';
+  readonly activity: HostActivity;
   constructor(private core: TurnwireCore, private options: Options) {
-    this.notifications = new NotificationController(core);
-    this.direct = new DirectController(core, () => this.active?.remoteUrl ?? this.preferences?.relay?.remoteUrl, () => this.preferences?.mode !== 'off');
+    this.activity = new HostActivity(recovery => core.enterHostActivity(recovery));
+    this.notifications = new NotificationController(core, this.activity);
+    this.direct = new DirectController(core, () => this.active?.remoteUrl ?? this.preferences?.relay?.remoteUrl, () => this.preferences?.mode !== 'off', this.activity);
     const saved = core.store.setting<Preferences>('remote-preferences');
     if (saved) { this.preferences = saved; return; }
     const initial = options.initialRelay;
@@ -69,7 +74,11 @@ export class RemoteController implements RemoteAccess {
     }
     this.preferences = initial ? { mode: 'relay', relay: { ...initial, serverUrl: initial.remoteUrl ?? initial.relayUrl.replace(/^ws/, 'http').replace(/\/relay\/?$/, '') } } : { mode: 'off' };
   }
-  start() { this.schedule(this.preferences); }
+  start() {
+    // A durable hold suppresses transport startup too; explicit configuration resumes it.
+    try { this.activity.run(() => this.reconcile(this.preferences)); }
+    catch (error) { if ((error as { code?: string }).code !== 'MAINTENANCE') throw error; }
+  }
   status(): RemoteStatus {
     let state = this.phase; let message = this.message;
     if (this.phase === 'online' || this.phase === 'offline') {
@@ -95,6 +104,9 @@ export class RemoteController implements RemoteAccess {
     return { mode: this.preferences.mode, state, message, health, ...this.active, relayServerUrl: this.preferences.relay?.serverUrl, hasRelayToken: !!this.preferences.relay?.token, provider: this.preferences.provider ?? 'cloudflare', hasCpolarToken: !!this.preferences.cpolarToken, providers: (this.options.providers ?? []).map(({ start, ...info }) => info), notices: this.preferences.mode === 'temporary' ? [this.options.providers?.find(p => p.id === (this.preferences.provider ?? 'cloudflare'))?.description, ...(this.options.notices ?? [])].filter((s): s is string => !!s) : [] };
   }
   configure(value: unknown): RemoteStatus {
+    return this.activity.run(() => this.configureAdmitted(value), remoteConfigurationSchema.parse(value).mode === 'off');
+  }
+  private configureAdmitted(value: unknown): RemoteStatus {
     if (this.disposed) throw new Error('The remote service is shutting down');
     const parsed = remoteConfigurationSchema.safeParse(value);
     if (!parsed.success) throw new Error('Invalid remote configuration; check the channel name, address, and token format (Relay keys must be 32–500 characters)');
@@ -123,10 +135,15 @@ export class RemoteController implements RemoteAccess {
     const unchanged = effective(next) === effective(this.preferences);
     this.core.store.setSetting('remote-preferences', next);
     this.preferences = next;
-    // An identical request is a retry only after failure/disconnection, never during startup/backoff.
-    const state = this.status().state;
-    if (!unchanged || state === 'error' || state === 'offline') this.schedule(next);
+    this.reconcile(next, !unchanged);
     return this.status();
+  }
+  private reconcile(preferences: Preferences, changed = false) {
+    // Saved intent is not evidence of a running service (startup may have been held).
+    // Conversely, starting includes automatic backoff and must not be restarted.
+    const state = this.status().state;
+    if (changed || (preferences.mode !== 'off' && (state === 'off' || state === 'error' || (state === 'offline' && (!this.bridge || this.bridge.needsRestart))))) this.schedule(preferences);
+    else void this.direct.start();
   }
   endpoints() { return this.bridge?.connected ? this.active : undefined; }
   refreshDevices() { this.bridge?.refreshDevices(); this.direct.refreshDevices(); }
@@ -142,7 +159,7 @@ export class RemoteController implements RemoteAccess {
     const address = stable ? 'The named hostname is unchanged; existing pairings remain valid.' : 'A temporary address may change; re-pair only if the address changes.';
     const delay = retryDelays[this.retryAttempt];
     // Serialize cleanup with startup: an exit callback can arrive before startTunnel resolves.
-    this.operation = this.operation.catch(() => {}).then(() => this.release());
+    this.operation = this.activity.run(() => this.operation.catch(() => {}).then(() => this.release()), true);
     if (delay === undefined) {
       this.phase = 'error';
       this.message = `${reason}. Automatic retry limit reached; retry remote access explicitly. ${address}`;
@@ -151,15 +168,19 @@ export class RemoteController implements RemoteAccess {
     this.retryAttempt++;
     this.phase = 'starting';
     this.message = `${reason}. Retrying in ${delay / 1000}s (${this.retryAttempt}/${retryDelays.length}). ${address}`;
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = undefined;
-      if (!this.disposed && this.aborter === aborter) this.schedule(preferences, true);
-    }, delay);
-    this.retryTimer.unref();
+    void this.activity.run(() => new Promise<void>(resolve => {
+      this.finishRetry = resolve;
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = undefined; this.finishRetry = undefined;
+        try { if (!this.disposed && this.aborter === aborter) this.schedule(preferences, true); }
+        finally { resolve(); }
+      }, delay);
+    }), true);
+    this.retryTimer?.unref();
   }
   private schedule(preferences: Preferences, recovering = false) {
     if (this.disposed) return;
-    clearTimeout(this.retryTimer); this.retryTimer = undefined;
+    this.cancelRetry();
     if (!recovering) this.retryAttempt = 0;
     if (!recovering) this.direct.start();
     this.aborter?.abort(); const aborter = new AbortController(); this.aborter = aborter;
@@ -168,7 +189,7 @@ export class RemoteController implements RemoteAccess {
     this.phase = preferences.mode === 'off' ? 'off' : 'starting';
     this.message = preferences.mode === 'off' ? 'Remote access is off' : 'Turning on remote access…';
     this.active = undefined;
-    this.operation = this.operation.catch(() => {}).then(async () => {
+    this.operation = this.activity.run(() => this.operation.catch(() => {}).then(async () => {
       await this.release();
       if (aborter.signal.aborted || preferences.mode === 'off') return;
       try {
@@ -207,7 +228,7 @@ export class RemoteController implements RemoteAccess {
           else { this.active = undefined; this.phase = 'error'; this.message = reason; }
         }
       }
-    });
+    }), recovering);
   }
   private async release() {
     this.presence.disconnect(); this.notifications.detach();
@@ -215,5 +236,11 @@ export class RemoteController implements RemoteAccess {
     await this.tunnel?.close(); this.tunnel = undefined;
     await this.relay?.close(); this.relay = undefined;
   }
-  async close() { this.disposed = true; clearTimeout(this.retryTimer); this.retryTimer = undefined; this.aborter?.abort(); await this.operation; await this.release(); await this.direct.close(); await this.notifications.close(); }
+  private closing?: Promise<void>;
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.disposed = true; this.cancelRetry(); this.aborter?.abort();
+    this.closing = this.activity.run(async () => { await this.operation; await this.release(); await this.direct.close(); await this.notifications.close(); }, true);
+    return this.closing;
+  }
 }

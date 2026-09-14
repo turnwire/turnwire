@@ -50,11 +50,11 @@
 
 Relay 使用部署密钥认证主机，并使用各自的 routing token 认证远程端。主机在连接后注册其允许的远程 ID 和 token。配对与撤销只能通过经过认证的**本地** `/devices` API 进行，不能通过可远程调用的方法进行。
 
-新配对使用 v2；既有 RPC/事件信封仍为 v1。routing token 与设备认证凭据和流量密钥不同。`/devices` POST 创建 15 分钟、一次性的邀请。经过认证的本地 PUT 带 `{id}` 会显式替换已有设备的凭据并返回新邀请。GET 包含 `protocol` 和 `enrollment`（`legacy`、`pending`、`enrolled`）。已有 v1 设备继续受支持，不会被静默升级或降级。
+配对仅支持 v2；RPC/事件信封仍为 v1。routing token 与设备认证凭据和流量密钥不同。`/devices` POST 创建 15 分钟、一次性的邀请。GET 包含 `protocol: 2` 和 `enrollment`（`pending`、`enrolled`）。不存在 `/devices` PUT、凭据升级 API 或 legacy 登记状态。不支持 v1 设备；应从主机创建新的 v2 配对，而非复用旧凭据。
 
 ### 会话握手
 
-`packages/sdk/src/session-crypto.ts` 规定了字节编码：以 `turnwire.session.v2` 为前缀的 UTF-8 JSON 数组、固定字段顺序、十六进制凭据/MAC、base64 未压缩 P-256 公钥。双方每次连接都生成新的不可导出临时 ECDH 私钥。client hello 包含随机 256 位 nonce、公钥，以及对上下文和 client hello 的 HMAC-SHA-256 证明。服务器在分配会话前验证已配对设备凭据，创建自己的新 nonce/密钥对，并对完整转录（包括双方贡献和所选凭据索引）进行认证。
+`packages/wire/src/session-crypto.ts` 规定了字节编码：以 `turnwire.session.v2` 为前缀的 UTF-8 JSON 数组、固定字段顺序、十六进制凭据/MAC、base64 未压缩 P-256 公钥。双方每次连接都生成新的不可导出临时 ECDH 私钥。client hello 包含随机 256 位 nonce、公钥，以及对上下文和 client hello 的 HMAC-SHA-256 证明。服务器在分配会话前验证已配对设备凭据，创建自己的新 nonce/密钥对，并对完整转录（包括双方贡献和所选凭据索引）进行认证。
 
 ECDH 共享字节输入 HKDF-SHA-256。其 salt 是转录的凭据 HMAC；其 info 绑定转录哈希与流量方向。Host 和 client 派生出各自独立的不可导出 AES-256-GCM 密钥。临时握手对象在派生后释放；JavaScript 不提供显式的 CryptoKey 销毁。之后泄露持久化的认证凭据本身并不能派生出更早的 ECDH 流量密钥。这里不声称具备入侵后恢复或逐消息双棘轮。
 
@@ -62,13 +62,13 @@ ECDH 共享字节输入 HKDF-SHA-256。其 salt 是转录的凭据 HMAC；其 in
 
 对于首次登记，客户端在消耗邀请之前，把新生成的设备凭据与邀请一起持久保存。加密的 `enroll` 消息把该凭据安装到主机上；`enrolled` 予以确认。随后客户端从已保存的配对中移除邀请材料。如果最终确认丢失，预先持久化的候选凭据可以认证新的 v2 握手；仅凭已被消耗的二维码则不能。允许两个 hello MAC，且仅用于恢复这一登记边界。主机在提交登记时检查其当前凭据。CLI 以 0600 权限原子写入配对文件；PWA 存储在会话存储中，除非用户选择受信任设备 / 启用通知。
 
-V1 兼容性使用此前独立的设备 PSK、随机 96 位 nonce 和 60 秒时间戳窗口。只有 v2 配对才有资格参与直接路由。v2 失败绝不回退到 v1；请从主机显式重新配对。先升级 Relay 再升级主机：感知 v2 的主机注册会通告 `protocol:2`，Relay 把转发的 payload 和关闭请求绑定到连接 UUID，因此迟到的回复无法到达替换后的 socket。更新后的 Relay 仍接受旧版主机。
+远程传输仅支持 v2，Relay 和直达路由均不回退到 v1。主机注册通告 `protocol:2`，Relay 把转发的 payload 和关闭请求绑定到连接 UUID，因此迟到的回复无法到达替换后的 socket。旧版主机注册和 v1 设备流量均被拒绝。
 
 ### 存活检测与路由
 
 每个候选都有独立的传输、Relay 认证、握手和验证截止时间（每阶段默认 5 秒）。SDK 在已认证的已登记设备局域网 WSS 候选与 Relay 之间竞速；只有通过验证的胜者才会派发命令或订阅历史。初始登记使用 Relay，以避免相互竞争的登记尝试。当前直达候选在 E2EE `routes` 消息内刷新，绝不会从浏览器 SSID 推断。
 
-客户端发送加密的 `ping {nonce}`；主机返回 `pong {nonce,challenge,hostId}`。客户端校验 nonce/host/截止时间，发送 `ack {challenge}`，并在 v2 中等待加密的 `confirmed {challenge}`。V1 保留其此前的客户端完成点。前台心跳默认 15 秒，探测截止时间默认 5 秒。RTT 使用单调时钟。主机存在状态在 25 秒后过期。已连接意味着最近验证过的双向路径，而不是保证未来的投递。
+客户端发送加密的 `ping {nonce}`；主机返回 `pong {nonce,challenge,hostId}`。客户端校验 nonce/host/截止时间，发送 `ack {challenge}`，并等待加密的 `confirmed {challenge}`。前台心跳默认 15 秒，探测截止时间默认 5 秒。RTT 使用单调时钟。主机存在状态在 25 秒后过期。已连接意味着最近验证过的双向路径，而不是保证未来的投递。
 
 后台 PWA 的可见性事件会保留已建立的 socket，只暂停重试计时：重建一次已验证的加密会话代价很高，而隐藏的标签页通常仍然持有它；如果在后台期间 socket 真的断开，就等用户回来再重连。网络断开则不同——那种情况下 socket 无法存活，客户端会立即丢弃它并报告离线。前台/pageshow/online/网络变化提示会先确认幸存的 socket 仍有响应再复用它，确认失效时才立即重建（不等待后台退避），因此来回切标签页不会再出现可见的重连。用户主动点击"立即重连"时会有意重建加密会话，而不是信任可能已僵死的 socket。反复连接失败使用完全抖动的指数退避，上限 30 秒；认证失败需要用户操作。由单个 SDK owner 调度远程重试。UI 健康状态暴露路由、protocol、stage、attempt、已用时间、最近 RTT 和重试延迟，且不含密钥。历史重放跟随在验证之后，可以稍后完成。
 

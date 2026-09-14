@@ -60,6 +60,8 @@ try {
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: 'Settle child', exact: true }).click();
   await expect(page.locator('.child-execution')).toBeVisible();
+  await expect(page.locator('.agent-strip-toggle')).toHaveAccessibleName('Background agents');
+  await expect(page.locator('.agent-strip-toggle')).not.toContainText('0 background agents running');
   await expect(page.locator('.agent-heading')).toHaveCount(0);
   await expect(page.locator('.child-execution-heading')).toHaveCount(0);
   await expect(page.locator('[data-record-id="answer"] .message-status')).toContainText('No result received');
@@ -89,6 +91,15 @@ try {
   await row.click();
   await expect(page.locator('[data-record-id="answer"]')).toContainText('Execution snapshot 3');
   await assertLatestVisible();
+  // Rendering uses the viewing computer's timezone, never the host's timezone.
+  for (const [timezoneId, expected] of [['Asia/Shanghai', '08:00 AM'], ['America/Los_Angeles', '04:00 PM']]) {
+    const context = await browser.newContext({ timezoneId, locale: 'en-US' });
+    try {
+      const localPage = await context.newPage();
+      await localPage.goto(`http://127.0.0.1:${server.httpServer.address().port}/child-fixture`);
+      await expect(localPage.locator('.main-reference time')).toHaveText(expected);
+    } finally { await context.close(); }
+  }
   expect(errors).toEqual([]);
   console.log('Child browser fixture passed: Markdown, hidden delegated prompts, read-only tools/errors, latest50 replacement polling, no paging, scroll retention, retry, inactive retention, offline, empty.');
 } finally { await browser.close(); await server.close(); }

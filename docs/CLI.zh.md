@@ -2,6 +2,8 @@
 
 # 命令行参考
 
+`ls` 和 `attach` 展示运行时提供的上下文占用；`attach` 随会话更新刷新。估算值带有标记，缺失值保持未知。`--steer` 在下一执行步骤交付消息，不会中断正在生成的模型响应或工具。
+
 开发时用 `npm run turnwire -- ...`；构建后可直接 `node apps/cli/dist/main.js ...`，或把相应 workspace 的 `turnwire` / `turnwire-host` 可执行文件加入自己的 PATH。
 
 | 命令 | 用途 |
@@ -36,7 +38,6 @@
 | `turnwire notifications status` / `on` / `off` | 查看或切换主机的 Web Push 投递 |
 | `turnwire devices pair --name 我的手机` | 生成远程设备配对码 |
 | `turnwire devices list` / `turnwire devices revoke DEVICE_ID` | 查看或撤销设备 |
-| `turnwire devices upgrade DEVICE_ID --qr` | 用一次性 v2 登记二维码替换已有配对 |
 | `turnwire connect` | 查看本机连接信息 |
 | `turnwire connection` | 检测与 Mac 的实际往返连接，远程配对同样可用 |
 | `turnwire devices list --watch` | 查看已配对设备是否已确认连通、最近确认时间和延迟 |
@@ -49,6 +50,10 @@
 | `turnwire devices pair --qr-file phone.png` | 保存权限为 0600 的 PNG 二维码，不覆盖现有文件 |
 
 `--json` 输出结构化数据，`--url` / `--token` 覆盖本地连接，`--pairing FILE` 使用文件中的远程配对码，`--lang en|zh` 强制界面语言而不是从环境推断。`attach` 的 Ctrl+C 只断开客户端；`stop` 才会停止 Agent。客户端退出不会关闭 daemon 或 DSH。
+
+配对仅支持 v2：`devices pair` 创建新的一次性邀请，`devices revoke` 撤销设备。不提供配对升级命令，不支持 v1 配对文件。
+
+本地连接发现使用分离的 XDG config/state/data/cache 目录，不检测旧布局。`TURNWIRE_STATE_HOME` 替代已移除的 `TURNWIRE_HOME`，不覆盖 config/data/cache；这些路径分别使用 `TURNWIRE_CONFIG_HOME`、`TURNWIRE_DATA_HOME` 和 `TURNWIRE_CACHE_HOME`。见 [XDG 目录](XDG.zh.md)。
 
 ## 发送消息的两种方式
 

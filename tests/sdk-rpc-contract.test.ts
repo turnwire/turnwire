@@ -4,24 +4,35 @@ import type { RpcClient, TurnwireClient } from '../packages/sdk/src/index.js';
 import { methodSchemas, methodResultSchemas, parseMethodResult, TurnwireError } from '../packages/protocol/src/index.js';
 const event = { seq: 2, originSeq: 1, time: 'now', data: { type: 'message.completed' as const, sessionId: 's', messageId: 'm', text: 'full text' } };
 const page = { events: [event], cursor: 2, hasMore: false, nextBefore: null };
-const mockClient = (request: ReturnType<typeof vi.fn>) => ({ request, subscribe: vi.fn(), close: vi.fn() }) as unknown as TurnwireClient;
+// Deliberately untrusted responses exercise helper validation, not a legacy transport adapter.
+const mockClient = (call: ReturnType<typeof vi.fn>) => ({ call, subscribe: vi.fn(), close: vi.fn() }) as TurnwireClient;
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
-it('covers every method and preserves old optional receipt fields', () => {
+it('covers every method and validates method-specific receipt fields', () => {
   expect(Object.keys(methodResultSchemas).sort()).toEqual(Object.keys(methodSchemas).sort());
-  expect(parseMethodResult('session.message', { accepted: true, messageId: 'm' })).toEqual({ accepted: true, messageId: 'm' });
+  expect(parseMethodResult('session.message', { accepted: true, messageId: 'm', queued: false })).toEqual({ accepted: true, messageId: 'm', queued: false });
   expect(() => parseMethodResult('session.cancel', { accepted: 'yes' })).toThrow();
   expect(parseMethodResult('request.result', { state: 'completed', response: { v: 1, id: 'r', ok: false, error: { code: 'OLD_CODE', message: 'old host' } } })).toMatchObject({ state: 'completed' });
 });
-it('typed adapter validates params before dispatch and checks mock results', async () => {
-  const request = vi.fn().mockResolvedValue({ accepted: true }); const client = mockClient(request);
-  await expect(call(client, 'session.cancel', { sessionId: '' })).rejects.toThrow(); expect(request).not.toHaveBeenCalled();
-  await expect(call(client, 'session.cancel', { sessionId: 's' })).resolves.toEqual({ accepted: true });
-  request.mockResolvedValue({ accepted: false }); await expect(call(client, 'session.cancel', { sessionId: 's' })).rejects.toThrow();
+it('free call delegates directly to the typed client without a request bridge', async () => {
+  const dispatch = vi.fn().mockResolvedValue({ accepted: true }); const client = mockClient(dispatch);
+  await expect(call(client, 'session.cancel', { sessionId: 's' }, 'id')).resolves.toEqual({ accepted: true });
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith('session.cancel', { sessionId: 's' }, 'id');
+  expect('request' in LocalClient.prototype).toBe(false);
+  expect('request' in RemoteClient.prototype).toBe(false);
+});
+it('local call validates params before network dispatch', async () => {
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  await expect(new LocalClient('http://localhost:7777', 'token').call('session.cancel', { sessionId: '' })).rejects.toThrow();
+  expect(fetcher).not.toHaveBeenCalled();
 });
 // Compile-only assertions: supplied result generics cannot override the actual method contract.
-function typeContracts(client: LocalClient, old: RpcClient) {
+function typeContracts(client: LocalClient, rpc: RpcClient) {
   const result: Promise<{ accepted: true }> = client.call('session.cancel', { sessionId: 's' });
-  const inferred: Promise<{ accepted: true }> = call(old, 'session.cancel', { sessionId: 's' });
+  const inferred: Promise<{ accepted: true }> = call(rpc, 'session.cancel', { sessionId: 's' });
+  // @ts-expect-error the removed request API is not part of the client
+  client.request('session.cancel', { sessionId: 's' });
+  // @ts-expect-error request-only clients cannot be adapted
+  call({ request: async () => ({ accepted: true }) }, 'session.cancel', { sessionId: 's' });
   // @ts-expect-error sessionId is required
   client.call('session.cancel');
   // @ts-expect-error wrong method params
@@ -31,18 +42,18 @@ function typeContracts(client: LocalClient, old: RpcClient) {
   return [result, inferred, wrong];
 }
 void typeContracts;
-it('local legacy generic responses are validated by method and response ID', async () => {
+it('local call responses are validated by method and response ID', async () => {
   const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ v: 1, id: 'r', ok: true, result: { accepted: 'bad' } }) }); vi.stubGlobal('fetch', fetcher);
   const client = new LocalClient('http://localhost:7777', 'token');
-  await expect(client.request<boolean>('session.cancel', { sessionId: 's' }, 'r')).rejects.toThrow();
+  await expect(client.call('session.cancel', { sessionId: 's' }, 'r')).rejects.toThrow();
   fetcher.mockResolvedValue({ ok: true, json: async () => ({ v: 1, id: 'other', ok: true, result: { accepted: true } }) });
-  await expect(client.request('session.cancel', { sessionId: 's' }, 'r')).rejects.toThrow('Response ID mismatch');
+  await expect(client.call('session.cancel', { sessionId: 's' }, 'r')).rejects.toThrow('Response ID mismatch');
 });
-it('remote legacy responses reject invalid payloads without leaving promises pending', async () => {
-  const client = new RemoteClient({ v: 1, relayUrl: 'ws://localhost:7777', hostId: 'h', clientId: 'c', token: 'x'.repeat(32), key: 'a'.repeat(64), name: 'test' });
+it('remote call responses reject invalid payloads without leaving promises pending', async () => {
+  const client = new RemoteClient({ v: 2, relayUrl: 'ws://localhost:7777', hostId: 'h', clientId: 'c', token: 'x'.repeat(32), key: 'a'.repeat(64), name: 'test' });
   const internal = client as unknown as { connect: () => Promise<void>; transport: { send: () => Promise<void> }; receive: (message: unknown) => void };
   internal.connect = async () => {}; internal.transport = { send: async () => {} };
-  const pending = client.request('session.cancel', { sessionId: 's' }, 'r'); await Promise.resolve();
+  const pending = client.call('session.cancel', { sessionId: 's' }, 'r'); await Promise.resolve();
   internal.receive({ kind: 'response', body: { v: 1, id: 'r', ok: true, result: { accepted: false } } });
   await expect(pending).rejects.toThrow();
 });

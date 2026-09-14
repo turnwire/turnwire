@@ -2,12 +2,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { TurnwireCore } from '@turnwire/core';
 import type { TunnelOptions } from '../apps/daemon/src/tunnel.js';
 
-const mocks = vi.hoisted(() => ({ relayClose: vi.fn(async () => {}), bridgeClose: vi.fn(async () => {}), connected: true }));
+const mocks = vi.hoisted(() => ({ relayClose: vi.fn(async () => {}), bridgeClose: vi.fn(async () => {}), connected: true, needsRestart: false }));
 vi.mock('node:fs/promises', () => ({ access: vi.fn(async () => {}) }));
 vi.mock('../apps/relay/src/server.js', () => ({ startRelay: vi.fn(async () => ({ port: 1234, close: mocks.relayClose })) }));
 vi.mock('../apps/daemon/src/remote.js', () => ({ RemoteBridge: class {
   constructor(_core: unknown, _url: string, _token: string, presence: { confirm(id: string, latency: number): void }) { confirmPhone = () => presence.confirm('phone', 4); }
   get connected() { return mocks.connected; }
+  get needsRestart() { return mocks.needsRestart; }
   get health() { return mocks.connected ? 'ready' : 'unknown'; }
   start() {} close = mocks.bridgeClose; refreshDevices() {}
 } }));
@@ -23,14 +24,14 @@ import { RemoteController } from '../apps/daemon/src/remote-control.js';
 const named = { mode: 'temporary', provider: 'cloudflare-named', namedTunnel: { name: 'fixture', hostname: 'phone.example.com', credentialsFile: '/mock/credentials.json', protocol: 'http2' } } as const;
 let controllers: RemoteController[];
 let confirmPhone: () => void;
-beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); mocks.connected = true; controllers = []; });
+beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); mocks.connected = true; mocks.needsRestart = false; controllers = []; });
 afterEach(async () => { for (const controller of controllers) await controller.close(); vi.useRealTimers(); });
 async function flush() { await vi.advanceTimersByTimeAsync(0); }
 function fixture() {
   const starts: TunnelOptions[] = [];
   const close = vi.fn(async () => {});
   const start = vi.fn(async (options: TunnelOptions) => { starts.push(options); return { url: options.namedTunnel ? 'https://phone.example.com' : `https://temporary-${starts.length}.example.com`, close }; });
-  const core = { store: { setting: vi.fn(), setSetting: vi.fn(), devices: () => [{ clientId: 'phone' }] } } as unknown as TurnwireCore;
+  const core = { enterHostActivity: vi.fn(() => () => {}), store: { setting: vi.fn(), setSetting: vi.fn(), devices: () => [{ clientId: 'phone' }] } } as unknown as TurnwireCore;
   const controller = new RemoteController(core, { directory: '/mock', webRoot: '/mock/web', providers: [
     { id: 'cloudflare-named', name: 'Named', description: 'Mock', requiresToken: false, start },
     { id: 'cloudflare', name: 'Temporary', description: 'Mock', requiresToken: false, start },
@@ -69,6 +70,8 @@ it('keeps identical effective configuration running or starting, but permits exp
   expect(start).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1000); expect(start).toHaveBeenCalledTimes(2);
   mocks.connected = false; controller.configure(named); await flush();
+  expect(start).toHaveBeenCalledTimes(2); // The bridge still owns connecting/backoff work.
+  mocks.needsRestart = true; controller.configure(named); await flush();
   expect(start).toHaveBeenCalledTimes(3);
 });
 it('cancels queued recovery on off, ignores stale callbacks, and cancels on disposal', async () => {

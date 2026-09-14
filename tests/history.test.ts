@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, TurnwireCore } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
-import { HistoryBuffer, LocalClient, RemoteClient, applyEvent, conversation, loadHistory, loadHistoryPage, randomSecret, transcriptMarkdown } from '@turnwire/sdk';
+import { HistoryBuffer } from '@turnwire/protocol';
+import { LocalClient, RemoteClient, applyEvent, conversation, loadHistory, loadHistoryPage, transcriptMarkdown } from '@turnwire/sdk';
+import { randomSecret } from '@turnwire/wire';
 import type { TurnwireEvent, Session, Snapshot } from '@turnwire/protocol';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
 import { startRelay } from '../apps/relay/src/server.js';
@@ -12,7 +14,7 @@ import { RemoteBridge } from '../apps/daemon/src/remote.js';
 
 let cleanup: Array<() => unknown | Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.reverse()) await close(); cleanup = []; });
-const session: Session = { id: 'history', runtimeId: 'demo', runtimeSessionId: 'history', title: 'Long history', cwd: '/tmp', status: 'idle', createdAt: 'now', updatedAt: 'now' };
+const session: Session = { id: 'history', runtimeId: 'demo', runtimeSessionId: 'history', title: 'Long history', cwd: '/tmp', status: 'idle', archived: false, autoApprove: false, createdAt: 'now', updatedAt: 'now' };
 function fixture(store = new Store(':memory:')) {
   store.append({ type: 'session.created', session });
   for (let i = 0; i < 85; i++) store.append({ type: 'message.user', sessionId: session.id, messageId: `user-${i}`, text: `History ${i}` });
@@ -72,16 +74,19 @@ it('never lets an old running event or approval regress a newer idle snapshot', 
   expect(applyEvent(snapshot, { seq: 20, time: 'now', data: { type: 'session.updated', session: { ...session, status: 'running' } } })).toBe(snapshot);
   expect(applyEvent(snapshot, { seq: 21, time: 'now', data: { type: 'approval.requested', approval: { id: 'approval', sessionId: session.id, status: 'pending', tool: 'shell', reason: '', createdAt: 'now' } } })).toBe(snapshot);
 });
-it('backfills an existing journal once and persists its projection across reopen', () => {
+it('persists the final projection across reopen without replaying the journal', () => {
   const directory = mkdtempSync(join(tmpdir(), 'turnwire-history-')); cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, 'state.db'); let store = fixture(new Store(path)); const expected = store.history(session.id, 40);
-  // An existing journal with no projection yet: the marker is dropped by pattern so a future bump of
-  // the projection version keeps testing the backfill instead of the flag's spelling.
-  store.db.exec("DROP TABLE history; DELETE FROM settings WHERE key LIKE 'history-projection-%'"); store.close();
-  store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected); store.close();
-  store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected); store.close();
-  // Reopening the file-backed journal re-projects the whole 4088-event fixture twice, so a loaded
-  // CI runner can exceed the default budget even though this takes milliseconds on an idle machine.
+  expect(store.db.prepare('SELECT * FROM settings').all()).toEqual([]);
+  store.close();
+  store = new Store(path); expect(store.history(session.id, 40)).toEqual(expected);
+  // A journal-only row is deliberately not projected on startup.
+  store.db.prepare('INSERT INTO events(session_id,time,body) VALUES(?,?,?)').run(session.id, 'now', JSON.stringify({ type: 'message.user', sessionId: session.id, messageId: 'unprojected', text: 'not replayed' }));
+  store.close();
+  store = new Store(path);
+  expect(store.history(session.id, 40).events).toEqual(expected.events);
+  expect(store.cursor()).toBe(expected.cursor + 1);
+  store.close();
 }, 60_000);
 it('keeps the queued marker on a prompt that was sent during a turn', () => {
   const store = new Store(':memory:'); cleanup.push(() => store.close());
@@ -92,23 +97,23 @@ it('local and encrypted clients fetch the same bounded history without unsolicit
   const core = new TurnwireCore(fixture(), [new DemoRuntime()], { id: 'mac', name: 'History Mac' }); cleanup.push(() => core.dispose());
   const token = randomSecret(); const server = await startDaemonServer({ core, token, port: 0 }); cleanup.push(() => server.close());
   const relay = await startRelay({ token, port: 0 }); cleanup.push(() => relay.close());
-  const pairing = { v: 1 as const, hostId: 'mac', clientId: 'phone', name: 'Phone', relayUrl: `ws://127.0.0.1:${relay.port}/relay`, key: randomSecret(), token: randomSecret() };
+  const pairing = { v: 2 as const, hostId: 'mac', clientId: 'phone', name: 'Phone', relayUrl: `ws://127.0.0.1:${relay.port}/relay`, key: randomSecret(), token: randomSecret() };
   core.store.addDevice(pairing); const bridge = new RemoteBridge(core, pairing.relayUrl, token); bridge.start(); cleanup.push(() => bridge.close());
   await expect.poll(() => bridge.connected).toBe(true);
   const phone = new RemoteClient(pairing); cleanup.push(() => phone.close());
   const local = new LocalClient(`http://127.0.0.1:${server.port}`, token); cleanup.push(() => local.close());
   const spy: number[] = []; const readEvents = core.store.events.bind(core.store); core.store.events = (after, ...args) => { spy.push(after); return readEvents(after, ...args); };
-  const snapshot = await phone.request<Snapshot>('system.snapshot');
+  const snapshot = await phone.call('system.snapshot');
   expect(spy.every(after => after >= snapshot.cursor)).toBe(true);
   // Events between snapshot and listener registration must still be delivered.
-  await local.request('session.rename', { sessionId: session.id, title: 'Race window' });
+  await local.call('session.rename', { sessionId: session.id, title: 'Race window' });
   const received: TurnwireEvent[] = []; phone.subscribe(e => received.push(e), undefined, snapshot.cursor);
   await expect.poll(() => received.some(e => e.data.type === 'session.updated' && e.data.session.title === 'Race window')).toBe(true);
   const [a, b] = await Promise.all([loadHistoryPage(local, session.id), loadHistoryPage(phone, session.id)]);
   expect(a).toEqual(b); expect(a.events).toHaveLength(41);
   expect(conversation(await loadHistory(phone, session.id), session.id)).toHaveLength(87);
-  await expect(phone.request('history.page', { sessionId: session.id, before: -1 })).rejects.toThrow();
-  await expect(local.request('history.page', { sessionId: 'missing' })).rejects.toThrow('Session not found');
+  await expect(phone.call('history.page', { sessionId: session.id, before: -1 })).rejects.toThrow();
+  await expect(local.call('history.page', { sessionId: 'missing' })).rejects.toThrow('Session not found');
 }, 20000);
 
 it('bounds multi-record page size without cutting a tool input away from its result', () => {

@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { RemoteClient, SecureChannel, randomSecret, secureMessage } from '@turnwire/sdk';
+import { RemoteClient } from '@turnwire/sdk';
+import { acceptClientHandshake, randomSecret, secureMessage } from '@turnwire/wire';
+import type { SessionChannel } from '@turnwire/wire';
 import type { ConnectionHealth } from '@turnwire/sdk';
 import type { Pairing } from '@turnwire/protocol';
 import { DevicePresence } from '../apps/daemon/src/presence.js';
@@ -12,18 +14,37 @@ async function peer(mode: 'silent' | 'valid' | 'wrong-host' | 'wrong-nonce') {
   await new Promise<void>(resolve => server.once('listening', resolve));
   cleanup.push(() => new Promise<void>(resolve => { server.clients.forEach(client => client.terminate()); server.close(() => resolve()); }));
   const address = server.address(); if (typeof address === 'string' || !address) throw new Error('Missing address');
-  const pairing: Pairing = { v: 1, hostId: 'mac', clientId: 'phone', name: 'Phone', relayUrl: `ws://127.0.0.1:${address.port}`, token: randomSecret(), key: randomSecret() };
-  const channel = new SecureChannel(pairing.key, 'mac:phone', 'host'); let respond = true; let connections = 0;
+  const pairing: Pairing = { v: 2, hostId: 'mac', clientId: 'phone', name: 'Phone', relayUrl: `ws://127.0.0.1:${address.port}`, token: randomSecret(), key: randomSecret() };
+  let respond = true; let connections = 0;
   server.on('connection', socket => {
     ++connections;
+    let channel: SessionChannel | undefined;
+    let challenge: string | undefined;
     let queue = Promise.resolve();
-    const send = async (kind: 'subscribed' | 'pong', body: unknown) => socket.send(JSON.stringify({ type: 'payload', payload: await channel.encrypt(secureMessage(kind, body)) }));
+    const send = async (kind: 'subscribed' | 'pong' | 'confirmed', body: unknown) => {
+      if (!channel) throw new Error('Handshake required');
+      socket.send(JSON.stringify({ type: 'payload', payload: await channel.encrypt(secureMessage(kind, body)) }));
+    };
     socket.on('message', raw => { queue = queue.then(async () => {
       const frame = JSON.parse(String(raw));
       if (frame.kind === 'client') { socket.send(JSON.stringify({ type: 'ready', online: true })); return; }
+      if (frame.payload?.type === 'hello') {
+        if (channel) throw new Error('Duplicate handshake');
+        const accepted = await acceptClientHandshake(frame.payload, pairing.key, 'mac:phone');
+        channel = accepted.channel;
+        socket.send(JSON.stringify({ type: 'payload', payload: accepted.reply }));
+        return;
+      }
+      if (!channel) throw new Error('Handshake required');
       const value = await channel.decrypt(frame.payload);
       if (value.kind === 'subscribe') await send('subscribed', { cursor: 0, heartbeat: true });
-      if (value.kind === 'ping' && mode !== 'silent' && respond) await send('pong', { nonce: mode === 'wrong-nonce' ? 'old-probe' : (value.body as { nonce: string }).nonce, challenge: crypto.randomUUID(), hostId: mode === 'wrong-host' ? 'other-mac' : 'mac' });
+      if (value.kind === 'ping' && mode !== 'silent' && respond) {
+        challenge = crypto.randomUUID();
+        await send('pong', { nonce: mode === 'wrong-nonce' ? 'old-probe' : (value.body as { nonce: string }).nonce, challenge, hostId: mode === 'wrong-host' ? 'other-mac' : 'mac' });
+      }
+      if (value.kind === 'ack' && respond && challenge && (value.body as { challenge: string }).challenge === challenge) {
+        await send('confirmed', { challenge }); challenge = undefined;
+      }
     }).catch(() => socket.close()); });
   });
   const phone = new RemoteClient(pairing, { heartbeatIntervalMs: 80, heartbeatTimeoutMs: 150, connectTimeoutMs: 800 }); cleanup.push(() => phone.close());

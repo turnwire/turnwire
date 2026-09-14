@@ -99,7 +99,11 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
       if (!item) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'session/queue-item-not-found', message: 'queued item is no longer pending' } } })); return; }
       if (input.request.action.kind === 'remove') queued = queued.filter(entry => entry.itemId !== item.itemId);
       if (input.request.action.kind === 'edit') item.text = input.request.action.content[0]!.text;
-      if (input.request.action.kind === 'steer') item.step = true;
+      if (input.request.action.kind === 'steer') {
+        // Installed DSH permits next-turn → next-step only while the agent is running.
+        if (!running || item.step) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: false, error: { code: 'session/steer-unavailable', message: 'steering requires a running turn and next-turn item' } } })); return; }
+        item.step = true;
+      }
       value = { accepted: true };
     }
     else { res.writeHead(404); res.end(); return; }
@@ -123,7 +127,7 @@ async function dshHost(options: { list?: 'existing' | 'empty'; create?: 'ok' | '
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   cleanup.push(async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(r => wss.close(() => r())); server.closeAllConnections?.(); await new Promise<void>(r => server.close(() => r())); });
-  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, ask, cancel, sockets: () => events.size, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
+  return { url: `http://127.0.0.1:${address.port}`, calls, streams, emit, publish, setChildren: (next: FixtureChild[]) => { children = next; }, ask, cancel, sockets: () => events.size, setRunning: (value: boolean) => { running = value; }, setQueued: (next: FixtureQueued[]) => { queued = next; }, disconnect: () => { for (const socket of wss.clients) socket.close(); } };
 }
 it('uses the official cookie, exact named RPC arguments and mux, and resolves approval cancellation races', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -231,7 +235,7 @@ it('carries a question to the client watching the session and returns that answe
   await runtime.answerQuestion('s', 'question-1', [{ id: 'q1', selected: ['SQLite'] }]);
   // The whole batch goes back as the Host's own answer shape, under the client that was asked.
   expect(host.calls.at(-1)).toMatchObject({ path: '/api/$events/result', args: { clientId: 'generation', eventId: 'question-1', outcome: { kind: 'result', value: { answers: [{ id: 'q1', selected: ['SQLite'] }] } } } });
-  await until(() => received.some(event => event.type === 'question.resolved'));
+  expect(received.filter(event => event.type === 'question.resolved')).toEqual([]); // Core owns answered terminal with answers.
   await expect(runtime.answerQuestion('s', 'question-1', [{ id: 'q1', selected: ['SQLite'] }])).rejects.toMatchObject({ code: 'QUESTION_EXPIRED' });
 });
 it('clears a pending question when the Host withdraws it', async () => {
@@ -262,6 +266,7 @@ it('reports missing DSH credentials without pretending the runtime is available'
 it('changes a waiting prompt by the id the client knows, not the one the Host minted', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
   host.setQueued([{ itemId: 'dsh-1', rpcId: 'client-1', text: 'first draft' }]);
+  host.setRunning(true);
   await runtime.queueAction('s', 'client-1', { kind: 'steer' });
   // The Host is addressed with its own item id, translated from the client's request id.
   expect(host.calls.at(-1)).toMatchObject({ path: '/api/session/updateQueue', args: { request: { sessionId: 's', itemId: 'dsh-1', action: { kind: 'steer' } } } });
@@ -269,6 +274,23 @@ it('changes a waiting prompt by the id the client knows, not the one the Host mi
   expect(host.calls.at(-1)?.args).toMatchObject({ request: { itemId: 'dsh-1', action: { kind: 'edit', content: [{ type: 'text', text: 'second draft' }] } } });
   await runtime.queueAction('s', 'client-1', { kind: 'remove' });
   expect(host.calls.at(-1)?.args).toMatchObject({ request: { action: { kind: 'remove' } } });
+});
+it('does not present an unavailable runtime as an empty inbox', async () => {
+  const runtime = new DshRuntime({ url: 'http://127.0.0.1:1' }); cleanup.push(() => runtime.dispose());
+  await expect(runtime.listQueue('s')).rejects.toThrow('TURNWIRE_DSH_TOKEN');
+});
+it('rejects idle and repeated steering and exposes successful steering before ordinary queued turns', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
+  host.setQueued([{ itemId: 'dsh-1', rpcId: 'client-1', text: 'later' }, { itemId: 'dsh-2', rpcId: 'client-2', text: 'adjust now' }]);
+  await expect(runtime.queueAction('s', 'client-2', { kind: 'steer' })).rejects.toMatchObject({ code: 'session/steer-unavailable' });
+  host.setRunning(true);
+  await runtime.queueAction('s', 'client-2', { kind: 'steer' });
+  await expect(runtime.listQueue('s')).resolves.toEqual([
+    { messageId: 'client-2', target: 'next-step', text: 'adjust now' },
+    { messageId: 'client-1', target: 'next-turn', text: 'later' },
+  ]);
+  await expect(runtime.queueAction('s', 'client-2', { kind: 'steer' })).rejects.toMatchObject({ code: 'session/steer-unavailable' });
+  expect(host.calls.some(call => call.path === '/api/session/cancel')).toBe(false);
 });
 it('lists what is still waiting, so a page that just loaded knows the queue', async () => {
   const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
@@ -280,8 +302,8 @@ it('lists what is still waiting, so a page that just loaded knows the queue', as
     { itemId: 'dsh-3', rpcId: 'client-3', text: 'steered', step: true },
   ]);
   await expect(runtime.listQueue('s')).resolves.toEqual([
-    { messageId: 'client-1', target: 'next-turn', text: 'first draft' },
     { messageId: 'client-3', target: 'next-step', text: 'steered' },
+    { messageId: 'client-1', target: 'next-turn', text: 'first draft' },
   ]);
 });
 it('says a prompt is gone when it is no longer waiting, from either side of the race', async () => {
@@ -313,8 +335,21 @@ it('follows an existing session instead of failing to claim one a live client ow
   expect(host.calls.some(c => c.path === '/api/session/create')).toBe(false);
   await until(() => host.streams.size === 1);
 });
-it('adopts a session that does not exist yet', async () => {
+it('fails closed on missing resume without allocating a replacement root', async () => {
+  const host = await dshHost({ list: 'empty' }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret', readCursor: () => 100 }); cleanup.push(() => runtime.dispose());
+  await expect(runtime.resumeSession({ id: 's', cwd: process.cwd() })).rejects.toMatchObject({ code: 'RUNTIME_ROOT_MISSING' });
+  await expect(runtime.createSession({ id: 's', cwd: process.cwd() })).rejects.toMatchObject({ code: 'RUNTIME_ROOT_MISSING' });
+  expect(host.calls.filter(c => c.path === '/api/session/create')).toHaveLength(0);
+});
+it('creates a new root only through explicit creation without an old cursor', async () => {
   const host = await dshHost({ list: 'empty' }); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret' }); cleanup.push(() => runtime.dispose());
-  await expect(runtime.resumeSession({ id: 's', cwd: process.cwd() })).resolves.toEqual({ id: 's', cwd: process.cwd(), status: 'idle' });
+  await expect(runtime.createSession({ id: 's', cwd: process.cwd() })).resolves.toMatchObject({ id: 's' });
   expect(host.calls.filter(c => c.path === '/api/session/create')).toHaveLength(1);
+});
+it('rejects a regressed snapshot cursor without consuming fresh history', async () => {
+  const host = await dshHost(); const runtime = new DshRuntime({ url: host.url, token: 'launch-secret', readCursor: () => 100 }); cleanup.push(() => runtime.dispose());
+  const received: RuntimeEvent[] = []; await runtime.resumeSession({ id: 's', cwd: process.cwd() }); runtime.subscribe('s', event => received.push(event));
+  await until(() => received.some(event => event.type === 'error'));
+  expect(received.some(event => event.type === 'error' && event.message.includes('cursor regressed'))).toBe(true);
+  expect(host.calls.filter(c => c.path === '/api/session/create')).toHaveLength(0);
 });

@@ -2,6 +2,8 @@ English · [中文](CLI.zh.md)
 
 # Command-line reference
 
+`ls` and `attach` display runtime-provided context occupancy when available; `attach` refreshes it on session updates. Estimates are labeled and missing values remain unknown. `--steer` delivers at the next execution step, without aborting a running model response or tool.
+
 During development use `npm run turnwire -- ...`; after building you can run `node apps/cli/dist/main.js ...` directly, or add the corresponding workspace's `turnwire` / `turnwire-host` executables to your own PATH.
 
 | Command | Purpose |
@@ -36,7 +38,6 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | `turnwire notifications status` / `on` / `off` | View or toggle the host's Web Push delivery |
 | `turnwire devices pair --name my-phone` | Generate a pairing code for a remote device |
 | `turnwire devices list` / `turnwire devices revoke DEVICE_ID` | View or revoke devices |
-| `turnwire devices upgrade DEVICE_ID --qr` | Replace an existing pairing with a one-time v2 enrollment QR code |
 | `turnwire connect` | View this machine's connection information |
 | `turnwire connection` | Test the actual round trip to the Mac; remote pairing works the same way |
 | `turnwire devices list --watch` | See whether paired devices have confirmed connectivity, plus the last confirmation time and latency |
@@ -49,6 +50,10 @@ During development use `npm run turnwire -- ...`; after building you can run `no
 | `turnwire devices pair --qr-file phone.png` | Save a PNG QR code with mode 0600, without overwriting an existing file |
 
 `--json` outputs structured data, `--url` / `--token` override the local connection, `--pairing FILE` uses a remote pairing code from a file, and `--lang en|zh` forces the interface language instead of detecting it from the environment. Ctrl+C in `attach` only disconnects the client; `stop` is what stops the Agent. Exiting a client does not shut down the daemon or DSH.
+
+Pairing is v2-only: `devices pair` creates a new one-use invitation; use `devices revoke` to revoke a device. There is no pairing-upgrade command, and v1 pairing files are unsupported.
+
+Local discovery uses separate XDG config/state/data/cache directories without detecting old layouts. `TURNWIRE_STATE_HOME` replaces the removed `TURNWIRE_HOME`; it does not override config/data/cache. Use `TURNWIRE_CONFIG_HOME`, `TURNWIRE_DATA_HOME` and `TURNWIRE_CACHE_HOME` for those paths. See [XDG directories](XDG.md).
 
 ## Two ways to send a message
 

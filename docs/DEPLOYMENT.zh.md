@@ -18,7 +18,7 @@ Cloudflare 不能作为国内网络必然可用的依赖。[官方中国网络�
 | cpolar | 注册账号后在原生 SecureField 或终端隐藏输入中填写 Auth Token，之后可留空复用。连接国内 `cn` 区域；免费版随机域名、有限速，不能保证任何运营商下的实际速度。见[官方文档](https://www.cpolar.com/docs) |
 | Cloudflare | 免账号 Quick Tunnel，首次下载官方组件并校验 SHA-256；国内可达性取决于网络 |
 
-cpolar 首次在 macOS 自动下载官方 3.3.18 组件，按官方 Homebrew formula 的 SHA-256 校验，保存至 `TURNWIRE_HOME/tools`。也可通过 PATH 或 `TURNWIRE_CPOLAR_PATH` 使用已安装的 cpolar；其他系统需自行安装组件。Token 保存在 daemon 私有状态，子进程通过临时 0600 配置文件读取，停止后删除；不通过命令行参数传递。CLI 从 `TURNWIRE_CPOLAR_AUTH_TOKEN` 读取首次凭据，`turnwire remote` / `turnwire tui` 可以直接隐藏输入，无需把 Token 写入 shell 历史。
+cpolar 首次在 macOS 自动下载官方 3.3.18 组件，按官方 Homebrew formula 的 SHA-256 校验，保存至 `TURNWIRE_CACHE_HOME/tools`（默认 `~/.cache/turnwire/tools`）。也可通过 PATH 或 `TURNWIRE_CPOLAR_PATH` 使用已安装的 cpolar；其他系统需自行安装组件。Token 保存在 daemon 私有状态，子进程通过临时 0600 配置文件读取，停止后删除；不通过命令行参数传递。CLI 从 `TURNWIRE_CPOLAR_AUTH_TOKEN` 读取首次凭据，`turnwire remote` / `turnwire tui` 可以直接隐藏输入，无需把 Token 写入 shell 历史。
 
 Cloudflare 可复用 PATH 中的 cloudflared，或用 `TURNWIRE_CLOUDFLARED_PATH` 指定。localhost.run 使用独立的 `known_hosts` 文件，首次记录主机密钥、后续检查变更，不修改用户 SSH 配置。启动可取消，关闭远程访问会清理 daemon 管理的隧道和 Relay。
 
@@ -71,7 +71,7 @@ Mac：
 
 推荐在原生客户端「远程控制」→「自托管 Relay」填写上面的 HTTPS 域名和服务器密钥，点击「保存并连接」。无需重启 daemon 或 DSH。相同服务器已保存密钥时可以留空；更换服务器必须重新输入其密钥。CLI 可在设置 `TURNWIRE_RELAY_TOKEN` 的终端执行 `turnwire remote relay https://turnwire.example.com`。
 
-旧的环境变量启动方式仍兼容：
+也可通过启动环境变量配置连接：
 
 ```bash
 export TURNWIRE_RELAY_URL=wss://turnwire.example.com/relay
@@ -93,17 +93,17 @@ npm run turnwire -- devices pair --name 我的手机
 
 选择的模式和自托管连接密钥保存于 daemon 的私有 SQLite 状态中（文件权限 0600），密钥不会回传到状态接口或手机。应用/CLI 保存的设置优先于启动环境变量；明确关闭后，daemon 重启也保持关闭。自托管模式重启后恢复固定地址，临时模式重启后创建新地址。切换模式不重启 Core 或 DSH；旧地址的手机需要重新生成配对链接。
 
-备份整个 `TURNWIRE_HOME`，包括 SQLite WAL 配套文件；建议停止 daemon 后备份，或使用 SQLite 在线备份工具。该目录包含连接凭据。不要单独拷贝正在写入的 `state.db`。这版没有自动事件归档或无限历史的磁盘配额管理，部署者应监控磁盘使用。
+分别备份解析后的 Turnwire config 和 state 目录，以及 DSH 状态与附件（`TURNWIRE_DSH_HOME`，默认是 Turnwire state 下的 `dsh/` 子目录）。config 包含私有 `dsh.env.json` 和 `client.json`；state 包含 `state.db`、连接凭据及部署记录。包含 SQLite WAL 配套文件；建议停止受管主机后制作一致备份，或对 SQLite 数据库使用在线备份工具。不要单独拷贝正在写入的 `state.db`。所有备份都应按凭据保护。运行时数据和下载缓存是独立目录，不能代替 config/state/DSH 备份。Store 以 `UNSUPPORTED_STORAGE` 拒绝旧库或不兼容数据库，不提供迁移；此格式须使用独立空数据库，旧数据离线保留。见[维护指南](FIRST-UPGRADE.zh.md)。这版没有自动事件归档或无限历史的磁盘配额管理，部署者应监控磁盘使用。
 
-常驻 Mac 服务可由 launchd 管理 `node /absolute/path/turnwire/apps/daemon/dist/main.js`，并通过 `EnvironmentVariables` 配置 `TURNWIRE_HOME` 和 runtime/Relay 参数。原生 App 本身不托管 daemon，因此窗口关闭不会杀死任务。Mac 必须保持唤醒且联网；软件无法让已休眠或断电的 Mac 继续执行。
+常驻 Mac 服务可由 launchd 管理 `node /absolute/path/turnwire/apps/daemon/dist/main.js`，并通过 `EnvironmentVariables` 配置独立的 `TURNWIRE_STATE_HOME`、`TURNWIRE_CONFIG_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 覆盖值及 runtime/Relay 参数。原生 App 本身不托管 daemon，因此窗口关闭不会杀死任务。Mac 必须保持唤醒且联网；软件无法让已休眠或断电的 Mac 继续执行。
 
 `Dockerfile` 和 Compose 配置已提供，Docker 方式仍未实际验证；已经验证的服务器使用 systemd 直接运行，其正式 IP 证书和公网加密链路已验证，外网 iPhone 访问和真实 DSH 模型任务仍需在目标环境中验收。
 
 ## Linux 无头主机与 TUI
 
-无头主机运行与桌面安装相同的 DSH 适配器、daemon、CLI/TUI 和加密远程控制协议。新安装目录保留 `apps`、`packages` 及源码配置，外部配置/状态/运行时/缓存使用 [XDG 目录](XDG.zh.md)。已有源码目录内的 `state`、`dsh-state`、`runtime` 及私有配置保持兼容，不自动迁移。复制之前先构建发布产物。`scripts/install-linux-host.sh` 安装经校验和验证的 Node 运行时、锁定后的生产依赖，以及由 `config/dsh-runtime` 固定的 DSH 运行时，然后注册用户服务。不要把 macOS 上平台相关的 `node_modules` 复制到 Linux。
+无头主机运行与桌面安装相同的 DSH 适配器、daemon、CLI/TUI 和加密远程控制协议。安装目录保留 `apps`、`packages` 及源码配置；私有配置/状态/运行时/缓存使用独立的 [XDG 目录](XDG.zh.md)。`TURNWIRE_CONFIG_HOME`、`TURNWIRE_STATE_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 分别覆盖各目录，否则使用对应的绝对路径 `XDG_*_HOME` 加 `/turnwire`，默认依次为 `~/.config/turnwire`、`~/.local/state/turnwire`、`~/.local/share/turnwire`、`~/.cache/turnwire`。`TURNWIRE_HOME` 已删除，设置它会被拒绝。不自动识别或迁移源码目录内及其他旧布局。复制之前先构建发布产物。`scripts/install-linux-host.sh` 安装经校验和验证的 Node 运行时、锁定后的生产依赖，以及由 `config/dsh-runtime` 固定的 DSH 运行时，然后注册用户服务。不要把 macOS 上平台相关的 `node_modules` 复制到 Linux。
 
-首次推荐使用 `bash scripts/start-host.sh` 配置凭据。手动新安装时，把 DSH 环境映射放进 XDG Turnwire 配置目录的 `dsh.env.json`，权限 0600（旧安装仍使用 `config/dsh.env.json`）；其中包含 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` 环境变量。该私有文件在目标机器上提供，绝不包含在发布归档中。受管启动器只把它的值传给 DSH。Turnwire 收到的是短期有效的本机回环 DSH 连接 URL；模型值和 URL token 会从服务日志中脱敏。
+首次推荐使用 `bash scripts/start-host.sh` 配置凭据。手动安装时，把 DSH 环境映射放进解析后的 Turnwire 配置目录的 `dsh.env.json`，权限 0600，或用 `TURNWIRE_DSH_ENV_FILE` 显式指定私有文件；没有源码目录内的兼容回退。其中包含 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY` 环境变量。该私有文件在目标机器上提供，绝不包含在发布归档中。受管启动器只把它的值传给 DSH。Turnwire 收到的是短期有效的本机回环 DSH 连接 URL；模型值和 URL token 会从服务日志中脱敏。
 
 在安装目录中运行：
 
@@ -112,13 +112,13 @@ bash scripts/install-linux-host.sh "$PWD"
 bin/turnwire tui
 ```
 
-安装器为当前用户生成可执行包装脚本和 `turnwire-host.service`，所有路径都从提供的目录推导。服务在回环地址上启动 DSH，等待其带认证的启动 URL，然后启动 Turnwire。子进程失败会触发受监管的重启；关闭时先排空 Turnwire 再关闭 DSH。使用 `systemctl --user status turnwire-host`、`restart turnwire-host` 或 `journalctl --user -u turnwire-host` 管理它。启用 lingering 可在没有 SSH 登录时开机启动。退出 TUI 或 SSH 后主机服务仍在运行。
+安装器为当前用户生成可执行包装脚本和 `turnwire-host.service`，应用产物使用提供的安装目录，私有配置、状态、运行时数据和缓存使用独立解析的 XDG 目录。服务在回环地址上启动 DSH，等待其带认证的启动 URL，然后启动 Turnwire。子进程失败会触发受监管的重启；关闭时先排空 Turnwire 再关闭 DSH。使用 `systemctl --user status turnwire-host`、`restart turnwire-host` 或 `journalctl --user -u turnwire-host` 管理它。启用 lingering 可在没有 SSH 登录时开机启动。退出 TUI 或 SSH 后主机服务仍在运行。
 
-使用 `bin/turnwire remote` 选择已有的 Relay，再用 `bin/turnwire devices pair --name phone --qr` 配对手机。每台主机有自己的身份、会话和配对；为另一台主机做的配对不会自动切换。本机 daemon/DSH 端口保持在回环地址上，远程访问通过加密 Relay。需要使用不同布局时，通用受管启动器还接受 `TURNWIRE_INSTALL_DIR`、`TURNWIRE_HOME`、`TURNWIRE_DSH_HOME`、`TURNWIRE_DSH_ENTRY`、`TURNWIRE_DSH_ENV_FILE` 和 `TURNWIRE_DSH_PORT`。
+使用 `bin/turnwire remote` 选择已有的 Relay，再用 `bin/turnwire devices pair --name phone --qr` 配对手机。每台主机有自己的身份、会话和配对；为另一台主机做的配对不会自动切换。本机 daemon/DSH 端口保持在回环地址上，远程访问通过加密 Relay。需要使用不同布局时，通用受管启动器还接受 `TURNWIRE_INSTALL_DIR`、`TURNWIRE_STATE_HOME`、`TURNWIRE_CONFIG_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME`、`TURNWIRE_DSH_HOME`、`TURNWIRE_DSH_ENTRY`、`TURNWIRE_DSH_ENV_FILE` 和 `TURNWIRE_DSH_PORT`。
 
 ## Remote v2、通知和局域网直连
 
-更新顺序是 Relay → 主机 daemon → 客户端。新版 Relay 兼容旧主机；新版主机注册增加连接标识隔离，需要先更新 Relay。保留既有私有部署配置，执行原来的一键部署命令即可更新。已有配对继续使用旧加密，选择 `turnwire devices upgrade <id> --qr` 或 macOS「已配对设备 → 重新配对」时才替换凭据。新二维码有效期 15 分钟，只能登记一次。
+Relay、主机 daemon 和客户端必须全部使用当前 v2 远程契约；不支持旧主机、旧设备凭据或旧配对格式。先部署 Relay，再部署主机与客户端，不承诺混合版本可用。可保留私有部署配置用于重新部署，但不要复用旧主机数据库：Store 拒绝旧库，不提供迁移。使用 `turnwire devices pair --name phone --qr` 创建新的 v2 配对；没有设备升级命令或 PUT 替换端点。新二维码有效期 15 分钟，只能登记一次。见[维护指南](FIRST-UPGRADE.zh.md)。
 
 一键部署自动创建 `${installDir}/state/push.db`，由配置中的服务账号独占，持久保存 VAPID 密钥和通知队列；更新 release 不删除该文件。手工运行 Relay 时设置 `TURNWIRE_PUSH_DB`（私有 SQLite 路径）及 `TURNWIRE_VAPID_SUBJECT`（运营者的 HTTPS 地址或 mailto 联系地址）。不开这两个变量时仅关闭推送能力，Relay 转发仍可用。推送出口使用标准 HTTPS；无需 Apple 开发者会员或 Firebase 项目。
 

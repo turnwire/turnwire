@@ -21,7 +21,7 @@ const core = new TurnwireCore(new Store(':memory:'), [runtime], { id: crypto.ran
 const token = randomSecret(), relayToken = randomSecret();
 const server = await startDaemonServer({ core, token, port: 0 });
 const local = new LocalClient(`http://127.0.0.1:${server.port}`, token);
-const session = await local.request('session.create', { runtimeId: 'demo', title: '手机 Markdown 渲染', cwd: process.cwd() });
+const session = await local.call('session.create', { runtimeId: 'demo', title: '手机 Markdown 渲染', cwd: process.cwd() });
 runtime.sendFixture(session.id, { type: 'message.user', messageId: crypto.randomUUID(), text: '请验证这段输出在手机上的排版。' });
 runtime.sendFixture(session.id, { type: 'message.completed', messageId: crypto.randomUUID(), text: markdown });
 const relay = await startRelay({ token: relayToken, port: 0, webRoot: resolve('apps/remote-web/dist') });
@@ -81,7 +81,7 @@ try {
   await expect(streaming.locator('pre')).toHaveCount(1);
   await page.reload();
   await expect(page.locator('.message.assistant').last().locator('strong')).toHaveText('完整输出');
-  const events = await local.request('events.list', { sessionId: session.id });
+  const events = await local.call('events.list', { sessionId: session.id });
   expect(events.events.find(event => event.data.type === 'message.completed' && event.data.messageId === streamingId)?.data.text).toBe(final);
   expect(errors).toEqual([]);
   console.log('Markdown browser checks passed: encrypted replay, headings/lists/GFM, code copy, 320/375/390/1440 layout, independent scroll, streaming and refresh.');

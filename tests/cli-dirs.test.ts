@@ -6,13 +6,17 @@ import { runTui } from '../apps/cli/src/terminal.js';
 
 const listing = { path: '/host/home/new folder', parent: '/host/home', home: '/host/home', entries: [], total: 0 };
 function setup() {
-  const request = vi.spyOn(LocalClient.prototype, 'request').mockResolvedValue(listing);
+  const request = vi.spyOn(LocalClient.prototype, 'call').mockResolvedValue(listing);
   const close = vi.spyOn(LocalClient.prototype, 'close').mockImplementation(() => {});
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const dispatch = (args: string[]) => createProgram({ url: 'http://localhost:1', token: 'test', json: true, lang: 'en' }).parseAsync(args, { from: 'user' });
   return { request, close, log, dispatch };
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+it('reports removed path configuration instead of disguising it as a missing daemon', async () => {
+  vi.stubEnv('TURNWIRE_HOME', '/unused');
+  await expect(createProgram({ lang: 'en' }).parseAsync(['dirs'], { from: 'user' })).rejects.toThrow('TURNWIRE_HOME has been removed');
+});
 it('preserves dirs listing and resolves explicit paths', async () => {
   const { request, dispatch } = setup();
   await dispatch(['dirs', '.']);

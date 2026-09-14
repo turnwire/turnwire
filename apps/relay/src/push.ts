@@ -14,6 +14,11 @@ export function validatePushEndpoint(value: string) {
 }
 export class RelayPush {
   private stopped = false;
+  private closing?: Promise<void>;
+  private failure?: Error;
+  get health() { return this.failure ? { status: 'error' as const, error: this.failure } : { status: this.stopped ? 'closed' as const : 'ok' as const }; }
+  seal() { this.stopped = true; clearInterval(this.timer); }
+  private requireOpen() { if (this.stopped) throw new Error('Relay push is closing'); }
   private db: DatabaseSync; private running?: Promise<void>; private timer: ReturnType<typeof setInterval>;
   private vapid: { publicKey: string; privateKey: string };
   constructor(path: string, private subject: string, private deliver: typeof webpush.sendNotification = webpush.sendNotification) {
@@ -26,14 +31,16 @@ export class RelayPush {
     const saved = this.db.prepare("SELECT body FROM settings WHERE key='vapid'").get();
     this.vapid = saved ? JSON.parse(String(saved.body)) : webpush.generateVAPIDKeys();
     if (!saved) this.db.prepare("INSERT INTO settings VALUES('vapid',?)").run(JSON.stringify(this.vapid));
-    this.timer = setInterval(() => { void this.flush(); }, 1000); this.timer.unref();
+    this.timer = setInterval(() => { void this.flush().catch(() => { /* flush records the failure for health/close */ }); }, 1000); this.timer.unref();
   }
   get publicKey() { return this.vapid.publicKey; }
   reconcile(host: string, clients: string[]) {
+    this.requireOpen();
     for (const row of this.db.prepare('SELECT client FROM subscriptions WHERE host=?').all(host)) if (!clients.includes(String(row.client))) this.remove(host, String(row.client));
   }
   private remove(host: string, client: string) { this.db.prepare('DELETE FROM subscriptions WHERE host=? AND client=?').run(host, client); this.db.prepare('DELETE FROM notifications WHERE host=? AND client=?').run(host, client); }
   handle(host: string, allowed: Set<string>, input: unknown) {
+    this.requireOpen();
     const p = pushRequestSchema.parse(input); const enabled = this.db.prepare('SELECT body FROM settings WHERE key=?').get('enabled:' + host)?.body !== 'false';
     if (p.clientId && !allowed.has(p.clientId)) throw new Error('Unknown paired device');
     if (p.action === 'configure') {
@@ -60,6 +67,7 @@ export class RelayPush {
     return { accepted: true, publicKey: this.publicKey, subscribed: p.clientId ? !!this.db.prepare('SELECT 1 FROM subscriptions WHERE host=? AND client=?').get(host, p.clientId) : false, queued: Number(this.db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE host=? AND delivered=0').get(host)!.n) };
   }
   flush(): Promise<void> {
+    if (this.stopped) return Promise.reject(new Error('Relay push is closing'));
     if (this.running) return this.running;
     this.running = (async () => {
       this.db.prepare('DELETE FROM notifications WHERE expires<?').run(Date.now());
@@ -72,14 +80,29 @@ export class RelayPush {
         try {
           validatePushEndpoint(subscription.endpoint);
           await this.deliver(subscription, JSON.stringify({ type: 'inbox', title: 'Turnwire needs your attention', body: 'Open the inbox to see the latest pending items.', tag: 'turnwire-inbox' }), { vapidDetails: { subject: this.subject, ...this.vapid }, TTL: Math.max(0, Math.min(3600, Math.floor((Number(row.expires) - Date.now()) / 1000))), urgency: 'normal', topic: 'turnwire-inbox', timeout: 10_000 });
-          this.db.prepare('UPDATE notifications SET delivered=1 WHERE host=? AND client=? AND id=?').run(row.host!, row.client!, row.id!);
         } catch (error) {
           const status = (error as { statusCode?: number }).statusCode;
           if (status === 404 || status === 410) this.remove(String(row.host), String(row.client));
           else this.db.prepare('UPDATE notifications SET attempts=attempts+1,retry=? WHERE host=? AND client=? AND id=?').run(Date.now() + Math.min(3600_000, 5000 * 2 ** Math.min(10, Number(row.attempts))), row.host!, row.client!, row.id!);
+          continue;
         }
+        // Storage failure is not a delivery failure: expose it to the owner.
+        this.db.prepare('UPDATE notifications SET delivered=1 WHERE host=? AND client=? AND id=?').run(row.host!, row.client!, row.id!);
       }
-    })().finally(() => { this.running = undefined; }); return this.running;
+    })().then(() => { this.failure = undefined; }, error => {
+      this.failure = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    }).finally(() => { this.running = undefined; }); return this.running;
   }
-  async close() { this.stopped = true; clearInterval(this.timer); await this.running; this.db.close(); }
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.seal();
+    this.closing = (async () => {
+      let error: unknown = this.failure;
+      try { await this.running; } catch (failure) { error = failure; }
+      try { this.db.close(); } catch (failure) { error = error ? new AggregateError([error, failure], 'Push flush and database close failed') : failure; }
+      if (error) throw error;
+    })();
+    return this.closing;
+  }
 }

@@ -38,7 +38,7 @@ export function AgentStrip({ agents, client, sessionId, connected }: { agents: S
   const shown = [...running.filter((agent, index) => all || index < MAX_AGENT_ROWS || agent.id === open), ...resting.filter(agent => inactive || agent.id === open)];
   const byId = new Map(agents.map(agent => [agent.id, agent]));
   return <div className="agent-strip" role="status" aria-label={translate('agents.aria')}>
-    <button type="button" className="agent-strip-toggle" aria-expanded={expandedStrip} onClick={() => setExpandedStrip(value => !value)}><span className="agent-dot" data-activity={running.length ? 'running' : 'inactive'} aria-hidden="true" /><span>{translate('agents.running', { count: running.length })}</span><span className="agent-caret" aria-hidden="true">›</span></button>
+    <button type="button" className="agent-strip-toggle" aria-expanded={expandedStrip} onClick={() => setExpandedStrip(value => !value)}><span className="agent-dot" data-activity={running.length ? 'running' : 'inactive'} aria-hidden="true" /><span>{running.length ? translate('agents.running', { count: running.length }) : translate('agents.aria')}</span><span className="agent-caret" aria-hidden="true">›</span></button>
     {expandedStrip && <>
     {resting.length > 0 && <button type="button" className="agent-more" aria-expanded={inactive} onClick={() => setInactive(value => !value)}>{translate(inactive ? 'agents.inactiveHide' : 'agents.inactiveShow', { count: resting.length })}</button>}
     <div className="agent-list">{shown.map(agent => {

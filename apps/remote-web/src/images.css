@@ -1,6 +1,21 @@
 .composer { position: relative; }
-.composer .image-picker { position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; padding: 4px; display: grid; place-items: center; border: 0; background: transparent; color: inherit; opacity: .75; }
-.composer textarea[aria-label] { padding-right: 44px; }
+.composer-utility-row { position: absolute; top: 8px; right: 10px; display: flex; justify-content: flex-end; align-items: center; gap: 4px; padding: 0; min-width: 0; z-index: 1; }
+.composer .image-picker { position: static; width: 32px; height: 32px; padding: 4px; display: grid; place-items: center; border: 0; background: transparent; color: inherit; opacity: .75; flex-shrink: 0; }
+.composer-utility-row .approval-mode button { width: 32px; height: 32px; min-height: 32px; padding: 0; justify-content: center; border-radius: 6px; }
+.composer-utility-row .approval-mode button { position: relative; color: #778394; background: transparent; border: 1px solid transparent; }
+.composer-utility-row .approval-mode button[data-auto-approve="on"] { color: #245dcc; background: #dce9ff; border-color: #9cbaed; box-shadow: 0 0 0 1px #245dcc0a; }
+.composer-utility-row .approval-mode .auto-approval-check { position: absolute; top: -3px; right: -3px; border-radius: 50%; box-shadow: 0 0 0 2px white; }
+.composer-utility-row .approval-mode .auto-approval-notice { display: block; position: absolute; right: 0; bottom: calc(100% + 8px); white-space: nowrap; pointer-events: none; padding: 6px 9px; border: 1px solid #dce3ed; border-radius: 7px; background: white; color: #435268; box-shadow: 0 4px 12px #24314214; font-size: 11px; }
+.composer-utility-row .approval-mode button:focus-visible { outline: 2px solid #245dcc; outline-offset: 3px; }
+.composer-utility-row .runtime-mark { display: inline-flex; color: #111; flex-shrink: 0; }
+.composer-utility-row .runtime-identity { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 40%; font-size: 11px; }
+.composer-utility-row .runtime-identity svg { flex-shrink: 0; }
+.composer textarea[aria-label] { padding-right: 88px; padding-top: 14px; line-height: 20px; }
+.composer .image-draft-strip { padding-top: 42px; }
+.composer > .image-feedback:first-of-type { padding-top: 42px; }
+.composer-bottom { position: relative; }
+.composer-bottom .context-detail { bottom: calc(100% + 8px); }
+.composer-bottom .context-usage { flex-shrink: 0; }
 .image-draft-strip, .message-images { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .image-draft-strip { padding: 0 12px; }
 .image-draft-strip small { flex: 1; min-width: 140px; font-size: 11px; opacity: .7; }

@@ -23,7 +23,7 @@ const page = await context.newPage(); const errors = []; page.on('pageerror', er
 const sockets = []; page.on('websocket', socket => sockets.push(socket));
 const output = process.env.TURNWIRE_SCREENSHOTS ?? '/tmp/turnwire-resilience-screenshots'; await mkdir(output, { recursive: true });
 try {
-  const session = await local.request('session.create', { title: '远程连接验证', cwd: directory, runtimeId: 'demo' });
+  const session = await local.call('session.create', { title: '远程连接验证', cwd: directory, runtimeId: 'demo' });
   await expect.poll(() => remote.status().state).toBe('online');
   const invitation = await local.pairDevice('测试手机'); await expect.poll(() => remote.status().state).toBe('online');
   await page.goto(invitation.url);
@@ -45,7 +45,7 @@ try {
   // Coming back answers what the banner was complaining about: no click, no dismissal.
   await expect(page.locator('.connection-ok')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.error-banner')).toHaveCount(0);
-  await local.request('session.message', { sessionId: session.id, text: 'approval' });
+  await local.call('session.message', { sessionId: session.id, text: 'approval' });
   await page.getByRole('button', { name: 'Open session list' }).click(); await page.getByRole('button', { name: /Approvals/ }).click();
   await expect(page.getByRole('heading', { name: 'Approvals', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();

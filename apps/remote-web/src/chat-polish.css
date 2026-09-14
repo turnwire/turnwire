@@ -1,0 +1,89 @@
+/* Web-only presentation polish. Import after the existing chat styles.
+   Keep runtime/context styling, transcript order, and visibility policies separate. */
+.conversation-inner .message-text {
+  color: var(--ink, #243142);
+  font-size: 15px;
+  line-height: 1.8;
+}
+.conversation-inner .message-text .markdown-body {
+  font-size: inherit;
+  line-height: inherit;
+}
+.conversation-inner .message-author {
+  color: #56677c;
+}
+.conversation-inner .message-author time {
+  color: var(--muted, #647184);
+}
+/* Nested agent history intentionally remains denser than the main answer. */
+.conversation-inner .child-record .message-text {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Quiet backgrounds rather than faint, hard-to-read summary text. These selectors
+   intentionally do not match Context's details/summary or permission controls. */
+.conversation-inner .tool-message > summary,
+.conversation-inner .tool-group > summary,
+.conversation-inner .turn-process > summary {
+  min-height: 32px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted, #647184);
+  border-radius: 6px;
+}
+.conversation-inner .tool-message > summary:hover,
+.conversation-inner .tool-group > summary:hover,
+.conversation-inner .turn-process > summary:hover {
+  background: #edf1f6;
+}
+.conversation-inner .tool-message[open] {
+  border-color: #e0e5ec;
+  background: #f6f8fa;
+  box-shadow: none;
+}
+.conversation-inner .tool-message > summary .tool-action {
+  opacity: 1;
+  color: #697586;
+}
+.conversation-inner .tool-message > summary .tool-status,
+.conversation-inner .tool-group > summary .tool-status,
+.conversation-inner .turn-process > summary .tool-status {
+  color: var(--muted, #647184);
+  font-size: 10px;
+}
+.conversation-inner .tool-message pre {
+  color: #465365;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* Use existing bluegray focus/selection colors. Never override disabled styling,
+   pending approval states, model widths, or mobile stop-button icon treatment. */
+.composer-area .composer {
+  border-color: #ced7e3;
+  box-shadow: 0 2px 10px #24314205;
+}
+.composer-area .composer:focus-within {
+  border-color: #9aafd2;
+}
+.composer-area .composer-bottom button {
+  min-height: 32px;
+  min-width: 32px;
+}
+.composer-area .composer-bottom .model-chip {
+  /* Model labels must still shrink inside narrow composer action rows. */
+  min-width: 32px;
+}
+.composer-area .composer-bottom .approval-mode button {
+  height: 32px;
+}
+@media (max-width: 700px) {
+  .composer-area .composer textarea {
+    /* Preserve iOS's no-auto-zoom input size. */
+    font-size: 16px;
+  }
+  .composer-area .composer-bottom {
+    column-gap: 5px;
+  }
+}

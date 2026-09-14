@@ -56,7 +56,7 @@ To connect a real model (DeepSeek via DSH), see [Developing from source](docs/DE
 | What you want | How to install | What you need |
 | --- | --- | --- |
 | Mac native app (the most complete) | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+, Xcode 16+ / Swift 6; the artifact is ad-hoc signed, and public distribution still needs a Developer ID and notarization |
-| Resident host (Linux, headless) | Run `scripts/install-linux-host.sh` from a built release | Linux + systemd, with `config/dsh.env.json` written first |
+| Resident host (Linux, headless) | Run `scripts/install-linux-host.sh` from a built release | Linux + systemd, with the private DSH environment file written first (default `~/.config/turnwire/dsh.env.json`; honors `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME` or `TURNWIRE_DSH_ENV_FILE`) |
 | Self-hosted Relay (stable long-term address) | `deploy/` contains a Dockerfile, compose.yaml, and Caddyfile | A server; see [One-click Relay deployment](docs/RELAY-INSTALL.md) |
 | Terminal / scripts | `npm run turnwire -- ...`, or after building `node apps/cli/dist/main.js ...` | Node.js 22.13+; for the commands see the [CLI reference](docs/CLI.md) |
 
@@ -106,7 +106,7 @@ Once the channel is ready, generate a pairing QR code, then open the deployed PW
 
 ## Current status and boundaries
 
-The current delivery includes one-time pairing, per-connection ECDH session encryption authenticated by device credentials, staged connection recovery, a persistent approval inbox, Web Push, and a configurable TLS LAN listener. Existing older pairings keep working and can be explicitly upgraded from the host. The Relay's connection routing is still in memory, while push keys and the delivery queue are persisted.
+The current delivery includes one-time pairing, per-connection ECDH session encryption authenticated by device credentials, staged connection recovery, a persistent approval inbox, Web Push, and a configurable TLS LAN listener. Pairing and remote transport support only v2; v1 devices and credential upgrades are not supported. Create a new v2 pairing from the host. RPC/event envelopes remain v1. Store rejects old databases without migration; use a separate empty database. The Relay's connection routing is still in memory, while push keys and the delivery queue are persisted.
 
 It does not yet include Codex / Claude adapters, team accounts, native iOS, auto-update, or release signing. "Which things were verified only under specific conditions" is governed by the [verification record](docs/VALIDATION.md).
 

@@ -1,14 +1,21 @@
 import { Inbox } from './Inbox';
+import { RequestContext, mergeModelReply, mergeCreateReply } from './requestContext';
+import { SessionList, type SessionChange, type SessionManagementResult } from './SessionList';
 import { ImagePicker, MessageImages, useImageDraft } from './ImageInput';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUp, ArrowRight, Check, CircleNotch, Desktop, FolderSimple, GearSix, Laptop, List, Plus, Question as QuestionIcon, ShieldCheck, Stop, TerminalWindow, X, Plug, ChatCircle, CaretRight } from '@phosphor-icons/react';
-import { call, LocalClient, RemoteClient, applyEvent, conversation, decodePairing, encodePairing, loadHistoryPage, HistoryBuffer } from '@turnwire/sdk';
+import { call, LocalClient, RemoteClient, applyEvent, conversation, loadHistoryPage } from '@turnwire/sdk';
+import { decodePairing, encodePairing } from '@turnwire/wire';
 import type { ConnectionState, ConnectionHealth, ConversationMessage, TurnwireClient } from '@turnwire/sdk';
-import { TurnwireError, eventSessionId, methodSchemas } from '@turnwire/protocol';
+import { HistoryBuffer, TurnwireError, eventSessionId, methodSchemas } from '@turnwire/protocol';
 import type { Question, QuestionAnswerItem, TurnwireEvent, Session, SessionStatus, Snapshot, ModelCatalog, QueueItemView, SubagentView, WorkspaceListing } from '@turnwire/protocol';
 import { MessageBody, ToolCall, ToolHeading } from './MessagePresentation';
 import { AgentStrip } from './AgentStrip';
+import { ContextUsage } from './ContextUsage';
+import { RuntimeMark } from './RuntimeMark';
+import { AutoApprovalMark } from './AutoApprovalMark';
+import './chat-polish.css';
 import { InlineChild } from './InlineChild';
 import { conversationRows, currentTurnChildren, launchChild, type ConversationRowData } from './inlineChild';
 import { ModelPicker } from './ModelPicker';
@@ -29,8 +36,31 @@ function loadConnection(): Connection | undefined {
       history.replaceState(null, '', location.pathname + location.search);
       return connection;
     }
-    const saved = sessionStorage.getItem('turnwire.connection') ?? localStorage.getItem('turnwire.connection'); return saved ? JSON.parse(saved) as Connection : undefined;
+    for (const storage of [sessionStorage, localStorage]) {
+      const saved = storage.getItem('turnwire.connection');
+      if (saved) { try { return validConnection(JSON.parse(saved)); } catch { /* Try the other store without overwriting either. */ } }
+    }
+    return undefined;
   } catch { return undefined; }
+}
+function validConnection(value: unknown): Connection {
+  if (!value || typeof value !== 'object') throw new Error('Invalid connection');
+  const v = value as Connection;
+  if (v.kind === 'remote' && typeof v.code === 'string') { decodePairing(v.code); return v; }
+  if (v.kind === 'local' && typeof v.url === 'string' && typeof v.token === 'string' && v.token.trim()) { const url = new URL(v.url); if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) return v; }
+  throw new Error('Invalid connection');
+}
+/** Write the destination first. Failed writes never delete the existing credential. */
+export function storeConnection(value: Connection, remember: boolean) {
+  validConnection(value);
+  const target = remember ? localStorage : sessionStorage;
+  const source = remember ? sessionStorage : localStorage;
+  const previous = target.getItem('turnwire.connection');
+  target.setItem('turnwire.connection', JSON.stringify(value));
+  try { source.removeItem('turnwire.connection'); } catch (error) {
+    try { if (previous === null) target.removeItem('turnwire.connection'); else target.setItem('turnwire.connection', previous); } catch { /* Surface failure; do not delete the source. */ }
+    throw error;
+  }
 }
 function shortPath(path: string) { return path.split('/').filter(Boolean).slice(-2).join('/'); }
 /** The chip shows the runtime's own name for the current model; the client never invents one. */
@@ -95,6 +125,17 @@ function LocaleSwitch() {
 export function App() {
   const t = useLocale();
   const [connection, setConnection] = useState(loadConnection);
+  const [remembered, setRemembered] = useState(() => { try { const saved = localStorage.getItem('turnwire.connection'); return !!connection && !!saved && JSON.stringify(validConnection(JSON.parse(saved))) === JSON.stringify(connection); } catch { return false; } });
+  const rememberedRef = useRef(remembered);
+  const [storageError, setStorageError] = useState('');
+  const requests = useRef(new RequestContext());
+  const performOwner = useRef<(() => boolean) | undefined>(undefined);
+  const requestConnection = useRef(connection);
+  if (requestConnection.current !== connection) { requests.current.reset(); requestConnection.current = connection; }
+  const beginRequest = (channel: string, client: TurnwireClient) => {
+    const owns = requests.current.begin(channel);
+    return () => owns() && clientRef.current === client;
+  };
   const [showInbox, setShowInbox] = useState(new URLSearchParams(location.search).has('inbox'));
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [selected, setSelected] = useState<string>();
   const historyRef = useRef<{ sessionId: string; client: TurnwireClient; buffer: HistoryBuffer; busy: boolean; initialLoaded: boolean; before: number | null } | undefined>(undefined);
@@ -116,7 +157,7 @@ export function App() {
   const imageDraft = useImageDraft(draftKey);
   const [textDraft, setTextDraft] = useState({ key: draftKey, text: '' });
   const prompt = textDraft.key === draftKey ? textDraft.text : '';
-  const setPrompt = (text: string) => setTextDraft({ key: draftKey, text }); const [showArchived, setShowArchived] = useState(false); const [renameTitle, setRenameTitle] = useState<string>(); const clientRef = useRef<TurnwireClient | undefined>(undefined); const bottom = useRef<HTMLDivElement>(null);
+  const setPrompt = (text: string) => setTextDraft({ key: draftKey, text }); const [showArchived, setShowArchived] = useState(false); const clientRef = useRef<TurnwireClient | undefined>(undefined); const bottom = useRef<HTMLDivElement>(null);
   const session = snapshot?.sessions.find(s => s.id === selected);
   const messages = useMemo(() => selected ? conversation(events, selected) : [], [events, selected]);
   const approvals = snapshot?.approvals.filter(a => a.sessionId === selected) ?? [];
@@ -145,9 +186,10 @@ export function App() {
   useEffect(() => {
     if (!mobileSidebar || !drawer) return;
     const key = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); setDrawer(false); }
       if (event.key !== 'Tab') return;
-      const controls = Array.from(sidebar.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []);
+      const controls = Array.from(sidebar.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []).filter(element => element.getClientRects().length > 0);
       const first = controls[0]; const last = controls[controls.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -171,7 +213,7 @@ export function App() {
   const queue = queueState.key === draftKey ? queueState.items : [];
   const setQueue = (items: QueueItemView[] | ((current: QueueItemView[]) => QueueItemView[])) => setQueueState(current => ({ key: draftKey, items: typeof items === 'function' ? items(current.key === draftKey ? current.items : []) : items }));
   const turnRunning = ['running', 'waiting_approval'].includes(session?.status ?? '');
-  const pending = useMemo(() => queue.map(item => ({ id: item.messageId, text: item.text, images: item.images })), [queue]);
+  const pending = useMemo(() => queue.map(item => ({ id: item.messageId, target: item.target, text: item.text, images: item.images })), [queue]);
   const visible = useMemo(() => pending.length ? messages.filter(message => !pending.some(item => item.id === message.id)) : messages, [messages, pending]);
   /**
    * Background agents the session has delegated to. A delegation returns at once, so the transcript
@@ -211,7 +253,7 @@ export function App() {
     const client = clientRef.current; if (!client) return;
     const context = draftKey;
     try { const result = await call(client, 'session.queue', { sessionId }); if (draftContext.current === context) setQueue(result.items); }
-    catch { if (draftContext.current === context) setQueue([]); }
+    catch { /* A failed read is not an empty inbox; retain the last confirmed queue. */ }
   }, [draftKey]);
   useEffect(() => {
     if (!selected || !session || session.archived || !clientRef.current) { setQueue([]); return; }
@@ -224,10 +266,11 @@ export function App() {
   }, [selected, session?.archived, session?.status, turnRunning, state, refreshQueue]);
   async function changeQueued(messageId: string, action: { kind: 'remove' | 'steer' } | { kind: 'edit'; text: string }) {
     if (!session || busy || !connected || (editingQueued !== undefined && action.kind !== 'edit')) return;
+    if (action.kind === 'steer' && (!turnRunning || queue.find(item => item.messageId === messageId)?.target !== 'next-turn')) return;
     const context = draftKey; const sessionId = session.id;
-    await perform(async c => {
+    await perform(async (c, current) => {
       await call(c, 'session.queueAction', { sessionId, messageId, action });
-      if (draftContext.current !== context) return;
+      if (!current() || draftContext.current !== context) return;
       setEditingQueued(undefined);
       await refreshQueue(sessionId);
     });
@@ -240,23 +283,6 @@ export function App() {
    */
   const rows = useMemo(() => conversationRows(visible), [visible]);
   const turnAgents = useMemo(() => currentTurnChildren(messages, scopedAgents), [messages, scopedAgents]);
-  const sessionActions = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    const dismiss = (event: PointerEvent) => {
-      const menu = sessionActions.current;
-      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false;
-    };
-    const escape = (event: KeyboardEvent) => {
-      const menu = sessionActions.current;
-      if (event.key !== 'Escape' || !menu?.open) return;
-      event.preventDefault(); menu.open = false;
-      if (menu.contains(document.activeElement)) menu.querySelector('summary')?.focus();
-    };
-    document.addEventListener('pointerdown', dismiss);
-    document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape); };
-  }, []);
-  useEffect(() => { if (sessionActions.current) sessionActions.current.open = false; setRenameTitle(undefined); }, [selected]);
   // The model panel hangs off the chip, so it closes the way a menu does: a tap anywhere else, or Esc.
   useEffect(() => {
     if (!showModel) return;
@@ -275,8 +301,8 @@ export function App() {
   const refreshCatalog = useCallback(() => {
     const target = runtime?.id ?? session?.runtimeId; const client = clientRef.current;
     if (!target || !client) return;
-    const request = ++catalogRequest.current;
-    const current = () => request === catalogRequest.current && clientRef.current === client && catalogContext.current === target;
+    const request = ++catalogRequest.current; const owns = beginRequest('catalog', client);
+    const current = () => owns() && request === catalogRequest.current && catalogContext.current === target;
     setCatalogStatus({ runtimeId: target, loading: true, error: '' });
     return call(client, 'model.catalog', { runtimeId: target })
       .then(value => { if (current()) { setCatalog({ runtimeId: target, value }); setCatalogStatus({ runtimeId: target, loading: false, error: '' }); } })
@@ -293,9 +319,9 @@ export function App() {
   function submit(text: string, asSteer: boolean) {
     if (!session || busy || (!text.trim() && !imageDraft.images.length) || !imageDraft.validate(text, runtime?.capabilities.imageInput === true)) return;
     const sessionId = session.id; const context = draftKey; const images = imageDraft.images;
-    void perform(async c => {
+    void perform(async (c, current) => {
       const accepted = await call(c, 'session.message', { sessionId, text, ...(images.length ? { images } : {}), ...(asSteer ? { steer: true } : {}) });
-      if (draftContext.current !== context) return;
+      if (!current() || draftContext.current !== context) return;
       setTextDraft(current => current.key === context && current.text === text ? { key: context, text: '' } : current);
       imageDraft.clear();
       // The daemon says whether this waits behind the turn. If it does, show it above the composer
@@ -312,23 +338,23 @@ export function App() {
   function chooseModel(provider: string, model: string, reasoningEffort?: string) {
     const client = clientRef.current;
     if (!client || !session || state !== 'connected' || busy || session.archived || modelRequest.current) return;
-    const sessionId = session.id;
+    const sessionId = session.id; const target = session; const current = beginRequest('model', client);
     const requestPanel = modelSwitch.current?.querySelector('.model-picker');
     modelRequest.current = true; setModelPending(true); setModelError('');
     void call(client, 'session.setModel', { sessionId, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) })
       .then(updated => {
-        if (clientRef.current !== client) return;
-        setSnapshot(previous => previous ? { ...previous, sessions: previous.sessions.map(item => item.id === updated.id ? { ...item, model: updated.model } : item) } : previous);
+        if (!current()) return;
+        setSnapshot(previous => current() ? mergeModelReply(previous, target, updated) : previous);
         // Only the still-open panel that initiated this request may restore focus. A dismissal,
         // reopening, or Tab/click into another control must not be undone by a late response.
         if (modelContext.current === sessionId && requestPanel?.isConnected) closeModel(requestPanel.contains(document.activeElement));
       })
       .catch(error => {
-        if (clientRef.current !== client || modelContext.current !== sessionId) return;
+        if (!current() || modelContext.current !== sessionId) return;
         setModelError(errorText(error));
         if ((error as { code?: string }).code === 'MODEL_UNAVAILABLE') void refreshCatalog();
       })
-      .finally(() => { modelRequest.current = false; setModelPending(false); });
+      .finally(() => { if (current()) { modelRequest.current = false; setModelPending(false); } });
   }
   useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key.toLowerCase() === 'n' && (event.metaKey || event.ctrlKey) && snapshot) { event.preventDefault(); setCreate(true); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [snapshot]);
 
@@ -336,7 +362,7 @@ export function App() {
     if (!connection) return;
     let active = true; let unsubscribe: (() => void) | undefined; let c: TurnwireClient;
     setError(''); setLoading(true);
-    try { c = connection.kind === 'local' ? new LocalClient(connection.url, connection.token) : new RemoteClient(decodePairing(connection.code), { persistPairing: pairing => { const value = JSON.stringify({ kind: 'remote', code: encodePairing(pairing) }); const storage = localStorage.getItem('turnwire.connection') ? localStorage : sessionStorage; storage.setItem('turnwire.connection', value); } }); }
+    try { c = connection.kind === 'local' ? new LocalClient(connection.url, connection.token) : new RemoteClient(decodePairing(connection.code), { persistPairing: pairing => { if (!active || requestConnection.current !== connection) throw new Error('Connection changed'); try { storeConnection({ kind: 'remote', code: encodePairing(pairing) }, rememberedRef.current); setStorageError(''); } catch { setStorageError(t('settings.storageFailed')); throw new Error(t('settings.storageFailed')); } } }); }
     catch (error) { reportFailure(error); setLoading(false); setShowConnection(true); return; }
     clientRef.current = c; setHealth(undefined);
     let flush: ReturnType<typeof setTimeout> | undefined; let pending: TurnwireEvent[] = [];
@@ -373,7 +399,7 @@ export function App() {
     const notification = (event: MessageEvent) => { if (event.data?.type === 'turnwire.inbox') { setShowInbox(true); setShowConnection(false); resume(); } };
     navigator.serviceWorker?.addEventListener('message', notification);
     network?.addEventListener('change', resume); document.addEventListener('visibilitychange', resume); window.addEventListener('online', resume); window.addEventListener('offline', offline); window.addEventListener('pageshow', resume);
-    return () => { active = false;  if (flush) clearTimeout(flush); stopHealth?.(); navigator.serviceWorker?.removeEventListener('message', notification); network?.removeEventListener('change', resume); window.removeEventListener('offline', offline); window.removeEventListener('pageshow', resume); document.removeEventListener('visibilitychange', resume); window.removeEventListener('online', resume); unsubscribe?.(); c.close(); if (clientRef.current === c) clientRef.current = undefined; };
+    return () => { active = false; requests.current.reset(); if (flush) clearTimeout(flush); stopHealth?.(); navigator.serviceWorker?.removeEventListener('message', notification); network?.removeEventListener('change', resume); window.removeEventListener('offline', offline); window.removeEventListener('pageshow', resume); document.removeEventListener('visibilitychange', resume); window.removeEventListener('online', resume); unsubscribe?.(); c.close(); if (clientRef.current === c) clientRef.current = undefined; };
   }, [connection]);
 
   useEffect(() => {
@@ -383,7 +409,7 @@ export function App() {
     const buffer = new HistoryBuffer();
     const history = { sessionId: selected, client, buffer, busy: true, initialLoaded: false, before: null as number | null };
     historyRef.current = history;
-    setEvents([]); setLoading(true); setHistoryError(false); setRenameTitle(undefined); follow.current = true; buffer.begin();
+    setEvents([]); setLoading(true); setHistoryError(false); follow.current = true; buffer.begin();
     void loadHistoryPage(client, selected).then(page => {
       if (historyRef.current !== history || clientRef.current !== client) return;
       buffer.merge(page, true); history.initialLoaded = true; history.before = page.nextBefore; setEvents(buffer.events);
@@ -416,12 +442,56 @@ export function App() {
     // Programmatic bottom/anchor restoration is not a new request for earlier history.
     scrollPosition.current = scroller.current?.scrollTop ?? 0;
   }, [events, approvals.length]);
-  async function perform(action: (c: TurnwireClient) => Promise<void>) { if (!clientRef.current) return; setBusy(true); clearFailure(); try { await action(clientRef.current); } catch (error) { reportFailure(error); } finally { setBusy(false); } }
-  function saveConnection(value: Connection, remember: boolean) { localStorage.removeItem('turnwire.connection'); sessionStorage.removeItem('turnwire.connection'); (remember ? localStorage : sessionStorage).setItem('turnwire.connection', JSON.stringify(value)); setSnapshot(undefined); setSelected(undefined); setEvents([]); setState('connecting'); setConnection(value); }
-  function disconnect() { clientRef.current?.close(); localStorage.removeItem('turnwire.connection'); sessionStorage.removeItem('turnwire.connection'); setConnection(undefined); setSnapshot(undefined); setSelected(undefined); setEvents([]); setShowConnection(true); setState('offline'); }
-  async function checkConnection() { const c = clientRef.current; if (!(c instanceof RemoteClient)) return; setChecking(true); try { await c.checkConnection(); clearFailure(); } catch (error) { reportFailure(error); } finally { setChecking(false); } }
+  async function perform(action: (c: TurnwireClient, current: () => boolean) => Promise<void>) {
+    const client = clientRef.current; if (!client || performOwner.current?.()) return;
+    const current = beginRequest('perform', client); performOwner.current = current;
+    setBusy(true); clearFailure();
+    try { await action(client, current); }
+    catch (error) { if (current()) reportFailure(error); }
+    finally { if (current()) { performOwner.current = undefined; setBusy(false); } }
+  }
+  function resetRequests() {
+    requests.current.reset(); setBusy(false); modelRequest.current = false; setModelPending(false); setModelError('');
+    setCatalog(undefined); setCatalogStatus(undefined); setChecking(false); setCreate(false);
+  }
+  const managementContext = useRef({ connection, key: 0 });
+  if (managementContext.current.connection !== connection) managementContext.current = { connection, key: managementContext.current.key + 1 };
+  async function manageSession(sessionId: string, change: SessionChange): Promise<SessionManagementResult> {
+    const client = clientRef.current; const target = snapshot?.sessions.find(item => item.id === sessionId);
+    if (!client || !target || state !== 'connected' || (change.kind === 'archive' && ['running', 'waiting_approval'].includes(target.status))) return { ok: false, error: t('sessionList.unavailable') };
+    const context = managementContext.current;
+    try {
+      const updated = change.kind === 'rename'
+        ? await call(client, 'session.rename', { sessionId, title: change.title })
+        : await call(client, 'session.archive', { sessionId, archived: change.archived });
+      if (clientRef.current !== client || managementContext.current !== context) return { ok: false, cancelled: true };
+      // Patch only the management fields; a concurrent turn event still owns its status.
+      setSnapshot(previous => previous ? { ...previous, sessions: previous.sessions.map(item => item.id !== sessionId || item !== target ? item : change.kind === 'rename' ? { ...item, title: updated.title } : { ...item, archived: updated.archived, autoApprove: updated.autoApprove, updatedAt: updated.updatedAt }) } : previous);
+      return { ok: true };
+    } catch (error) {
+      return clientRef.current === client && managementContext.current === context ? { ok: false, error: errorText(error) } : { ok: false, cancelled: true };
+    }
+  }
+  function saveConnection(value: Connection, remember: boolean) {
+    try { validConnection(value); } catch { setStorageError(t('settings.invalidConnection')); return false; }
+    try { storeConnection(value, remember); } catch { setStorageError(t('settings.storageFailed')); return false; }
+    rememberedRef.current = remember; setRemembered(remember); setStorageError('');
+    resetRequests(); setSnapshot(undefined); setSelected(undefined); setEvents([]); setState('connecting'); setConnection(value); return true;
+  }
+  function changeRemember(remember: boolean) {
+    if (!connection) return;
+    const c = clientRef.current;
+    const value: Connection = connection.kind === 'remote' && c instanceof RemoteClient ? { kind: 'remote', code: encodePairing(c.currentPairing) } : connection;
+    try { storeConnection(value, remember); rememberedRef.current = remember; setRemembered(remember); setStorageError(''); } catch { setStorageError(t('settings.storageFailed')); }
+  }
+  function disconnect() {
+    try { localStorage.removeItem('turnwire.connection'); sessionStorage.removeItem('turnwire.connection'); } catch { setStorageError(t('settings.storageFailed')); return; }
+    resetRequests(); clientRef.current?.close(); rememberedRef.current = false; setRemembered(false); setStorageError(''); setConnection(undefined); setSnapshot(undefined); setSelected(undefined); setEvents([]); setShowConnection(true); setState('offline');
+  }
+  async function checkConnection() { const c = clientRef.current; if (!(c instanceof RemoteClient)) return; const current = beginRequest('check', c); setChecking(true); try { await c.checkConnection(); if (current()) clearFailure(); } catch (error) { if (current()) reportFailure(error); } finally { if (current()) setChecking(false); } }
   const connected = state === 'connected';
-  function rememberDevice() { const c = clientRef.current; if (c instanceof RemoteClient) { localStorage.setItem('turnwire.connection', JSON.stringify({ kind: 'remote', code: encodePairing(c.currentPairing) })); sessionStorage.removeItem('turnwire.connection'); } }
+  // Dialog callbacks retain their host even if an old browse falls back after unmount.
+  const dialogClient = clientRef.current;
   return <div className="app">
     {drawer && <button className="scrim" aria-label={t('sidebar.closeSessionList')} onClick={() => setDrawer(false)} />}
     <aside ref={sidebar} id="session-sidebar" inert={mobileSidebar && !drawer} aria-hidden={mobileSidebar && !drawer ? true : undefined} className={`sidebar ${drawer ? 'visible' : ''}`}>
@@ -429,14 +499,11 @@ export function App() {
       <button className="new-session" disabled={!snapshot} onClick={() => { setCreate(true); setDrawer(false); }}><Plus size={18} />{t('common.newSession')}<span>⌘ N</span></button>
       <button className="new-session" disabled={!snapshot} onClick={() => { setShowInbox(true); setShowConnection(false); setDrawer(false); }}>{t('sidebar.inbox')} <span>{snapshot?.approvals.length ?? 0}</span></button>
       <div className="session-views" role="group" aria-label={t('sidebar.sessionList')}><button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>{t('sidebar.workSessions')}</button><button type="button" aria-pressed={showArchived} onClick={() => setShowArchived(true)}>{t('sidebar.archived')}</button></div>
-      <nav aria-label={t('sidebar.sessionList')} className="session-list">
-        {snapshot?.sessions.filter(s => !!s.archived === showArchived).map(s => <button key={s.id} className={`session-row ${selected === s.id ? 'selected' : ''}`} onClick={() => { setSelected(s.id); setShowInbox(false); setShowConnection(false); setDrawer(false); }} aria-current={selected === s.id ? 'page' : undefined}><ChatCircle size={17} /><span><strong>{s.title}</strong><small>{shortPath(s.cwd)}</small></span><span className={`session-dot ${s.status}`} aria-label={t(statusKeys[s.status])} /></button>)}
-        {!snapshot?.sessions.length && <p className="sidebar-empty">{snapshot ? t('sidebar.emptyNoSession') : t('sidebar.emptyNoHost')}</p>}
-      </nav>
+      <SessionList key={managementContext.current.key} sessions={snapshot?.sessions.filter(s => !!s.archived === showArchived) ?? []} selected={selected} disabled={!connected} active={!mobileSidebar || drawer} empty={!snapshot?.sessions.length ? (snapshot ? t('sidebar.emptyNoSession') : t('sidebar.emptyNoHost')) : undefined} onSelect={id => { setSelected(id); setShowInbox(false); setShowConnection(false); setDrawer(false); }} onManage={manageSession} />
       <div className="sidebar-bottom"><button className="device-row" onClick={() => { setShowConnection(true); setDrawer(false); }}><Desktop size={20} /><span><strong>{snapshot?.device.name ?? t('sidebar.connectHost')}</strong><small><i className={connected ? 'online' : ''} />{connected ? t('sidebar.connected') : state === 'connecting' ? t('sidebar.connecting') : t('sidebar.offline')}</small></span><GearSix size={17} /></button><div className="local-note"><ShieldCheck size={14} />{t('sidebar.localNote')}</div></div>
     </aside>
     <main>
-      <header className="topbar"><button ref={sidebarTrigger} className="icon-button mobile-only" aria-expanded={drawer} aria-controls="session-sidebar" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <><Status status={session.status} /><details ref={sessionActions} className="session-actions"><summary>{t('topbar.sessionActions')}</summary><div><button disabled={!connected || busy} onClick={() => { setRenameTitle(session.title); }}>{t('topbar.rename')}</button>{renameTitle !== undefined && <form onSubmit={event => { event.preventDefault(); void perform(async c => { await call(c, 'session.rename', { sessionId: session.id, title: renameTitle }); setRenameTitle(undefined); }); }}><input aria-label={t('topbar.newSessionName')} value={renameTitle} onChange={event => setRenameTitle(event.target.value)} /><button disabled={busy || !renameTitle.trim()}>{t('topbar.saveName')}</button></form>}<button disabled={!connected || busy || ['running', 'waiting_approval'].includes(session.status)} onClick={() => void perform(async c => { await call(c, 'session.archive', { sessionId: session.id, archived: !session.archived }); })}>{session.archived ? t('common.unarchive') : t('topbar.archiveSession')}</button></div></details></>}<button className="icon-button" aria-label={t('topbar.connectionSettings')} onClick={() => setShowConnection(true)}><Plug size={19} /></button></div></header>
+      <header className="topbar"><button ref={sidebarTrigger} className="icon-button mobile-only" aria-expanded={drawer} aria-controls="session-sidebar" aria-label={t('topbar.openSessionList')} onClick={() => setDrawer(true)}><List size={22} /></button><div className="breadcrumb"><Laptop size={17} /><span>{snapshot?.device.name ?? 'Turnwire Remote'}</span><CaretRight size={12} /><strong>{showConnection ? t('topbar.deviceConnection') : showInbox ? t('topbar.inbox') : session?.title ?? t('topbar.workspace')}</strong></div><div className="topbar-right">{session && !showConnection && !showInbox && <RuntimeMark id={session.runtimeId} name={runtime?.name ?? session.runtimeId} />}{session && !showConnection && !showInbox && <Status status={session.status} />}<button className="icon-button" aria-label={t('topbar.connectionSettings')} onClick={() => setShowConnection(true)}><GearSix size={19} /></button></div></header>
       {connection?.kind === 'remote' && (health?.phase === 'connected'
         // Connected is the normal state, so it costs one thin line: the host and the round trip, with the
         // full story on the pointer and a click to verify again. Everything else keeps the bar that says
@@ -444,8 +511,8 @@ export function App() {
         ? <button type="button" className="connection-ok" disabled={checking} onClick={() => void checkConnection()} title={`${t('health.details', { latency: health.latencyMs ?? 0, time: health.lastVerifiedAt ? new Date(health.lastVerifiedAt).toLocaleTimeString() : '—', route: health.route === 'direct' ? t('health.routeDirect') : 'Relay' })} · ${t('health.reconnectNow')}`}><span className="connection-dot" />{t('health.connectedTo', { host: snapshot?.device.name ?? t('health.host') })}{health.latencyMs === undefined ? '' : ` · ${health.latencyMs} ms`}{checking ? <CircleNotch className="spin" size={11} /> : null}</button>
         : <div className="connection-health" data-phase={health?.phase ?? 'connecting'} role="status"><div><strong>{health?.message ?? t('health.connecting')}</strong><small>{health?.retryInMs ? t('health.retry', { seconds: Math.ceil(health.retryInMs / 1000) }) : t('health.unconfirmed')}</small></div><button disabled={checking} onClick={() => void checkConnection()}>{checking ? t('health.connectingAction') : t('health.reconnectNow')}</button></div>)}
       {error && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label={t('error.dismiss')} onClick={clearFailure}><X size={17} /></button></div>}
-      {showConnection ? <ConnectionView initial={connection?.kind === 'remote' && clientRef.current instanceof RemoteClient ? { kind: 'remote', code: encodePairing(clientRef.current.currentPairing) } : connection} connecting={loading} connected={!!snapshot} onConnect={saveConnection} onDisconnect={disconnect} onBack={() => setShowConnection(false)} />
-        : showInbox && clientRef.current ? <Inbox client={clientRef.current} cursor={snapshot?.cursor ?? 0} connected={connected} remember={rememberDevice} onOpen={id => { setSelected(id); setShowInbox(false); }} />
+      {showConnection ? <ConnectionView initial={connection ? { kind: connection.kind, ...(connection.kind === 'local' ? { url: connection.url } : {}) } : undefined} deviceName={snapshot?.device.name} status={state} remembered={remembered} onRememberChange={changeRemember} storageError={storageError} connecting={loading} onConnect={saveConnection} onDisconnect={disconnect} onBack={() => setShowConnection(false)} />
+        : showInbox && clientRef.current ? <Inbox client={clientRef.current} cursor={snapshot?.cursor ?? 0} connected={connected} onOpen={id => { setSelected(id); setShowInbox(false); }} />
         : !session ? <div className="empty-workspace"><div className="empty-symbol"><TerminalWindow size={38} weight="light" /></div><span className="eyebrow">{t('empty.eyebrow')}</span><h1>{t('empty.title')}</h1><p>{t('empty.bodyLine1')}<br />{t('empty.bodyLine2')}</p><button className="primary" onClick={() => setCreate(true)} disabled={!snapshot}><Plus size={17} />{t('common.newSession')}</button></div>
         : <>
           <section className="conversation" aria-label={t('conversation.aria')} ref={scroller} tabIndex={0}
@@ -468,7 +535,7 @@ export function App() {
             onKeyDown={event => {
               if (event.target !== event.currentTarget || !['ArrowUp', 'PageUp', 'Home'].includes(event.key)) return;
               if (!event.repeat) gestureUsed.current = false; reachEarlier(event.currentTarget, true);
-            }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1><p>{runtime?.name ?? session.runtimeId}{session.runtimeId === 'demo' && t('conversation.demoNote')}</p></div>
+            }}><div className="conversation-inner"><div className="session-heading"><span><FolderSimple size={16} />{shortPath(session.cwd)}</span><h1>{session.title}</h1></div>
             <div className="history-status" role="status">{historyError ? t('conversation.historyFailed') : loading && messages.length > 0 ? t('conversation.loadingEarlier') : null}</div>
             {loading && !messages.length && <div className="loading"><CircleNotch className="spin" size={18} />{t('conversation.loading')}</div>}
             {!loading && !historyError && !messages.length && <div className="conversation-empty"><ChatCircle size={26} weight="light" /><p>{t('conversation.readyLine1')}<br />{t('conversation.readyLine2')}</p></div>}
@@ -476,29 +543,32 @@ export function App() {
                 Keep every received answer visible; only explicit tool details are collapsible. */}
             {rows.map(row => <ConversationRow key={`${session.id}:${row.key}`} row={row} running={turnRunning} agents={scopedAgents} client={clientRef.current} sessionId={session.id} connected={connected} pendingQuestions={pendingQuestions} disabled={busy || !connected} onAnswer={answerQuestion} />)}
             <div ref={bottom} /></div></section>
-          <footer className="composer-area"><div className="composer-width"><div className="composer-attachments">{session.archived && <div className="resume-row"><span>{t('session.archivedRow')}</span><button disabled={!connected || busy} onClick={() => void perform(async c => { await call(c, 'session.archive', { sessionId: session.id, archived: false }); })}>{t('common.unarchive')}</button></div>}
+          <footer className="composer-area"><div className="composer-width"><div className="composer-attachments">{session.archived && <div className="resume-row" role="status"><span>{t('session.archivedRow')}</span></div>}
             {approvals.map(approval => <section key={approval.id} className="approval-panel" aria-label={t('approval.panelAria')}><div className="approval-title"><ShieldCheck size={20} /><strong>{t('approval.needed')}</strong><span>{session.autoApprove ? t('approval.autoOn') : t('approval.once')}</span></div><code>{approval.tool}</code><p>{approval.reason}</p><div className="approval-actions"><button disabled={busy || !connected} onClick={() => void perform(async c => { await call(c, 'approval.decide', { approvalId: approval.id, decision: 'rejected' }); })}><X size={16} />{t('common.reject')}</button><button className="primary" disabled={busy || !connected} onClick={() => void perform(async c => { await call(c, 'approval.decide', { approvalId: approval.id, decision: 'approved' }); })}><Check size={16} />{t('common.approveOnce')}</button></div></section>)}
             {!session.archived && (session.status === 'interrupted' || session.status === 'error') && <div className="resume-row"><span>{t('session.resumeHint')}</span><button disabled={busy || !connected} onClick={() => void perform(async c => { await call(c, 'session.resume', { sessionId: session.id }); })}>{t('session.resume')}<ArrowRight size={15} /></button></div>}
             
           <AgentStrip key={session.id} agents={session.archived ? [] : turnAgents} client={clientRef.current} sessionId={session.id} connected={connected} />
-          {pending.length > 0 && <div className="queued-strip" role="status" aria-label={t('queue.aria')}>{pending.map(item => <div className={`queued-item${editingQueued === item.id ? ' editing' : ''}`} key={item.id}>{editingQueued === item.id ? <textarea className="queued-edit" rows={4} aria-label={t('queue.editLabel')} value={queuedDraft} autoFocus disabled={busy} onChange={event => setQueuedDraft(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing || busy) return; if (event.key === 'Escape') { event.preventDefault(); setEditingQueued(undefined); } }} /> : <span className="queued-text" title={item.text}>{item.text}</span>}<MessageImages client={clientRef.current} sessionId={session.id} images={item.images} /><span className="queued-buttons">{editingQueued === item.id ? <><button type="button" disabled={busy} onClick={() => setEditingQueued(undefined)}>{t('queue.cancelEdit')}</button><button type="button" disabled={!connected || busy || !queuedDraft.trim()} onClick={() => void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() })}>{t('queue.save')}</button></> : <><button type="button" disabled={!connected || busy || editingQueued !== undefined} onClick={() => { setEditingQueued(item.id); setQueuedDraft(item.text); }}>{t('queue.edit')}</button><button type="button" disabled={!connected || busy || editingQueued !== undefined} onClick={() => void changeQueued(item.id, { kind: 'remove' })}>{t('queue.remove')}</button><button type="button" disabled={!connected || busy || editingQueued !== undefined} onClick={() => void changeQueued(item.id, { kind: 'steer' })}>{t('queue.steer')}</button></>}</span></div>)}</div>}
+          {pending.length > 0 && <div className="queued-strip" role="status" aria-label={t('queue.aria')}>{pending.map(item => <div className={`queued-item${editingQueued === item.id ? ' editing' : ''}`} key={item.id} data-queue-target={item.target}><small title={t('queue.steerHint')}>{t(item.target === 'next-step' ? 'queue.nextStep' : 'queue.nextTurn')}</small>{editingQueued === item.id ? <textarea className="queued-edit" rows={4} aria-label={t('queue.editLabel')} value={queuedDraft} autoFocus disabled={busy} onChange={event => setQueuedDraft(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing || busy) return; if (event.key === 'Escape') { event.preventDefault(); setEditingQueued(undefined); } }} /> : <span className="queued-text" title={item.text}>{item.text}</span>}<MessageImages client={clientRef.current} sessionId={session.id} images={item.images} /><span className="queued-buttons">{editingQueued === item.id ? <><button type="button" disabled={busy} onClick={() => setEditingQueued(undefined)}>{t('queue.cancelEdit')}</button><button type="button" disabled={!connected || busy || !queuedDraft.trim()} onClick={() => void changeQueued(item.id, { kind: 'edit', text: queuedDraft.trim() })}>{t('queue.save')}</button></> : <><button type="button" disabled={!connected || busy || editingQueued !== undefined} onClick={() => { setEditingQueued(item.id); setQueuedDraft(item.text); }}>{t('queue.edit')}</button><button type="button" disabled={!connected || busy || editingQueued !== undefined} onClick={() => void changeQueued(item.id, { kind: 'remove' })}>{t('queue.remove')}</button><button type="button" title={t('queue.steerHint')} disabled={!connected || busy || editingQueued !== undefined || !turnRunning || item.target === 'next-step'} onClick={() => void changeQueued(item.id, { kind: 'steer' })}>{t('queue.steer')}</button></>}</span></div>)}</div>}
           </div><form className="composer" onSubmit={event => { event.preventDefault(); if (!prompt.trim() && !imageDraft.images.length) return; submit(prompt, false); }}>
-              <ImagePicker draft={imageDraft} supported={runtime?.capabilities.imageInput === true} disabled={busy || !connected || session.archived || ['interrupted', 'error'].includes(session.status)} />
+              <ImagePicker controls={<><span className="approval-mode"><button type="button" role="switch" aria-checked={session.autoApprove === true} aria-label={t('session.autoApprove')} data-auto-approve={session.autoApprove ? 'on' : 'off'} disabled={!connected || busy || session.archived} onClick={() => setDelegated(session.id, !session.autoApprove)} title={`${t(session.autoApprove ? 'session.autoApproveOn' : 'session.autoApprove')} — ${t('session.autoApproveHint')}`}><AutoApprovalMark key={session.id} enabled={session.autoApprove === true} /></button></span></>} draft={imageDraft} supported={runtime?.capabilities.imageInput === true} disabled={busy || !connected || session.archived || ['interrupted', 'error'].includes(session.status)} />
               <textarea onPaste={event => imageDraft.onPaste(event, runtime?.capabilities.imageInput === true)} aria-label={t('composer.messageAria')} placeholder={t('composer.placeholder')} value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} disabled={busy || !connected || session.archived || ['interrupted', 'error'].includes(session.status)} onKeyDown={event => { if (event.key !== 'Enter') return; if (event.altKey) { event.preventDefault(); submit(prompt, true); } else if (event.metaKey || event.ctrlKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-              <div className="composer-bottom"><span className="composer-path" title={session.cwd}><FolderSimple size={14} /><span dir="rtl"><bdi dir="ltr">{session.cwd}</bdi></span></span><div><span className="approval-mode"><button type="button" role="switch" aria-checked={session.autoApprove === true} aria-label={t('session.autoApprove')} data-auto-approve={session.autoApprove ? 'on' : 'off'} disabled={!connected || busy || session.archived} onClick={() => setDelegated(session.id, !session.autoApprove)} title={`${t(session.autoApprove ? 'session.autoApproveOn' : 'session.autoApprove')} — ${t('session.autoApproveHint')}`}><ShieldCheck size={15} aria-hidden="true" /><span>{t(session.autoApprove ? 'session.autoApproveShortOn' : 'session.autoApproveShort')}</span></button></span>{modelSupport && <span className="model-switch" ref={modelSwitch}><button type="button" className="model-chip" aria-label={t('composer.chooseModel')} aria-expanded={showModel} aria-haspopup="dialog" disabled={!connected || session.archived} onClick={() => { if (!showModel) void refreshCatalog(); setShowModel(value => !value); }}>{modelPending ? t('model.switching') : modelChipLabel(session, catalog)}</button>{showModel && <ModelPicker anchor={modelSwitch} catalog={catalog?.runtimeId === runtime?.id ? catalog?.value : undefined} current={session.model} disabled={!connected || busy || session.archived === true} pending={modelPending} error={modelError} catalogLoading={catalogStatus?.runtimeId === runtime?.id && catalogStatus.loading} catalogError={catalogStatus?.runtimeId === runtime?.id ? catalogStatus.error : ''} retryCatalog={() => void refreshCatalog()} choose={chooseModel}>{catalog?.runtimeId === runtime?.id && <>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || modelPending || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</ModelPicker>}</span>}{['running', 'waiting_approval'].includes(session.status) && <button className="stop-button" title={t('composer.stop')} type="button" aria-label={t('composer.stopTask')} disabled={!connected} onClick={() => void perform(async c => { await call(c, 'session.cancel', { sessionId: session.id }); })}><Stop size={13} weight="fill" />{t('composer.stop')}</button>}<button className="send-button" type="submit" aria-label={t('composer.send')} disabled={busy || !connected || session.archived || imageDraft.processing || (!prompt.trim() && !imageDraft.images.length) || ['interrupted', 'error'].includes(session.status)}>{busy ? <CircleNotch className="spin" size={18} /> : <ArrowUp size={20} />}</button></div></div>
-            </form><div className="composer-caption"><LocaleSwitch /><span><ShieldCheck size={12} />{connection?.kind === 'remote' ? t('composer.encrypted') : t('composer.local')}</span><span>{connected ? t('composer.shared') : t('composer.disconnected')}</span></div>
+              <div className="composer-bottom"><span className="composer-path" title={session.cwd}><FolderSimple size={14} /><span dir="rtl"><bdi dir="ltr">{session.cwd}</bdi></span></span><div><ContextUsage key={session.id} context={session.context} />{modelSupport && <span className="model-switch" ref={modelSwitch}><button type="button" className="model-chip" aria-label={t('composer.chooseModel')} aria-expanded={showModel} aria-haspopup="dialog" disabled={!connected || session.archived} onClick={() => { if (!showModel) void refreshCatalog(); setShowModel(value => !value); }}>{modelPending ? t('model.switching') : modelChipLabel(session, catalog)}</button>{showModel && <ModelPicker anchor={modelSwitch} catalog={catalog?.runtimeId === runtime?.id ? catalog?.value : undefined} current={session.model} disabled={!connected || busy || session.archived === true} pending={modelPending} error={modelError} catalogLoading={catalogStatus?.runtimeId === runtime?.id && catalogStatus.loading} catalogError={catalogStatus?.runtimeId === runtime?.id ? catalogStatus.error : ''} retryCatalog={() => void refreshCatalog()} choose={chooseModel}>{catalog?.runtimeId === runtime?.id && <>{session.model && effortOptions.length > 0 && <label>{t('model.reasoningEffort')}<select aria-label={t('model.reasoningEffort')} value={session.model.reasoningEffort ?? ''} disabled={!connected || busy || modelPending || session.archived} onChange={event => chooseModel(session.model!.provider, session.model!.model, event.target.value || undefined)}>{!session.model.reasoningEffort && <option value="">{t('model.runtimeDefault')}</option>}{effortOptions.map(effort => <option key={effort.id} value={effort.id}>{effort.name}{effort.id === catalog.value.groups.find(group => group.id === session.model?.provider)?.models.find(model => model.id === session.model?.model)?.reasoning?.defaultEffort ? t('model.defaultSuffix') : ''}</option>)}</select></label>}</>}{catalog?.runtimeId === runtime?.id && catalog.value.failures.length > 0 && <span className="model-loading">{catalog.value.failures.map(failure => t('model.unavailable', { name: failure.name })).join(t('common.listSeparator'))}</span>}</ModelPicker>}</span>}{['running', 'waiting_approval'].includes(session.status) && <button className="stop-button" title={t('composer.stop')} type="button" aria-label={t('composer.stopTask')} disabled={!connected} onClick={() => void perform(async c => { await call(c, 'session.cancel', { sessionId: session.id }); })}><Stop size={13} weight="fill" />{t('composer.stop')}</button>}<button className="send-button" type="submit" aria-label={t('composer.send')} disabled={busy || !connected || session.archived || imageDraft.processing || (!prompt.trim() && !imageDraft.images.length) || ['interrupted', 'error'].includes(session.status)}>{busy ? <CircleNotch className="spin" size={18} /> : <ArrowUp size={20} />}</button></div></div>
+            </form>
           </div></footer>
         </>}
     </main>
-    {create && snapshot && <CreateSession snapshot={snapshot} busy={busy} close={() => setCreate(false)} onBrowse={async path => { const c = clientRef.current; if (!c) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return call(c, 'workspace.list', path ? { path } : {}); }} onCreateDirectory={async (parent, name) => { const c = clientRef.current; if (!c) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return call(c, 'workspace.mkdir', { parent, name }); }} onCreate={(cwd, title, runtimeId) => void perform(async c => { const s = await call(c, 'session.create', { cwd, title, runtimeId }); setSnapshot(previous => previous ? { ...previous, sessions: [s, ...previous.sessions.filter(p => p.id !== s.id)] } : previous); setSelected(s.id); setShowConnection(false); setCreate(false); })} />}
+    {create && snapshot && <CreateSession key={managementContext.current.key} snapshot={snapshot} busy={busy} close={() => setCreate(false)} onBrowse={async path => { const c = dialogClient; if (!c || c !== clientRef.current) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return call(c, 'workspace.list', path ? { path } : {}); }} onCreateDirectory={async (parent, name) => { const c = dialogClient; if (!c || c !== clientRef.current) throw new TurnwireError('DISCONNECTED', 'The host connection is not available'); return call(c, 'workspace.mkdir', { parent, name }); }} onCreate={(cwd, title, runtimeId) => void perform(async (c, current) => { const s = await call(c, 'session.create', { cwd, title, runtimeId }); if (!current()) return; setSnapshot(previous => current() ? mergeCreateReply(previous, s) : previous); setSelected(s.id); setShowConnection(false); setCreate(false); })} />}
   </div>;
 }
 
-function ConnectionView({ initial, connecting, connected, onConnect, onDisconnect, onBack }: { initial?: Connection; connecting: boolean; connected: boolean; onConnect: (c: Connection, remember: boolean) => void; onDisconnect: () => void; onBack: () => void }) {
+function ConnectionView({ initial, deviceName, status, remembered, onRememberChange, storageError, connecting, onConnect, onDisconnect, onBack }: { initial?: { kind: 'local' | 'remote'; url?: string }; deviceName?: string; status: ConnectionState; remembered: boolean; onRememberChange: (value: boolean) => void; storageError: string; connecting: boolean; onConnect: (c: Connection, remember: boolean) => boolean; onDisconnect: () => void; onBack: () => void }) {
+  const [replacing, setReplacing] = useState(false);
+  const connected = !!initial;
   const t = useLocale();
-  const [kind, setKind] = useState<'local' | 'remote'>(initial?.kind ?? 'remote'); const [url, setUrl] = useState(initial?.kind === 'local' ? initial.url : 'http://127.0.0.1:9898');
-  const [token, setToken] = useState(initial?.kind === 'local' ? initial.token : ''); const [code, setCode] = useState(initial?.kind === 'remote' ? initial.code : ''); const [remember, setRemember] = useState(false);
-  return <section className="connection-view"><div className="connection-intro"><div className="connection-symbol"><Laptop size={38} weight="light" /><span /><ChatCircle size={28} weight="light" /></div><span className="eyebrow">{t('connection.eyebrow')}</span><h1>{t('connection.title')}</h1><p>{t('connection.bodyLine1')}<br />{t('connection.bodyLine2')}</p><div className="connection-facts"><div><ShieldCheck size={18} /><span>{t('connection.factPermissions')}</span></div><div><TerminalWindow size={18} /><span>{t('connection.factLocal')}</span></div></div></div><form className="connection-form" onSubmit={(event: FormEvent) => { event.preventDefault(); onConnect(kind === 'local' ? { kind, url, token } : { kind, code }, remember); }}><h2>{t('connection.connectDevice')}</h2><div className="segmented"><button type="button" className={kind === 'remote' ? 'active' : ''} onClick={() => setKind('remote')}>{t('connection.remotePairing')}</button><button type="button" className={kind === 'local' ? 'active' : ''} onClick={() => setKind('local')}>{t('connection.localPairing')}</button></div>{kind === 'remote' ? <><label>{t('connection.pairingCode')}<textarea required value={code} onChange={e => setCode(e.target.value)} placeholder={t('connection.pairingPlaceholder')} rows={4} /></label><p className="field-help">{t('connection.pairingHelpBefore')}<code>turnwire devices pair</code>{t('connection.pairingHelpAfter')}</p></> : <><label>{t('connection.hostUrl')}<input type="url" required value={url} onChange={e => setUrl(e.target.value)} /></label><label>{t('connection.token')}<input type="password" required value={token} onChange={e => setToken(e.target.value)} autoComplete="off" placeholder={t('connection.tokenPlaceholder')} /></label><p className="field-help">{t('connection.connectHelpBefore')}<code>turnwire connect</code>{t('connection.connectHelpAfter')}</p></>}<label className="remember"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />{t('connection.remember')}</label><button className="primary wide" disabled={connecting}>{connecting ? <CircleNotch size={18} className="spin" /> : <Plug size={18} />}{connecting ? t('connection.connecting') : t('connection.connect')}<ArrowRight size={17} /></button>{connected && <div className="connection-actions"><button type="button" onClick={onBack}>{t('connection.back')}</button><button type="button" onClick={onDisconnect}>{t('connection.disconnect')}</button></div>}</form></section>;
+  const [kind, setKind] = useState<'local' | 'remote'>(initial?.kind ?? 'remote'); const [url, setUrl] = useState(initial?.url ?? 'http://127.0.0.1:9898');
+  const [token, setToken] = useState(''); const [code, setCode] = useState(''); const [remember, setRemember] = useState(remembered);
+  if (initial && !replacing) return <section className="connection-view"><div className="settings-language"><span>{t('locale.label')}</span><LocaleSwitch /></div><div className="connection-current connection-form"><h1>{t('topbar.connectionSettings')}</h1><h2>{t('settings.currentConnection')}</h2><strong>{deviceName ?? t('settings.savedHost')}</strong><p role="status">{t(status === 'connected' ? 'sidebar.connected' : status === 'connecting' ? 'sidebar.connecting' : 'sidebar.offline')}</p><p>{t(initial.kind === 'remote' ? 'connection.remotePairing' : 'connection.localPairing')}</p><label className="remember"><input type="checkbox" checked={remembered} onChange={e => onRememberChange(e.target.checked)} />{t('connection.remember')}</label><p className="field-help">{t('settings.rememberHint')}</p>{storageError && <p role="alert">{storageError}</p>}<button type="button" onClick={() => { setToken(''); setCode(''); setRemember(remembered); setReplacing(true); }}>{t('settings.replaceConnection')}</button><button type="button" onClick={onDisconnect}>{t('settings.disconnect')}</button><button type="button" onClick={onBack}>{t('settings.back')}</button></div></section>;
+  return <section className="connection-view"><div className="settings-language"><span>{t('locale.label')}</span><LocaleSwitch /></div><div className="connection-intro"><div className="connection-symbol"><Laptop size={38} weight="light" /><span /><ChatCircle size={28} weight="light" /></div><span className="eyebrow">{t('connection.eyebrow')}</span><h1>{t('connection.title')}</h1><p>{t('connection.bodyLine1')}<br />{t('connection.bodyLine2')}</p><div className="connection-facts"><div><ShieldCheck size={18} /><span>{t('connection.factPermissions')}</span></div><div><TerminalWindow size={18} /><span>{t('connection.factLocal')}</span></div></div></div><form className="connection-form" onSubmit={(event: FormEvent) => { event.preventDefault(); if (onConnect(kind === 'local' ? { kind, url, token } : { kind, code }, remember)) { setToken(''); setCode(''); setReplacing(false); } }}><h2>{t('connection.connectDevice')}</h2>{storageError && <p role="alert">{storageError}</p>}{initial && <button type="button" onClick={() => { setToken(''); setCode(''); setReplacing(false); }}>{t('settings.cancel')}</button>}<div className="segmented"><button type="button" className={kind === 'remote' ? 'active' : ''} onClick={() => setKind('remote')}>{t('connection.remotePairing')}</button><button type="button" className={kind === 'local' ? 'active' : ''} onClick={() => setKind('local')}>{t('connection.localPairing')}</button></div>{kind === 'remote' ? <><label>{t('connection.pairingCode')}<textarea required value={code} onChange={e => setCode(e.target.value)} placeholder={t('connection.pairingPlaceholder')} rows={4} /></label><p className="field-help">{t('connection.pairingHelpBefore')}<code>turnwire devices pair</code>{t('connection.pairingHelpAfter')}</p></> : <><label>{t('connection.hostUrl')}<input type="url" required value={url} onChange={e => setUrl(e.target.value)} /></label><label>{t('connection.token')}<input type="password" required value={token} onChange={e => setToken(e.target.value)} autoComplete="off" placeholder={t('connection.tokenPlaceholder')} /></label><p className="field-help">{t('connection.connectHelpBefore')}<code>turnwire connect</code>{t('connection.connectHelpAfter')}</p></>}<label className="remember"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />{t('connection.remember')}</label><button className="primary wide" disabled={connecting}>{connecting ? <CircleNotch size={18} className="spin" /> : <Plug size={18} />}{connecting ? t('connection.connecting') : t('connection.connect')}<ArrowRight size={17} /></button>{connected && <div className="connection-actions"><button type="button" onClick={onBack}>{t('connection.back')}</button><button type="button" onClick={onDisconnect}>{t('connection.disconnect')}</button></div>}</form></section>;
 }
 
 /** One row of the conversation: a message, or a run of tool calls. */

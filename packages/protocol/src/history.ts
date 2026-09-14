@@ -46,7 +46,8 @@ export function eventSessionId(data: EventData): string | undefined {
   if ('question' in data) return data.question.sessionId;
   return undefined;
 }
-export function historyOrder(a: TurnwireEvent, b: TurnwireEvent): number { return (a.originSeq ?? a.seq) - (b.originSeq ?? b.seq) || a.seq - b.seq; }
+/** Display order is independent of the stable originSeq used to page/export records. */
+export function historyOrder(a: TurnwireEvent, b: TurnwireEvent): number { return (a.displaySeq ?? a.originSeq ?? a.seq) - (b.displaySeq ?? b.originSeq ?? b.seq) || a.seq - b.seq; }
 /** Reduce one entity; keep the tool input alongside its result. Replayed frames are idempotent. */
 export function reduceHistory(existing: TurnwireEvent[], event: TurnwireEvent): TurnwireEvent[] {
   if (existing.some(e => e.seq >= event.seq)) return existing;
@@ -58,11 +59,14 @@ export function reduceHistory(existing: TurnwireEvent[], event: TurnwireEvent): 
     // the entity it describes — including the fields it does not mention — and a removal drops it.
     if (d.type === 'message.updated') {
       if (previous === undefined || previous.type !== 'message.user') return existing;
-      return [{ ...event, originSeq, time: first?.time ?? event.time, data: { ...previous, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) } }];
+      // Only the queued -> running transition moves the row; edits/steer and repeated false do not.
+      const displaySeq = previous.queued === true && d.queued === false ? event.seq : first?.displaySeq;
+      return [{ ...event, originSeq, ...(displaySeq === undefined ? {} : { displaySeq }), time: first?.time ?? event.time, data: { ...previous, ...(d.text === undefined ? {} : { text: d.text }), ...(d.queued === undefined ? {} : { queued: d.queued }), ...(d.steer === undefined ? {} : { steer: d.steer }) } }];
     }
     if (d.type === 'message.removed') return [];
     const text = d.type === 'message.delta' ? (previous && 'text' in previous ? previous.text : '') + d.text : d.text;
-    return [{ ...(d.type === 'message.delta' && first?.truncation ? { truncation: first.truncation } : {}), ...event, originSeq, time: first?.time ?? event.time, data: { ...d, text } }];
+    const displaySeq = event.displaySeq ?? first?.displaySeq;
+    return [{ ...(d.type === 'message.delta' && first?.truncation ? { truncation: first.truncation } : {}), ...event, originSeq, ...(displaySeq === undefined ? {} : { displaySeq }), time: first?.time ?? event.time, data: { ...d, text } }];
   }
   const value = { ...event, originSeq };
   if (d.type === 'tool.finished' || d.type === 'approval.resolved' || d.type === 'question.resolved') return [...existing.filter(e => e.data.type === 'tool.started' || e.data.type === 'approval.requested' || e.data.type === 'question.requested'), value];

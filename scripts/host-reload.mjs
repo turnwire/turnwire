@@ -6,6 +6,8 @@ import { existsSync, lstatSync, readFileSync, readdirSync, mkdirSync, writeFileS
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { requireBuiltIdentity, requireContract, requireSameBuild } from '../packages/protocol/src/release-identity.mjs';
+import { requiredContract } from './build-identity.mjs';
 
 const ignored = /(^|\/)(node_modules|dist|build|coverage|docs?|tests?|__tests__|\.git|\.turnwire)(\/|$)|\.(test|spec)\.|\.(md|mdx|rst|txt)$|(^|\/)(\.env[^/]*|dsh\.env\.json)$|\.(pem|key|p12|pfx)$|(^|\/)[^/]*(secret|credential)[^/]*\.(json|ya?ml)$/i;
 export function component(path, executable = false) {
@@ -41,10 +43,10 @@ function localUrl(url) {
 }
 // Match SDK client discovery without importing unbuilt TypeScript or exposing its token.
 export function healthUrl(env = process.env) {
+  if (env.TURNWIRE_HOME !== undefined) throw Error('TURNWIRE_HOME has been removed; use TURNWIRE_STATE_HOME and TURNWIRE_CONFIG_HOME.');
   if (env.TURNWIRE_RELOAD_HEALTH_URL) return localUrl(env.TURNWIRE_RELOAD_HEALTH_URL).href;
   const home = env.HOME || homedir();
-  const legacy = env.TURNWIRE_HOME || (existsSync(join(home, '.turnwire')) ? join(home, '.turnwire') : undefined);
-  const config = env.TURNWIRE_CONFIG_HOME || legacy || join(env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : join(home, '.config'), 'turnwire');
+  const config = env.TURNWIRE_CONFIG_HOME || join(env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : join(home, '.config'), 'turnwire');
   const client = join(config, 'client.json');
   if (existsSync(client)) {
     const value = JSON.parse(readFileSync(client, 'utf8'));
@@ -59,6 +61,8 @@ export async function health(url, fetcher = fetch) {
   const response = await fetcher(parsed, { signal: AbortSignal.timeout(5000), redirect: 'error' });
   const value = await response.json();
   if (!response.ok || value?.status !== 'ok' || value?.protocol !== 1) throw new Error('health unknown or not ready; blocked');
+  requireBuiltIdentity(value.identity);
+  return value;
 }
 function atomicJson(path, value) {
   const tmp = `${path}.${randomUUID()}.tmp`; writeFileSync(tmp, JSON.stringify(value) + '\n', { mode: 0o600 }); renameSync(tmp, path);
@@ -74,20 +78,28 @@ function assetFiles(root, dir = root) {
 function publish(stage, dist) {
   const files = assetFiles(stage); if (!files.includes('index.html')) throw new Error('build has no index.html');
   mkdirSync(dist, { recursive: true });
-  for (const file of files.filter(f => f !== 'index.html')) {
+  for (const file of files.filter(f => !['index.html', 'turnwire-build.json'].includes(f))) {
     const target = join(dist, file);
     if (existsSync(target) && !readFileSync(target).equals(readFileSync(join(stage, file)))) throw new Error(`non-content-addressed asset collision: ${file}; manual publication required`);
   }
-  for (const file of files.filter(f => f !== 'index.html')) {
+  for (const file of files.filter(f => !['index.html', 'turnwire-build.json'].includes(f))) {
     const target = join(dist, file); mkdirSync(dirname(target), { recursive: true });
     if (!existsSync(target)) { const tmp = `${target}.${randomUUID()}.tmp`; copyFileSync(join(stage, file), tmp); renameSync(tmp, target); }
   }
-  const index = join(dist, 'index.html'), old = existsSync(index) ? readFileSync(index) : null;
-  const tmp = `${index}.${randomUUID()}.tmp`; copyFileSync(join(stage, 'index.html'), tmp); renameSync(tmp, index);
-  return () => { if (old === null) rmSync(index, { force: true }); else { writeFileSync(tmp, old); renameSync(tmp, index); } };
+  const previous = ['turnwire-build.json', 'index.html'].map(file => ({ file, old: existsSync(join(dist, file)) ? readFileSync(join(dist, file)) : null }));
+  const restore = () => { for (const { file, old } of previous) { const target = join(dist, file); if (old === null) rmSync(target, { force: true }); else { const tmp = `${target}.${randomUUID()}.tmp`; writeFileSync(tmp, old); renameSync(tmp, target); } } };
+  try { for (const { file } of previous) { const target = join(dist, file), tmp = `${target}.${randomUUID()}.tmp`; copyFileSync(join(stage, file), tmp); renameSync(tmp, target); } }
+  catch (error) { restore(); throw error; }
+  return restore;
 }
-export async function reload(root, { frontend = false, checkHealth = () => health(healthUrl()), build = stage => execFileSync('npm', ['run', 'build', '-w', '@turnwire/remote-web', '--', '--outDir', stage], { cwd: root, stdio: 'inherit' }), log = console.log } = {}) {
-  const state = join(root, '.turnwire'); mkdirSync(state, { recursive: true });
+export function reloadState(root, env = process.env) {
+  if (env.TURNWIRE_HOME !== undefined) throw Error('TURNWIRE_HOME has been removed; use TURNWIRE_STATE_HOME and TURNWIRE_CONFIG_HOME.');
+  const home = env.HOME || homedir();
+  const state = env.TURNWIRE_STATE_HOME || join(env.XDG_STATE_HOME && isAbsolute(env.XDG_STATE_HOME) ? env.XDG_STATE_HOME : join(home, '.local/state'), 'turnwire');
+  return join(state, 'reload', createHash('sha256').update(resolve(root)).digest('hex'));
+}
+export async function reload(root, { stateDir = reloadState(root), frontend = false, checkHealth = () => health(healthUrl()), build = stage => execFileSync('npm', ['run', 'build', '-w', '@turnwire/remote-web', '--', '--outDir', stage], { cwd: root, stdio: 'inherit' }), log = console.log } = {}) {
+  const state = stateDir; mkdirSync(state, { recursive: true, mode: 0o700 });
   const observedPath = join(state, 'reload.observed.json'), stamp = join(state, 'reload.frontend.json');
   const current = fingerprints(root);
   const previous = existsSync(observedPath) ? JSON.parse(readFileSync(observedPath, 'utf8')) : null;
@@ -100,15 +112,18 @@ export async function reload(root, { frontend = false, checkHealth = () => healt
   if (deployed?.frontend === current.frontend && !frontend) { log('no frontend content change; nothing to deploy'); return; }
   // Shared packages/lockfiles require manual maintenance; never silently mix new SDK and old daemon.
   if (deployed && deployed.backend !== current.backend && !frontend) throw new Error('backend/shared content changed; manual frontend maintenance required');
-  await checkHealth();
+  const contract = requiredContract(root);
+  const live = requireContract((await checkHealth())?.identity, contract);
   const stage = join(state, `frontend-stage-${randomUUID()}`);
   let rollback;
   try {
-    build(stage);
+    await build(stage);
     if (JSON.stringify(fingerprints(root)) !== JSON.stringify(current)) throw new Error('source changed during build; retry later');
-    await checkHealth();
+    const manifest = JSON.parse(readFileSync(join(stage, 'turnwire-build.json'), 'utf8'));
+    requireContract(live, manifest.requiredContract);
+    requireSameBuild((await checkHealth())?.identity, live);
     rollback = publish(stage, join(root, 'apps/remote-web/dist'));
-    await checkHealth();
+    requireSameBuild((await checkHealth())?.identity, live);
     atomicJson(stamp, { ...current, verifiedAt: new Date().toISOString() });
     rollback = undefined;
     log('frontend assets published; no backend or DSH process was restarted');

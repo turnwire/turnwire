@@ -1,10 +1,13 @@
 // Explicit developer-only daemon deployment. Never changes or stops DSH.
-import { build } from 'esbuild';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, renameSync, mkdirSync, rmSync, lstatSync, existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, rmSync, lstatSync, existsSync, symlinkSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
-import { fingerprints, health } from './host-reload.mjs';
+import { fingerprints, health, reloadState } from './host-reload.mjs';
+import { buildDaemonArtifact } from './build-identity.mjs';
+import { requireBuiltIdentity, requireSameBuild, requireContract } from '../packages/protocol/src/release-identity.mjs';
 
 const delay = ms => new Promise(done => setTimeout(done, ms));
 function local(value) {
@@ -19,10 +22,10 @@ function privateJson(path) {
 }
 export function deploymentControl(env = process.env) {
   const home = env.HOME || homedir();
-  const legacy = env.TURNWIRE_HOME || (existsSync(join(home, '.turnwire')) ? join(home, '.turnwire') : undefined);
+  if (env.TURNWIRE_HOME !== undefined) throw Error('TURNWIRE_HOME has been removed; use TURNWIRE_STATE_HOME and TURNWIRE_CONFIG_HOME.');
   const xdg = (name, fallback) => env[name] && isAbsolute(env[name]) ? env[name] : join(home, fallback);
-  const state = legacy || join(xdg('XDG_STATE_HOME', '.local/state'), 'turnwire');
-  const config = env.TURNWIRE_CONFIG_HOME || legacy || join(xdg('XDG_CONFIG_HOME', '.config'), 'turnwire');
+  const state = env.TURNWIRE_STATE_HOME || join(xdg('XDG_STATE_HOME', '.local/state'), 'turnwire');
+  const config = env.TURNWIRE_CONFIG_HOME || join(xdg('XDG_CONFIG_HOME', '.config'), 'turnwire');
   const recordPath = join(state, 'run/host-readiness.json');
   const client = () => { const value = privateJson(join(config, 'client.json')); local(value.url); if (typeof value.token !== 'string' || !value.token) throw Error('missing local daemon credential'); return value; };
   const request = async (body) => {
@@ -39,21 +42,46 @@ export function deploymentControl(env = process.env) {
     },
     request,
     signal(record) { process.kill(record.supervisorPid, 'SIGUSR2'); },
-    async health() { await health(new URL('/health', client().url)); },
+    async health() { return health(new URL('/health', client().url)); },
   };
 }
 export async function stageDaemon(root, stage) {
   // Bundle workspace code into ONE replacement artifact; leave installed external dependencies alone.
-  const workspace = ['protocol', 'runtime', 'core', 'runtime-dsh', 'sdk', 'wire'];
-  await build({ absWorkingDir: root, entryPoints: ['apps/daemon/src/main.ts'], outfile: join(stage, 'main.js'), bundle: true, packages: 'external', alias: Object.fromEntries(workspace.map(name => [`@turnwire/${name}`, join(root, `packages/${name}/src/index.ts`)])), platform: 'node', format: 'esm', target: 'node22', sourcemap: false });
+  const { identity, code } = await buildDaemonArtifact(root);
+  mkdirSync(stage, { recursive: true });
+  writeFileSync(join(stage, 'main.js'), code);
+  writeFileSync(join(stage, 'turnwire-build.json'), JSON.stringify(identity) + '\n');
+  return identity;
+}
+export async function preflightDaemon(root, stage, env = process.env) {
+  // Staging lives in private host state, not below the workspace's node_modules.
+  // Match installed dependency resolution without rebuilding or copying dependencies.
+  const modules = join(stage, 'node_modules');
+  if (!existsSync(modules)) symlinkSync(join(root, 'node_modules'), modules, 'dir');
+  try {
+    const { stdout } = await promisify(execFile)(process.execPath, [join(stage, 'main.js'), '--build-identity'], { cwd: root, env, timeout: 30_000, maxBuffer: 64 * 1024 });
+    const identity = requireBuiltIdentity(JSON.parse(stdout));
+    requireSameBuild(identity, JSON.parse(readFileSync(join(stage, 'turnwire-build.json'), 'utf8')));
+    await promisify(execFile)(process.execPath, [join(stage, 'main.js'), '--check-storage'], { cwd: root, env, timeout: 30_000, maxBuffer: 64 * 1024 });
+    return identity;
+  } catch {
+    // Never propagate child output: startup/import errors can contain host data.
+    throw Error('staged daemon storage preflight failed; no installation or signal was performed');
+  }
+}
+function verifyServedFrontend(root, identity) {
+  const dist = join(root, 'apps/remote-web/dist');
+  if (!existsSync(join(dist, 'index.html'))) return; // API-only host: no frontend is served.
+  if (!existsSync(join(dist, 'turnwire-build.json'))) throw Error('served frontend has no required contract; use an offline full release');
+  requireContract(identity, JSON.parse(readFileSync(join(dist, 'turnwire-build.json'), 'utf8')).requiredContract);
 }
 function atomic(path, bytes) {
   const tmp = `${path}.${randomUUID()}.tmp`;
   try { writeFileSync(tmp, bytes, { mode: 0o600, flag: 'wx' }); renameSync(tmp, path); } finally { rmSync(tmp, { force: true }); }
 }
-export async function deployDaemon(root, { control = deploymentControl(), build = stage => stageDaemon(root, stage), timeoutMs = 120_000, pollMs = 500, dryRun = false, log = console.log } = {}) {
+export async function deployDaemon(root, { stateDir = reloadState(root), control = deploymentControl(), build = stage => stageDaemon(root, stage), preflight = stage => preflightDaemon(root, stage), timeoutMs = 120_000, pollMs = 500, dryRun = false, log = console.log } = {}) {
   root = resolve(root);
-  const state = join(root, '.turnwire'); mkdirSync(state, { recursive: true, mode: 0o700 });
+  const state = stateDir; mkdirSync(state, { recursive: true, mode: 0o700 });
   const journal = join(state, 'reload.daemon.pending.json');
   if (existsSync(journal)) throw Error('unfinished daemon deployment; inspect private pending journal and recover maintenance manually');
   const current = fingerprints(root);
@@ -74,7 +102,9 @@ export async function deployDaemon(root, { control = deploymentControl(), build 
     await build(stage);
     if (JSON.stringify(fingerprints(root)) !== JSON.stringify(current)) throw Error('source changed during staged build');
     if (dryRun) { rmSync(stage, { recursive: true, force: true }); log('daemon staging verified (dry run); no maintenance, signals, installation or DSH changes'); return; }
-    initial = control.record(); await control.health();
+    const expectedIdentity = requireBuiltIdentity(await preflight(stage));
+    verifyServedFrontend(root, expectedIdentity);
+    initial = control.record(); requireBuiltIdentity((await control.health())?.identity);
     const before = await control.request();
     if (before.state !== 'accepting') throw Error('existing maintenance requires manual operator action');
     // Journal precedes acquisition: lost begin response must never lead to implicit cancellation.
@@ -86,6 +116,9 @@ export async function deployDaemon(root, { control = deploymentControl(), build 
     const record = control.record();
     if (record.supervisorPid !== initial.supervisorPid || record.dshPid !== initial.dshPid || record.generation !== initial.generation) throw Error('host changed during drain');
     if (JSON.stringify(fingerprints(root)) !== JSON.stringify(current)) throw Error('source changed while draining');
+    // Revalidate the drained database with the new format before replacing/stopping anything.
+    requireSameBuild(await preflight(stage), expectedIdentity);
+    verifyServedFrontend(root, expectedIdentity);
     old = readFileSync(target); atomic(join(stage, 'rollback.js'), old); save('installing');
     atomic(target, readFileSync(join(stage, 'main.js'))); installed = true; save('installed');
     control.signal(initial);
@@ -93,7 +126,7 @@ export async function deployDaemon(root, { control = deploymentControl(), build 
       let next; try { next = control.record(); } catch { return false; }
       if (next.supervisorPid !== initial.supervisorPid || next.dshPid !== initial.dshPid) throw Error('runtime identity changed; refusing gate release');
       if (next.generation <= initial.generation || next.daemonPid === initial.daemonPid) return false;
-      try { await control.health(); return owned(await control.request()); } catch { return false; }
+      try { requireSameBuild((await control.health())?.identity, expectedIdentity); return owned(await control.request()); } catch { return false; }
     });
     save('verified');
     releasing = true;

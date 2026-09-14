@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createClientHandshake, acceptClientHandshake, randomSecret, secureMessage } from '@turnwire/sdk';
+import { createClientHandshake, acceptClientHandshake, randomSecret, secureMessage } from '@turnwire/wire';
 
 async function pair(secret = randomSecret()) {
   const phone = await createClientHandshake([secret], 'host:phone');
@@ -31,6 +31,6 @@ it('serializes concurrent encryption and refuses altered ciphertext without cons
   const { phone, host } = await pair();
   const payloads = await Promise.all(Array.from({ length: 30 }, (_, i) => phone.encrypt(secureMessage('request', i))));
   expect(payloads.map(p => p.sequence)).toEqual(Array.from({ length: 30 }, (_, i) => String(i)));
-  await expect(host.decrypt({ ...payloads[0], ciphertext: 'AAAA' + payloads[0]!.ciphertext.slice(4) })).rejects.toThrow();
+  await expect(host.decrypt({ ...payloads[0], ciphertext: (payloads[0]!.ciphertext[0] === 'A' ? 'B' : 'A') + payloads[0]!.ciphertext.slice(1) })).rejects.toThrow();
   for (let i = 0; i < payloads.length; i++) expect((await host.decrypt(payloads[i])).body).toBe(i);
 });

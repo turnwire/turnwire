@@ -9,20 +9,30 @@ export function equalSecret(actual: string, expected: string) { const a = Buffer
 export function startRelay(options: { token: string; port: number; host?: string; webRoot?: string; push?: { path: string; subject: string; deliver?: ConstructorParameters<typeof RelayPush>[2] } }) {
   if (options.token.length < 32) throw new Error('TURNWIRE_RELAY_TOKEN must contain at least 32 characters');
   const push = options.push ? new RelayPush(options.push.path, options.push.subject, options.push.deliver) : undefined;
-  const hosts = new Map<string, { socket: WebSocket; protocol?: 2; clients: Map<string, string> }>();
+  const hosts = new Map<string, { socket: WebSocket; clients: Map<string, string> }>();
   const connections = new WeakMap<WebSocket, string>();
   const clients = new Map<string, Map<string, WebSocket>>();
-  const server = createServer((req, res) => { if (req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"status":"ok"}'); } else { void serveRemoteWeb(options.webRoot, req, res); } });
+  let closing: Promise<void> | undefined; let sealed = false;
+  const server = createServer((req, res) => {
+    if (sealed) { res.writeHead(503); res.end('Relay is closing'); return; }
+    if (req.url === '/health') {
+      const failed = push?.health.status === 'error';
+      res.writeHead(failed ? 503 : 200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: failed ? 'error' : 'ok', ...(failed ? { push: 'error' } : {}) }));
+    } else { void serveRemoteWeb(options.webRoot, req, res); }
+  });
   const wss = new WebSocketServer({ server, maxPayload: 3 * 1024 * 1024 });
   const send = (socket: WebSocket | undefined, frame: unknown) => { if (socket?.readyState !== WebSocket.OPEN) return; if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.terminate(); return; } socket.send(JSON.stringify(frame)); };
   const live = new WeakSet<WebSocket>();
   wss.on('connection', socket => {
+    if (sealed) { socket.terminate(); return; }
     if (wss.clients.size > 200) { socket.close(4429, 'Relay at capacity'); return; }
     let identity: { kind: 'host' | 'client'; hostId: string; clientId?: string } | undefined;
     let count = 0; let windowStart = Date.now();
     const timeout = setTimeout(() => socket.close(4401, 'Authentication required'), 5000);
     live.add(socket); socket.on('pong', () => live.add(socket)); socket.on('error', () => {});
     socket.on('message', raw => {
+      if (sealed) return;
       try {
         if (Date.now() - windowStart > 1000) { windowStart = Date.now(); count = 0; }
         // A trusted host can replay thousands of stored events in one burst.
@@ -34,7 +44,7 @@ export function startRelay(options: { token: string; port: number; host?: string
           if (auth.kind === 'host') {
             if (!equalSecret(auth.token, options.token) || hosts.has(auth.hostId)) { socket.close(4401, 'Host authentication failed'); return; }
             identity = { kind: 'host', hostId: auth.hostId };
-            hosts.set(auth.hostId, { socket, protocol: auth.protocol, clients: new Map(auth.clients.map(client => [client.id, client.token])) });
+            hosts.set(auth.hostId, { socket, clients: new Map(auth.clients.map(client => [client.id, client.token])) });
             push?.reconcile(auth.hostId, auth.clients.map(c => c.id));
             send(socket, { type: 'ready', ...(push ? { push: { publicKey: push.publicKey } } : {}) });
             // A host reconnect always requires remote clients to reauthenticate against the new allowlist.
@@ -54,6 +64,9 @@ export function startRelay(options: { token: string; port: number; host?: string
         }
         if (typeof frame !== 'object' || frame === null) throw new Error('Invalid frame');
         const data = frame as { type?: string; clientId?: string; payload?: unknown; connectionId?: string };
+        // A replaced socket must never inject frames into its successor's session.
+        if (identity.kind === 'host' ? hosts.get(identity.hostId)?.socket !== socket : clients.get(identity.hostId)?.get(identity.clientId!) !== socket) return;
+        if (identity.kind === 'host' && (data.type === 'payload' || data.type === 'client.close') && (typeof data.connectionId !== 'string' || !data.connectionId)) throw new Error('Connection identity required');
         if (data.type === 'push.request' && identity.kind === 'host') {
           const request = pushRequestSchema.parse(frame);
           try { if (!push) throw new Error('Web Push is not enabled on this Relay'); const result = push.handle(identity.hostId, new Set(hosts.get(identity.hostId)?.clients.keys()), request); send(socket, { type: 'push.response', id: request.id, ok: true, result }); }
@@ -66,7 +79,7 @@ export function startRelay(options: { token: string; port: number; host?: string
         if (identity.kind === 'host') {
           if (typeof data.clientId !== 'string' || !hosts.get(identity.hostId)?.clients.has(data.clientId)) throw new Error('Unknown client');
           const target = clients.get(identity.hostId)?.get(data.clientId);
-          if (target && (hosts.get(identity.hostId)?.protocol !== 2 || connections.get(target) === data.connectionId)) send(target, { type: 'payload', payload });
+          if (target && connections.get(target) === data.connectionId) send(target, { type: 'payload', payload });
         } else send(hosts.get(identity.hostId)?.socket, { type: 'payload', clientId: identity.clientId, connectionId: connections.get(socket), payload });
       } catch { socket.close(4002, 'Invalid protocol'); }
     });
@@ -81,7 +94,22 @@ export function startRelay(options: { token: string; port: number; host?: string
   return new Promise<{ port: number; close: () => Promise<void> }>((resolve, reject) => {
     server.once('error', reject); server.listen(options.port, options.host ?? '127.0.0.1', () => {
       const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing address');
-      resolve({ port: address.port, close: async () => { clearInterval(heartbeat); await push?.close(); for (const socket of wss.clients) socket.terminate(); await new Promise<void>(done => wss.close(() => done())); await new Promise<void>((done, fail) => server.close(error => error ? fail(error) : done())); } });
+      resolve({ port: address.port, close: () => {
+        if (closing) return closing;
+        sealed = true; clearInterval(heartbeat); push?.seal();
+        for (const socket of wss.clients) socket.terminate();
+        closing = (async () => {
+          const results = await Promise.allSettled([
+            push?.close(),
+            new Promise<void>(done => wss.close(() => done())),
+            new Promise<void>((done, fail) => server.close(error => error ? fail(error) : done())),
+          ]);
+          const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+          if (errors.length === 1) throw errors[0];
+          if (errors.length) throw new AggregateError(errors, 'Relay close failed');
+        })();
+        return closing;
+      } });
     });
   });
 }

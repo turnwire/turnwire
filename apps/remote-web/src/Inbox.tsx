@@ -3,7 +3,7 @@ import { call, type TurnwireClient } from '@turnwire/sdk';
 import { methodSchemas, type InboxPage, type NotificationStatus } from '@turnwire/protocol';
 import { useLocale, errorText } from './i18n';
 
-export function Inbox({ client, cursor, connected, onOpen, remember }: { client: TurnwireClient; cursor: number; connected: boolean; onOpen: (id: string) => void; remember: () => void }) {
+export function Inbox({ client, cursor, connected, onOpen }: { client: TurnwireClient; cursor: number; connected: boolean; onOpen: (id: string) => void }) {
   const t = useLocale();
   const [items, setItems] = useState<InboxPage['items']>([]); const [before, setBefore] = useState<number | null>(null); const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notifications, setNotifications] = useState<NotificationStatus>();
@@ -24,7 +24,8 @@ export function Inbox({ client, cursor, connected, onOpen, remember }: { client:
     if (!notifications?.publicKey) throw new Error(t('inbox.needRelay'));
     // Permission is requested directly from the button gesture, before other asynchronous work.
     if (await Notification.requestPermission() !== 'granted') throw new Error(t('inbox.notAuthorised'));
-    remember();
+    // Notification permission never changes browser credential persistence.
+    // Users choose persistent connection storage explicitly in Settings.
     const registration = await navigator.serviceWorker.ready;
     let existing = await registration.pushManager.getSubscription();
     const key = notifications.publicKey.replaceAll('-', '+').replaceAll('_', '/');
@@ -39,7 +40,7 @@ export function Inbox({ client, cursor, connected, onOpen, remember }: { client:
     setNotifications(await call(client, 'notifications.unsubscribe'));
   }
   return <section className="inbox-view"><div className="inbox-heading"><div><h1>{t('inbox.title')}</h1><p>{t('inbox.subtitle')}</p></div><label><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />{t('inbox.includeHandled')}</label></div>
-    <div className="notification-settings"><div><strong>{t('inbox.remindersTitle')}</strong><p>{notifications?.message ?? t('inbox.loadingStatus')}</p><small>{t('inbox.iosHint')}</small></div><button disabled={busy || !connected || !notifications?.available || !notifications.enabled} onClick={() => void act(notifications?.subscribed ? disable : enable)}>{notifications?.subscribed ? t('inbox.disable') : t('inbox.enable')}</button></div>
+    <div className="notification-settings"><div><strong>{t('inbox.remindersTitle')}</strong><p>{notifications?.message ?? t('inbox.loadingStatus')}</p><small>{t('inbox.iosHint')}</small><p className="field-help">{t('inbox.rememberHint')}</p></div><button disabled={busy || !connected || !notifications?.available || !notifications.enabled} onClick={() => void act(notifications?.subscribed ? disable : enable)}>{notifications?.subscribed ? t('inbox.disable') : t('inbox.enable')}</button></div>
     {error && <p role="alert">{error}</p>}
     {!items.length && <p className="inbox-empty">{connected ? t('inbox.emptyConnected') : t('inbox.emptyDisconnected')}</p>}
     {items.map(({ approval, sessionTitle }) => <article className="inbox-item" key={approval.id}><div><button onClick={() => onOpen(approval.sessionId)}>{sessionTitle}</button><span>{({ pending: t('inbox.status.pending'), approved: t('inbox.status.approved'), rejected: t('inbox.status.rejected'), cancelled: t('inbox.status.cancelled') })[approval.status]}</span></div><strong>{approval.tool}</strong><p>{approval.reason}</p><time>{new Date(approval.createdAt).toLocaleString()}</time>{approval.status === 'pending' && <div className="approval-actions"><button disabled={!connected || busy} onClick={() => void act(async () => { await call(client, 'approval.decide', { approvalId: approval.id, decision: 'rejected' }); await load(); })}>{t('common.reject')}</button><button className="primary" disabled={!connected || busy} onClick={() => void act(async () => { await call(client, 'approval.decide', { approvalId: approval.id, decision: 'approved' }); await load(); })}>{t('common.approveOnce')}</button></div>}</article>)}

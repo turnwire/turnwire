@@ -7,14 +7,14 @@ const MAX_QUEUE_BYTES = 2 * 1024 * 1024;
 const MAX_QUEUE_ITEMS = 256;
 const REPLAY_BATCH = 32;
 import type { SecureMessage, Pairing } from '@turnwire/protocol';
-import type { TurnwireCore } from '@turnwire/core';
-import { SecureChannel, secureMessage, acceptClientHandshake } from '@turnwire/wire';
+import { enrollDevice, requireCurrentDevice, type TurnwireCore } from '@turnwire/core';
+import { secureMessage, acceptClientHandshake } from '@turnwire/wire';
 import type { SessionChannel } from '@turnwire/wire';
 import { DevicePresence } from './presence.js';
 
 /** One authenticated device connection, shared by outbound Relay and inbound TLS bridge. */
 export class RemotePeer {
-  private channel?: SecureChannel | SessionChannel;
+  private channel?: SessionChannel;
   private queue: Promise<void> = Promise.resolve(); private outgoing: Promise<void> = Promise.resolve();
   private active = true; private subscribed?: number; private challenge?: { value: string; started: number };
   private authenticatedDevice?: Pairing;
@@ -32,29 +32,30 @@ export class RemotePeer {
     try { bytes = Buffer.byteLength(JSON.stringify(payload)); } catch { this.fail(); return; }
     if (this.incomingBytes + bytes > MAX_QUEUE_BYTES || this.incomingItems >= MAX_QUEUE_ITEMS) { this.fail(); return; }
     this.incomingBytes += bytes; this.incomingItems++;
-    this.queue = this.queue.then(async () => {
+    this.queue = this.queue.then(() => this.core.runTask(async () => {
       if (!this.active) return;
       const device = this.core.store.devices().find(d => d.clientId === this.id); if (!device) throw new Error('Revoked device');
-      if (device.v === 2 && (payload as { type?: string })?.type === 'hello') {
+      if ((payload as { type?: string })?.type === 'hello') {
         if (this.channel) throw new Error('Handshake already established');
         if (device.bootstrap && (!device.expiresAt || Date.parse(device.expiresAt) < Date.now())) throw new Error('Pairing expired');
         const accepted = await acceptClientHandshake(payload, device.key, `${device.hostId}:${device.clientId}`);
         if (!this.active) return;
-        this.channel = accepted.channel; this.authenticatedDevice = device; await this.write(accepted.reply); return;
+        this.authenticatedDevice = requireCurrentDevice(this.core.store, device);
+        this.channel = accepted.channel; await this.write(accepted.reply); return;
       }
-      if (!this.channel && device.v === 1) { this.channel = new SecureChannel(device.key, `${device.hostId}:${device.clientId}`, 'host'); this.authenticatedDevice = device; }
       if (!this.channel) throw new Error('Handshake required');
       const message = await this.channel.decrypt(payload); if (!this.active) return;
-      if (message.kind === 'enroll' && device.v === 2) {
+      if (message.kind === 'enroll') {
         const { key } = z.object({ key: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(message.body);
-        if (device.bootstrap) {
-          if (this.authenticatedDevice?.key !== device.key) throw new Error('Enrollment changed');
-          this.core.store.updateDevice({ ...device, key, bootstrap: false, expiresAt: undefined, pendingKey: undefined });
-        } else if (device.key !== key) throw new Error('Pairing already consumed');
-        this.authenticatedDevice = this.core.store.devices().find(d => d.clientId === this.id);
+        if (!this.authenticatedDevice) throw new Error('Handshake required');
+        const release = this.core.enterHostActivity(false);
+        try { this.authenticatedDevice = enrollDevice(this.core.store, this.authenticatedDevice, key); }
+        finally { release(); }
         this.send('enrolled', {}); return;
       }
-      if (device.v === 2 && device.bootstrap) throw new Error('Enrollment required');
+      if (!this.authenticatedDevice) throw new Error('Handshake required');
+      const current = requireCurrentDevice(this.core.store, this.authenticatedDevice);
+      if (current.bootstrap) throw new Error('Enrollment required');
       if (message.kind === 'ping') {
         const { nonce } = connectionPingSchema.parse(message.body); const challenge = randomUUID();
         this.challenge = { value: challenge, started: performance.now() };
@@ -63,7 +64,7 @@ export class RemotePeer {
         const { challenge } = connectionAckSchema.parse(message.body); const issued = this.challenge;
         if (!issued || issued.value !== challenge || performance.now() - issued.started > 25_000) throw new Error('Invalid connection confirmation');
         this.presence.confirm(this.id, performance.now() - issued.started); this.challenge = undefined;
-        if (device.v === 2) this.send('confirmed', { challenge });
+        this.send('confirmed', { challenge });
       } else if (message.kind === 'request') {
         // Runtime operations never hold the receive queue; cancellation remains reachable.
         if (this.requests >= MAX_QUEUE_ITEMS || this.requestBytes + bytes > MAX_QUEUE_BYTES) throw new Error('Request overload');
@@ -76,11 +77,11 @@ export class RemotePeer {
         this.subscribed = undefined;
         const generation = ++this.replayGeneration;
         // Replay never holds the inbound chain: ping/cancel remain reachable during catchup.
-        void this.replay(after === 'latest' ? this.core.store.cursor() : after, generation, device.v === 2).catch(() => this.fail());
+        void this.core.runTask(() => this.replay(after === 'latest' ? this.core.store.cursor() : after, generation)).catch(() => this.fail());
       }
-    }).catch(() => this.fail()).finally(() => { this.incomingBytes -= bytes; this.incomingItems--; });
+    })).catch(() => this.fail()).finally(() => { this.incomingBytes -= bytes; this.incomingItems--; });
   }
-  private async replay(cursor: number, generation: number, routes: boolean) {
+  private async replay(cursor: number, generation: number) {
     while (this.active && generation === this.replayGeneration) {
       // Live notifications are disabled until an empty journal read. Events written while
       // yielding are read from the journal next time, without an unbounded side buffer.
@@ -89,7 +90,7 @@ export class RemotePeer {
         this.subscribed = cursor;
         // No await between the empty read, subscription, and enqueuing its confirmation.
         this.send('subscribed', { cursor, heartbeat: true });
-        if (routes) this.send('routes', { urls: this.routes() });
+        this.send('routes', { urls: this.routes() });
         return;
       }
       for (const event of events) {

@@ -1,0 +1,10 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from '../../apps/remote-web/src/App';
+import { SessionList } from '../../apps/remote-web/src/SessionList';
+import { fixture } from './session-management-sdk';
+import type { Session } from '@turnwire/protocol';
+import '../../apps/remote-web/src/style.css';
+localStorage.setItem('turnwire.locale', 'en');
+sessionStorage.setItem('turnwire.connection', JSON.stringify({ kind: 'local', url: 'http://fixture.invalid', token: 'fixture' }));
+createRoot(document.getElementById('root')!).render(location.search.includes('throwing-manager') ? <SessionList sessions={fixture.sessions as Session[]} disabled={false} active onSelect={() => {}} onManage={async () => { throw new Error('Thrown manager failure'); }} /> : <App />);

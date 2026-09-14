@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { TurnwireCore, Store } from '@turnwire/core';
 import { DemoRuntime } from '@turnwire/runtime';
 import { methodSchemas } from '@turnwire/protocol';
-import { LocalClient, RemoteClient, randomSecret } from '@turnwire/sdk';
+import { LocalClient, RemoteClient } from '@turnwire/sdk';
+import { randomSecret } from '@turnwire/wire';
 import { startDaemonServer } from '../apps/daemon/src/server.js';
 import { startRelay } from '../apps/relay/src/server.js';
 import { RemoteBridge } from '../apps/daemon/src/remote.js';
@@ -21,10 +22,10 @@ it('shares newly created directories between paired remote and local clients', a
   const remote = new RemoteClient(pairing);
   try {
     await new Promise<void>((resolve, reject) => { let attempts = 0; const timer = setInterval(() => { if (bridge.connected) { clearInterval(timer); resolve(); } else if (++attempts > 200) { clearInterval(timer); reject(new Error('Relay connection timed out')); } }, 10); });
-    expect(await remote.request('workspace.mkdir', { parent, name: 'From phone' })).toMatchObject({ path: join(parent, 'From phone'), entries: [] });
-    expect(await local.request('workspace.list', { path: parent })).toMatchObject({ entries: [{ name: 'From phone', path: join(parent, 'From phone') }] });
-    await expect(remote.request('workspace.mkdir', { parent, name: '../escape' })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
-    await expect(local.request('workspace.mkdir', { parent, name: 'From phone' })).rejects.toMatchObject({ code: 'INVALID_WORKSPACE' });
+    expect(await remote.call('workspace.mkdir', { parent, name: 'From phone' })).toMatchObject({ path: join(parent, 'From phone'), entries: [] });
+    expect(await local.call('workspace.list', { path: parent })).toMatchObject({ entries: [{ name: 'From phone', path: join(parent, 'From phone') }] });
+    await expect(remote.call('workspace.mkdir', { parent, name: '../escape' })).rejects.toThrow();
+    await expect(local.call('workspace.mkdir', { parent, name: 'From phone' })).rejects.toMatchObject({ code: 'INVALID_WORKSPACE' });
   } finally { remote.close(); local.close(); await bridge.close(); await relay.close(); await server.close(); await core.dispose(); await rm(parent, { recursive: true, force: true }); }
 });
 

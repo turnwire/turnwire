@@ -10,12 +10,12 @@ export const historyPageSchema = z.lazy(() => z.object({ events: z.array(eventSc
 /** Full export fails explicitly above this per-record assembly budget; previews never replace full text. */
 export const MAX_HISTORY_RECORD_BYTES = 64 * 1024 * 1024;
 export const historyRecordSchema = z.object({ data: z.string().max(65_536), nextOffset: position.nullable(), cursor: position });
-export const runtimeInfoSchema = z.lazy(() => z.object({ id: idSchema, name: z.string(), online: z.boolean(), message: z.string(), capabilities: capabilitiesSchema, busy: position.optional(), busyKnown: z.boolean().optional() }));
+export const runtimeInfoSchema = z.lazy(() => z.object({ id: idSchema, name: z.string(), online: z.boolean(), message: z.string(), capabilities: capabilitiesSchema, busy: position.optional(), busyKnown: z.boolean() }));
 export const snapshotSchema = z.lazy(() => z.object({ device: z.object({ id: idSchema, name: z.string() }), sessions: z.array(sessionSchema), approvals: z.array(approvalSchema), questions: z.array(questionSchema), runtimes: z.array(runtimeInfoSchema), cursor: position }));
 export const inboxPageSchema = z.lazy(() => z.object({ items: z.array(z.object({ position, approval: approvalSchema, sessionTitle: z.string() })), nextBefore: position.nullable(), cursor: position }));
 export const requestResultSchema = z.lazy(() => z.discriminatedUnion('state', [z.object({ state: z.literal('completed'), response: responseSchema }), z.object({ state: z.enum(['not_found', 'pending', 'unknown']) })]));
 const acceptedSchema = z.object({ accepted: z.literal(true) });
-/** Every public method must have a runtime success validator. Optional legacy fields stay optional. */
+/** Every public method must have a runtime success validator. Responses must satisfy the current contract; missing required fields are rejected. */
 export const methodResultSchemas = {
   'system.snapshot': snapshotSchema,
   'request.result': requestResultSchema,
@@ -29,7 +29,7 @@ export const methodResultSchemas = {
   'session.resume': z.lazy(() => sessionSchema),
   'session.rename': z.lazy(() => sessionSchema),
   'session.archive': z.lazy(() => sessionSchema),
-  'session.message': z.lazy(() => z.object({ accepted: z.literal(true), messageId: idSchema, queued: z.boolean().optional() })),
+  'session.message': z.lazy(() => z.object({ accepted: z.literal(true), messageId: idSchema, queued: z.boolean() })),
   'session.image': imageChunkSchema,
   'session.cancel': acceptedSchema,
   'session.queueAction': acceptedSchema,

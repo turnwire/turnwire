@@ -9,7 +9,7 @@ function setup() {
   const store = new Store(':memory:');
   const runtime = new DemoRuntime();
   core = new TurnwireCore(store, [runtime], { id: 'test', name: 'test' });
-  const session: Session = { id: 's', runtimeId: 'demo', runtimeSessionId: 's', title: 'test', cwd: '/tmp', status: 'idle', createdAt: 'now', updatedAt: 'now' };
+  const session: Session = { id: 's', runtimeId: 'demo', runtimeSessionId: 's', title: 'test', cwd: '/tmp', status: 'idle', archived: false, autoApprove: false, createdAt: 'now', updatedAt: 'now' };
   store.append({ type: 'session.created', session });
   const event = store.append({ type: 'message.completed', sessionId: 's', messageId: 'large', text: '🙂'.repeat(100_000) })!;
   return { store, event, request: (method: string, params: unknown) => core!.handle({ v: 1, id: crypto.randomUUID(), method, params }) };
