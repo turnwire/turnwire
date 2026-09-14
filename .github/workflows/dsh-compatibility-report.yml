@@ -24,6 +24,7 @@ jobs:
         with:
           script: |
             const run = context.payload.workflow_run;
+            if (run.path !== '.github/workflows/dsh-compatibility.yml') return;
             const title = '[DSH compatibility] Latest scheduled/manual matrix failure';
             const {owner, repo} = context.repo;
             const newer = await github.rest.actions.listWorkflowRuns({owner, repo, workflow_id: run.workflow_id, branch: 'main', per_page: 100});

@@ -16,7 +16,14 @@ async function host(options: { seeded?: boolean; mode?: 'error' | 'end' | 'cance
   const server = createServer(async (req, res) => {
     if (req.url === '/?token=secret') { res.writeHead(303, { 'set-cookie': 'auth=yes' }); res.end(); return; }
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
-    const input = JSON.parse(Buffer.concat(chunks).toString()); const request = input.payload.args.request;
+    const input = JSON.parse(Buffer.concat(chunks).toString());
+    if (req.url === '/api/session/list') {
+      expect(req.headers.cookie).toBe('auth=yes');
+      expect(input).toMatchObject({ type: 'client-request', method: 'session/list', payload: { args: { _request: {} } } });
+      res.end(JSON.stringify({ type: 'server-response', rpcId: input.rpcId, result: { ok: true, value: { items: [] } } }));
+      return;
+    }
+    const request = input.payload.args.request;
     requests.push({ endpoint: req.url!, request });
     const eligible = records.filter(row => row.event.seq <= request.throughSeq && row.event.seq < (request.beforeSeq ?? Infinity));
     const page = eligible.slice(-request.maxMessages);
