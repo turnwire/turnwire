@@ -47,6 +47,12 @@ it('only references repository files that exist', () => {
 
 it('only documents CLI commands the program defines', () => {
   const groups = new Map(createProgram().commands.map(command => [command.name(), new Set(command.commands.map(sub => sub.name()))]));
+  // Local npm bootstrap commands are handled before the shared connected CLI.
+  const launcher = read('apps/launcher/main.mjs');
+  for (const command of ['start', 'doctor']) {
+    expect(launcher).toContain(`args[0] === '${command}'`);
+    groups.set(command, new Set<string>());
+  }
   const unknown = new Set<string>();
   for (const document of documents) {
     for (const [, group, sub] of read(document).matchAll(/`turnwire ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?/g)) {
