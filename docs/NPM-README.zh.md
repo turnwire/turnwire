@@ -7,6 +7,16 @@
 
 在终端、浏览器和手机间继续同一个自托管 Agent 会话。任务由主机上的 DeepSeek Harness（DSH）执行，模型凭据只留在主机。
 
+## 最小部署与方式选择
+
+需要一台满足安装包/runtime 要求的执行主机、Node.js 和 npm（最低版本见下文）、当前用户可写的配置/数据/缓存与项目目录、安装时的 registry 访问能力，以及真实任务所需的模型凭据和模型服务网络。浏览器设备不运行 DSH。尚未测定统一的 CPU、内存或磁盘最低值，资源要求取决于项目与并发任务。本机使用不需要 Relay、容器或公网入口。
+
+- **本机试用：** `npx turnwire@next --open`，保持终端打开。
+- **长期安装：** `npm install -g turnwire@next`，之后运行 `turnwire --open`。仍是前台运行，不会安装后台系统服务。
+- **复用已有 DSH：** 启动前按下方说明配置经过认证的连接；Turnwire 不停止或更新外部 runtime。
+- **远程使用：** 先启动执行主机，再配置配对和隧道或自托管 Relay。Relay 只转发加密连接，不是执行主机，也不是完整的 Turnwire 部署。
+- **后台服务/源码 Demo：** 是不同的源码安装路径，详见仓库快速开始，需要仓库访问权限；npm 启动器不会自动安装这些组件。
+
 ## 安装预览版
 
 <!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
@@ -25,6 +35,12 @@ turnwire --open
 <!-- END GENERATED INSTALL -->
 
 这是预览版，不是稳定版或已签名的原生桌面发行版。无需源码仓库权限。npm 安装本身不会启动服务或安装 DSH；运行启动器后以前台运行，请保持终端打开，Ctrl-C 仅停止它拥有的进程。
+
+## 首次启动如何确认成功
+
+按启动器提示安装 DSH 并隐藏输入模型密钥。`--open` 尝试打开已认证的本机 Web；主机无法自动打开浏览器时用 `npx turnwire@next --no-open`，保持进程运行并记录输出的地址。另开终端运行 `npx turnwire@next status` 查看在线状态，用 `npx turnwire@next connect` 获取本机连接信息；后者含凭据，不要分享。远端浏览器的 localhost 不是执行主机，应配置远程访问，不要直接暴露 daemon 端口。
+
+`npx turnwire@next doctor --json` 是离线环境检查，不能证明主机已运行或模型密钥有效。创建会话并发送任务，才能验证真实模型访问。Web 端口冲突时可重新运行 `npx turnwire@next start --port 9900 --open`。Ctrl-C 仅停止拥有的进程。
 
 ## 连接 DSH
 

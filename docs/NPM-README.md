@@ -7,6 +7,16 @@ English · [中文](NPM-README.zh.md)
 
 Self-hosted agent sessions across your terminal, browser and phone. The host runs tasks through DeepSeek Harness (DSH); model credentials stay on the host.
 
+## Minimum setup and deployment choices
+
+You need one execution host meeting the package/runtime requirements, Node.js and npm (minimum below), user-writable configuration/data/cache and project directories, registry access for installation, and model credentials plus model-service network access for real tasks. The browser device does not run DSH. No universal CPU, RAM or disk minimum has been measured; resource needs depend on your projects and concurrency. Local use needs no Relay, container or public endpoint.
+
+- **Try locally:** `npx turnwire@next --open`; keep its terminal open.
+- **Persistent installation:** `npm install -g turnwire@next`, then `turnwire --open`. This still runs in the foreground, not as an installed system service.
+- **Existing DSH:** configure the explicit authenticated connection described below before starting. Turnwire never stops or updates that external runtime.
+- **Remote use:** first get the host working, then configure pairing and a tunnel or self-hosted Relay. A Relay forwards encrypted connections; it is not an execution host or a complete Turnwire installation.
+- **Background service/source Demo:** these are separate source-based installation paths documented in the repository quickstart and require repository access. Do not assume the npm launcher installs them.
+
 ## Install the preview
 
 <!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
@@ -25,6 +35,12 @@ The source repository remains private; npm installation does not require access.
 <!-- END GENERATED INSTALL -->
 
 This is a preview, not a stable or signed native desktop release. No source checkout is required. npm installation does not start a service or install DSH. Running the launcher starts a foreground host: keep the terminal open, and use Ctrl-C to stop owned processes.
+
+## Verify the first startup
+
+Follow the launcher's DSH installation and hidden credential prompts. `--open` attempts to open authenticated local Web. On a host without browser launch, use `npx turnwire@next --no-open`, keep the process running and note the printed address. In another terminal run `npx turnwire@next status` for live status and `npx turnwire@next connect` for local connection details; the latter contains credentials and must not be shared. A remote browser's localhost is not the execution host: configure remote access rather than exposing the daemon port.
+
+`npx turnwire@next doctor --json` is an offline environment check, not proof of a running host or valid model key. Create a session and send a task to verify real model access. If the Web port is occupied, restart with `npx turnwire@next start --port 9900 --open`. Ctrl-C stops only owned processes.
 
 ## Connect DSH
 

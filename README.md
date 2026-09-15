@@ -32,6 +32,31 @@ Honest up front, so you do not discover them halfway through:
 2. **You need an always-on host.** Choose a machine that meets the [host requirements](docs/QUICKSTART.md) — if it is asleep, the phone cannot connect. Host and optional native client platform support are separate; neither implies support for every operating system.
 3. **You need model credentials, and they stay on the host only.** The API key is read by DSH on the host and does not enter a client, the Relay, or a tunnel process.
 
+## Minimum deployment requirements
+
+The smallest working deployment is **one execution host + Turnwire + DSH + model credentials**. Connect a browser or terminal to that host; Relay, containers and a native desktop application are not prerequisites.
+
+| Requirement | What to prepare |
+| --- | --- |
+| Execution host | A machine that can keep the process running and meets the [current package/runtime requirements](docs/QUICKSTART.md); a browser client's platform is not the host requirement |
+| Software | Node.js (minimum in the generated requirements below) and npm; first startup can guide DSH installation, or explicitly connect an existing instance |
+| Network | npm registry access for initial acquisition and access to your configured model service for real tasks; local use needs no public ingress |
+| Configuration and data | User-writable configuration, state, data and cache locations, plus the project workspace; model credentials remain on the host |
+| Client | A working browser or terminal; the execution host must remain online for remote access |
+
+No universal CPU, memory or disk minimum has been measured. Resource use depends on DSH, project size and concurrency; do not treat an invented hardware number as a guarantee. See [quickstart](docs/QUICKSTART.md) for persistence, ports and actual platform constraints.
+
+## Choose a deployment method
+
+| Goal | Method | Important distinction |
+| --- | --- | --- |
+| Try locally | `npx turnwire@next --open` | Foreground process: keep the terminal open and follow DSH/key setup prompts |
+| Use regularly | `npm install -g turnwire@next`, then `turnwire --open` | Persistent installation, not an automatically installed background service |
+| Reuse existing DSH | Configure its authenticated URL/token before starting Turnwire | Explicit authorization required; Turnwire does not update or stop external DSH |
+| Run unattended | Follow [background service installation](docs/QUICKSTART.md) | Separate lifecycle from npm foreground launch; check applicable environment requirements |
+| Explore without a model | With source access, use the [offline Demo](docs/DEVELOPING.md) | No model key or real coding tasks |
+| Continue from a phone or elsewhere | Start the host, then configure a temporary tunnel or [self-hosted Relay](docs/RELAY-INSTALL.md) | Relay is a remote connection component, not a replacement execution host; persistent access needs a stable address |
+
 ## Getting started
 
 ### Recommended: npm preview
@@ -63,7 +88,13 @@ For a host that runs in the background, see [service setup in the quickstart](do
 
 ### Step 1: Get the host running
 
-Start the npm preview above on your host, then open the local address printed by the launcher in a browser. Keep the host running to continue the session from other clients.
+1. Run `node --version` and `npm --version` to check prerequisites, then `npx turnwire@next --open`.
+2. Follow prompts to install missing DSH and privately enter model credentials. For existing DSH, configure the explicit connection first using [quickstart](docs/QUICKSTART.md).
+3. Wait for startup. `--open` attempts to open authenticated local Web. If browser launch is unavailable, use `--no-open`, note the printed address, and run `npx turnwire@next connect` for local connection details. That output contains credentials: do not publish it.
+4. In another terminal, run `npx turnwire@next status` to inspect the running host and runtime. `npx turnwire@next doctor --json` checks the environment offline; it is not a live health check.
+5. In Web or the terminal, select a project workspace, create a session and send a task. Connecting to the host does not prove model credentials work; a real task validates model-service access.
+
+If the default Web port is occupied, use `npx turnwire@next start --port 9900 --open`. Keep the host running. Ctrl-C stops its owned processes, never an external DSH.
 
 Contributors with access to the private repository can follow [Developing from source](docs/DEVELOPING.md) to build, run an offline Demo, or connect a real model through DSH. The Demo needs no model credentials and does not call a model, run a shell, or modify files.
 

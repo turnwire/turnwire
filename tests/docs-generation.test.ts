@@ -41,7 +41,9 @@ it('checks all six generated documents without depending on the working director
 it('defaults to read-only check, diagnoses stale content, and repairs only the managed block', () => {
   const base = fixture();
   const original = read(base, 'README.md');
-  const stale = `Unmanaged prefix\n${original.replace('npx turnwire@next', 'npx turnwire@stale')}Unmanaged suffix\n`;
+  const blockStart = original.indexOf(begin);
+  const modified = original.slice(0, blockStart) + original.slice(blockStart).replace('npx turnwire@next', 'npx turnwire@stale');
+  const stale = `Unmanaged prefix\n${modified}Unmanaged suffix\n`;
   writeFileSync(join(base, 'README.md'), stale);
   for (const args of [[], ['--check']]) {
     const result = run(base, ...args);
