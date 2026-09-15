@@ -1,13 +1,15 @@
 name: Publish npm
 run-name: Publish ${{ github.event.release.tag_name || inputs.tag }} to npm
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag, e.g. v0.1.0-next.0
-        required: true
+        description: Existing formal Release tag (vX.Y.Z) to repair; leave empty for a main preview
+        required: false
         type: string
       confirm:
         description: Type publish-turnwire to authorize publication
@@ -22,7 +24,8 @@ jobs:
   authorize:
     if: >-
       github.repository == 'turnwire/turnwire' &&
-      ((github.event_name == 'release' && github.event.action == 'published' && !github.event.release.draft) ||
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'release' && github.event.action == 'published' && !github.event.release.draft && !github.event.release.prerelease) ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm == 'publish-turnwire'))
     runs-on: ubuntu-latest
     outputs:
@@ -30,6 +33,7 @@ jobs:
       version: ${{ steps.tag.outputs.version }}
       channel: ${{ steps.tag.outputs.channel }}
       tag: ${{ steps.tag.outputs.tag }}
+      release_id: ${{ steps.tag.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,35 +45,44 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RELEASE_EVENT: ${{ github.event_name }}
           RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          # Intentionally limited to stable or next prereleases. Never publish arbitrary dist-tags.
-          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-next\.(0|[1-9][0-9]*))?$ ]]
+          if [[ -z "$RELEASE_TAG" ]]; then
+            [[ "$RELEASE_EVENT" == push || "$RELEASE_EVENT" == workflow_dispatch ]]
+            test "$GITHUB_REF" = refs/heads/main
+            revision=$(git rev-parse HEAD)
+            base=$(sed -n "s/^export const packageVersion = '\([^']*\)';$/\1/p" scripts/package-npm.mjs)
+            base=${base%%-*}
+            [[ "$base" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            [[ "$GITHUB_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]]
+            echo "revision=$revision" >> "$GITHUB_OUTPUT"
+            echo "version=$base-next.$GITHUB_RUN_NUMBER.${revision:0:12}" >> "$GITHUB_OUTPUT"
+            echo 'channel=next' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Only a published, non-prerelease GitHub Release can produce npm latest.
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           revision=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
           git merge-base --is-ancestor "$revision" origin/main
           if [[ "$RELEASE_EVENT" == release ]]; then
-            if [[ "$RELEASE_TAG" == *-next.* ]]; then
-              test "$RELEASE_PRERELEASE" = true
-            else
-              test "$RELEASE_PRERELEASE" = false
-            fi
-            # Ref must still identify the commit checked out for this release event.
+            test "$RELEASE_PRERELEASE" = false
             test "$revision" = "$(git rev-parse HEAD)"
           fi
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" > $RUNNER_TEMP/turnwire-release.json
+          node -e 'const r=require(process.env.RUNNER_TEMP+"/turnwire-release.json");if(r.draft || r.prerelease || r.tag_name!==process.env.RELEASE_TAG)throw Error("A published formal Release is required");require("fs").appendFileSync(process.env.GITHUB_OUTPUT,`release_id=${r.id}\n`);'
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
-          if [[ "$RELEASE_TAG" == *-next.* ]]; then
-            echo 'channel=next' >> "$GITHUB_OUTPUT"
-          else
-            echo 'channel=latest' >> "$GITHUB_OUTPUT"
-          fi
+          echo 'channel=latest' >> "$GITHUB_OUTPUT"
   test-package:
     needs: authorize
     uses: ./.github/workflows/npm-package.yml
     with:
       revision: ${{ needs.authorize.outputs.revision }}
+      preview-version: ${{ needs.authorize.outputs.channel == 'next' && needs.authorize.outputs.version || '' }}
   test-dsh:
     needs: authorize
     uses: ./.github/workflows/dsh-compatibility.yml
@@ -140,7 +153,7 @@ jobs:
         # npm provenance is unsupported for private source repos; OIDC authentication remains in use.
         run: npm publish ./release/*.tgz --ignore-scripts --access public --tag "$RELEASE_CHANNEL" --registry https://registry.npmjs.org
   release-assets:
-    if: github.event_name == 'release'
+    if: needs.authorize.outputs.channel == 'latest'
     needs: [authorize, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -157,7 +170,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.authorize.outputs.version }}
-          EXPECTED_RELEASE_ID: ${{ github.event.release.id }}
+          EXPECTED_RELEASE_ID: ${{ needs.authorize.outputs.release_id }}
         shell: bash
         run: |
           set -euo pipefail

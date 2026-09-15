@@ -2,7 +2,7 @@
 
 # npm 安装包与发布
 
-公开包名和可执行命令均为 **turnwire**。[`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) 已发布，registry 完整性与审阅过的 tarball 一致，全新 registry 安装、CLI/doctor 及安装包 demo/Web 启动检查通过。它仍是预览版，不是稳定版或已签名的原生发行版。首次核验时 `next` 和 `latest` 都指向此预览版，建议明确使用 `@next`。Trusted Publisher 绑定尚未确认，工作流存在不等于已获得 npm 发布授权。
+公开包名和可执行命令均为 **turnwire**（[npm](https://www.npmjs.com/package/turnwire)）。预览版请明确使用 `@next`。当前策略是：每次推送到 `main`，由 GitHub Actions 将唯一测试版本发布到 npm `next`，不创建 GitHub Release。只有已发布的正式 GitHub Release，标签为稳定版 `vX.Y.Z` 且 `prerelease: false`，才走常规稳定发布路径，更新 npm `latest` 并上传 Release 附件。所有 npm 发布与 Release 附件上传都只能通过 Actions；禁止本地发布或本地上传兜底。以下策略说明不代表已经测试过一次新的工作流运行。
 
 ## 用户使用
 
@@ -57,19 +57,11 @@ npm pack ./artifacts/npm/turnwire --dry-run
 
 既有 `.github/workflows/check.yml` 继续执行完整类型检查、测试和构建。新增 `npm-package.yml` 在 Linux／macOS 上从 tarball 安装到仓库外的隔离目录，禁用安装生命周期脚本，执行 `--help`、`--version` 和离线 `doctor --json`。还会从安装包启动 demo daemon，使用临时端口验证 health、认证的 `system.snapshot` RPC、Web 契约与静态资源。矩阵使用 GitHub 托管 runner 覆盖 Linux x64/arm64 与 macOS arm64/x64。这里只有经过运行的矩阵结果才算该平台验证。 这些检查不代表已经验证真实 DSH 安装、模型请求、手机连接、后台服务或所有 CPU 架构。macOS 验证由 Actions 执行，不能从本地 Linux 测试推断通过。
 
-## 首次发布：维护者手动引导
+## 发布历史（不是当前操作指南）
 
-1. 确认 `npm whoami`、名称权限及账号 2FA，不把 token 保存到仓库。
-2. 审阅源码提交、CI 结果、tarball 文件列表与版本。首包应为 `turnwire@0.1.0-next.0`，如需变更版本应先明确修改再打标签。
-3. 在可信本机终端交互登录 npm，发布**审阅过的 tarball**：
+`0.1.0-next.0` 在首次引导时手动发布；当时 registry 完整性与审阅过的 tarball 一致，全新 registry 安装、CLI/doctor 及安装包 demo/Web 启动检查通过。那次历史核验时，`next` 和 `latest` 都指向预览版。之后的 `0.1.0-next.1` 由 Actions 发布到 npm，但 Release 附件曾手动上传。这些是历史例外，不是当前发布策略或备用流程，不能据此声称新的 main 推送／稳定 Release 自动化已经验证、稳定版已就绪或已有签名原生发行版。
 
-   ```sh
-   npm publish ./artifacts/npm/tarballs/turnwire-0.1.0-next.0.tgz --access public --tag next
-   ```
-
-   这是需要维护者明确授权的步骤，不是在验证前立即发布的指令。不要省略 tarball 路径去发布工作区根目录；本地首次发布没有生成 provenance 时，不声称有来源证明。
-4. 验证 `npm view turnwire@next name version dist.integrity`，并在干净环境安装 registry 版本。
-5. 在已创建的 npm 包设置中配置 Trusted Publisher。
+旧的本地首次发布操作指南已废止。今后的 npm 发布及 Release 附件上传必须使用下述 Actions 工作流；授权失败应在自动化配置中修复，不能在本地绕过。
 
 ## GitHub 受信发布配置
 
@@ -80,22 +72,36 @@ npm 包设置中绑定 GitHub Actions：
 - Workflow filename：**`npm-release.yml`**
 - Environment：**`npm-release`**
 
-在 GitHub 配置 `npm-release` 环境，允许 `main` 分支（手动备用入口）和 `v*` 标签（已发布 Release 事件）。Release 作业使用标签 ref，因此只允许 main 会阻止自动发布。`v*` 只是环境准入规则，不代替严格版本校验；工作流另行校验支持的版本格式及 main 祖先关系。保护 main 和版本标签，限制谁可以发布 Release，严格审阅 workflow 修改。套餐支持时可配置必要审批者，仅在 YAML 写环境名称不会自动启用审批。使用 GitHub 托管 runner。发布 workflow 使用 Node 24 和 npm 11.6.2 进行 OIDC 发布，与应用最低 Node 版本分开。无需 `NPM_TOKEN`，但上述 npm Trusted Publisher 绑定是必要前提，目前尚未确认完成。
+保持现有 npm Trusted Publisher 绑定不变。在 GitHub 配置 `npm-release` 环境，允许 `main` 分支（推送预览及手动触发）和 `v*` 标签（已发布的稳定 Release 事件）。Release 作业使用标签 ref，因此只允许 main 会阻止自动发布。`v*` 只是环境准入规则，不代替严格版本校验；工作流另行校验支持的版本格式及 main 祖先关系。保护 main 和版本标签，限制谁可以发布 Release，严格审阅 workflow 修改。套餐支持时可配置必要审批者，仅在 YAML 写环境名称不会自动启用审批。使用 GitHub 托管 runner。发布 workflow 使用 Node 24 和 npm 11.6.2 进行 OIDC 发布，与应用最低 Node 版本分开。无需 `NPM_TOKEN`，但上述 npm Trusted Publisher 绑定是必要前提；工作流文件存在不等于已获得 npm 发布授权。
 
-当前 GitHub 仓库为私有。即使 npm 包公开，npm 也不支持私有源码仓库的 provenance；workflow 对私有仓库明确禁用 provenance，但仍用 OIDC 认证，仓库公开时才启用来源证明。它不会改变仓库可见性。当前仓库套餐不支持必要环境审批者，不能声称已配置独立审批门禁。应将 `npm-release` 限制为 main 和 `v*` 标签，并限制仓库和 Release 写权限。发布 GitHub Release 是常规的人为授权动作；main 分支上输入确认文字的手动触发仍作为备用入口。若要求独立审批，应先使用支持的套餐或保护机制。
+当前 GitHub 仓库为私有。即使 npm 包公开，npm 也不支持私有源码仓库的 provenance；workflow 对私有仓库明确禁用 provenance，但仍用 OIDC 认证，仓库公开时才启用来源证明。它不会改变仓库可见性。当前仓库套餐不支持必要环境审批者，不能声称已配置独立审批门禁。应将 `npm-release` 限制为 main 和 `v*` 标签，并限制仓库和 Release 写权限。合并或推送到受保护的 main 授权自动预览发布；发布正式 GitHub Release 是常规稳定发布的授权动作。main 上输入确认文字的手动触发仅限于当前 main 的预览，或修复已有正式 Release。若要求独立审批，应先使用支持的套餐或保护机制。
 
 参考：[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) 与 [npm provenance](https://docs.npmjs.com/generating-provenance-statements/)。升级 CI 版本时重新核对要求。
 
-## 后续发布
+## Main 预览与稳定发布
 
-1. 更新 `scripts/package-npm.mjs` 中的 `packageVersion` 和发布说明，完成验证并合并到 main。标签版本必须与该提交构建出的包版本一致；创建 Release 不会自动改写源码版本。
-2. 为已审阅的 main 提交创建版本标签，例如 `v0.1.0-next.1`。
-3. 在 GitHub 为该标签创建 Release，点击 **Publish release**。`vX.Y.Z-next.N` 必须勾选 **pre-release**；`vX.Y.Z` 为普通正式 Release。预发布勾选状态必须与标签一致。仅创建草稿、编辑 Release 或推送标签都不会触发发布。
-4. `release: published` 事件自动启动 **Publish npm**。工作流检查标签格式、main 祖先关系及 Release 预发布状态，解析不可变提交，再运行四个平台的安装包测试（Linux/macOS × x64/arm64）和 Linux/macOS × 基准/latest/next 的真实 DSH 检查。仅在实际配置审批规则时才有环境审批。
-5. 所有检查通过后，校验包名和版本，通过 OIDC 将经过 Ubuntu 测试的同一个 tarball 发布到 npm，不重新构建。`vX.Y.Z-next.N` 进入 `next`，`vX.Y.Z` 进入 `latest`，拒绝其他预发布格式。仅公开源码仓库请求 provenance。
-6. npm 发布成功后，才把同一个 `.tgz` 和 `SHA256SUMS` 附加到已有的 GitHub Release。不覆盖已有附件，文件名冲突会失败，避免悄悄替换下载内容。仓库仍为私有，GitHub Release 下载仍需仓库权限；npm 包则是公开的。
+### Main 推送 → npm `next`，不创建 GitHub Release
 
-**手动备用入口：**从 `main` 运行 **Publish npm**，填入已有标签并输入 `publish-turnwire`，仍需经过相同源码、版本及测试校验。它不自动创建 Release，也不上传 Release 附件。如果自动流程中 npm 成功但附件上传失败，不会回滚 npm；重试前先检查作业和已有附件，不要把两个平台的更新当作原子事务。
+每次推送到 `main`，都会启动 `.github/workflows/npm-release.yml` 中的 **Publish npm**。工作流读取 `scripts/package-npm.mjs` 的版本，去掉预发布后缀取得稳定基础版本，再根据不可变源码提交生成唯一测试版本 `<base>-next.<github.run_number>.<shortsha>`。例如基础版本 `0.1.0` 会生成形如 `0.1.0-next.123.abcdef0` 的版本。打包、测试和发布均使用生成版本，不在本地修改源码版本。新的运行具有新的 run number；重新运行同一次运行则保持原版本。
+
+安装包与 DSH 门禁通过后，Actions 将同一个经过测试的 tarball 发布到 npm `next`。该路径不创建 GitHub Release，也不上传 Release 附件。预览发布不会更新 `latest`，无需预发布标签或 GitHub pre-release。
+
+### 已发布的正式 Release → npm `latest` 与附件
+
+1. 将 `scripts/package-npm.mjs` 中的 `packageVersion` 设为稳定版本，更新发布说明，完成验证并合并到 main。稳定标签必须与该提交的包版本一致；创建 Release 不会改写源码版本。
+2. 为 main 上已审阅的提交创建严格的稳定标签 `vX.Y.Z`。创建对应 GitHub Release 并点击 **Publish release**，不勾选 **pre-release**（`prerelease: false`）。草稿、编辑 Release 或仅推送标签不会发布稳定包。预发布标签和 GitHub pre-release 都不是发布入口。
+3. `release: published` 事件启动 **Publish npm**。工作流验证稳定标签、main 祖先关系及正式 Release 元数据，解析不可变提交，再运行四个平台的安装包测试（Linux/macOS × x64/arm64）和 Linux/macOS × 基准/latest/next 的真实 DSH 检查。仅实际配置审批规则时才有环境审批。
+4. 全部门禁通过后，Actions 校验包名和版本，通过 OIDC 将经过 Ubuntu 测试的同一个 tarball 发布到 npm `latest`，不重新构建。仅公开源码仓库请求 provenance。
+5. npm 发布成功后，Actions 将同一个 `.tgz` 和 `SHA256SUMS` 附加到该已有正式 Release，不悄悄覆盖附件。当前私有仓库的 Release 下载仍需仓库权限；npm 包则是公开的。
+
+### 手动 Actions 触发与故障恢复
+
+在 `main` 上通过 `workflow_dispatch` 运行 **Publish npm**，在 `confirm` 中输入 `publish-turnwire`。`tag` 输入是**可选的**：
+
+- `tag` 留空：将当前 main 的唯一预览版本发布到 npm `next`，不创建 GitHub Release，也不上传 Release 附件。
+- 填入已有稳定标签 `vX.Y.Z`：仅用于修复该标签**已经发布的正式 Release**（`draft: false`、`prerelease: false`）。仍需通过相同源码、版本和测试门禁；工作流发布到 `latest` 并上传附件到已有 Release，不创建 Release。拒绝任意预发布标签，以及不存在、草稿或 pre-release 的 Release。
+
+如果 npm 已成功但附件上传失败，不会回滚 npm。检查原运行及附件后，应在**同一次 Actions 运行**选择 **Re-run failed jobs**，复用原先测试过的制品与版本。不要在本地重新构建、重复发布不可变的 npm 版本或本地上传附件。重新发起一次 dispatch 不是该部分成功运行的恢复方式。所有发布和上传仍只能由 Actions 完成，不允许本地 npm publish 或 `gh release upload` 兜底。
 
 PR 无法直接触发发布；标签输入先验证再检出其源码。只有 npm publish 作业获得 `id-token: write`，Release 上传作业只获得所需的仓库写权限。发布不运行包生命周期脚本，也不重新构建测试过的 tarball。OIDC 绑定失败必须停止，不自动退回高权限 token。这份文档说明所配置的自动化，不表示已创建新的 Release 或执行过一次新的自动 npm 发布。
 

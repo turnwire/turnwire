@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error JavaScript operator helper
-import { assertBundled, packageManifest } from '../scripts/package-npm.mjs';
+import { assertBundled, packageManifest, distributionVersion } from '../scripts/package-npm.mjs';
 
 describe('standalone npm package boundary', () => {
   it('publishes one preview app without private workspace dependencies or install hooks', () => {
@@ -14,6 +14,10 @@ describe('standalone npm package boundary', () => {
     expect(manifest.scripts).toBeUndefined();
     expect(manifest.files).not.toContain('node_modules');
     expect(manifest.files).toEqual(expect.arrayContaining(['README.md', 'README.zh.md']));
+  });
+  it('allows CI preview overrides but never stable or unrelated version overrides', () => {
+    expect(distributionVersion({ TURNWIRE_NPM_PREVIEW_VERSION: '0.1.0-next.42.abc123abcdef' })).toBe('0.1.0-next.42.abc123abcdef');
+    for (const value of ['0.1.0', '1.0.0-next.42.abc123abcdef', '0.1.0-next.0.abc123abcdef', '../bad']) expect(() => distributionVersion({ TURNWIRE_NPM_PREVIEW_VERSION: value })).toThrow();
   });
   it('rejects unresolved workspaces and third-party runtime imports', () => {
     const graph = (path: string) => ({ outputs: { 'main.js': { imports: [{ external: true, path }] } } });

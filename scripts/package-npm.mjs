@@ -12,7 +12,13 @@ import { tmpdir } from 'node:os';
 import { buildDaemonArtifact } from './build-identity.mjs';
 
 export const packageVersion = '0.1.0-next.1';
-export const packageManifest = () => ({ name: 'turnwire', version: packageVersion, description: 'Self-hosted agent sessions across your terminal, browser and phone', type: 'module', license: 'Apache-2.0', bin: { turnwire: 'bin/turnwire.mjs' }, engines: { node: '>=22.13.0' }, os: ['linux', 'darwin'], files: ['bin/', 'apps/', 'config/', 'licenses/', 'README.md', 'README.zh.md', 'LICENSE'], publishConfig: { access: 'public', tag: 'next' }, repository: { type: 'git', url: 'git+https://github.com/turnwire/turnwire.git' }, homepage: 'https://github.com/turnwire/turnwire', bugs: { url: 'https://github.com/turnwire/turnwire/issues' } });
+export function distributionVersion(env = process.env) {
+  const preview = env.TURNWIRE_NPM_PREVIEW_VERSION;
+  if (!preview) return packageVersion;
+  if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-next\.[1-9][0-9]*\.[0-9a-f]{12}$/.test(preview) || !preview.startsWith(packageVersion.split('-')[0] + '-next.')) throw Error('Invalid CI preview version');
+  return preview;
+}
+export const packageManifest = () => ({ name: 'turnwire', version: distributionVersion(), description: 'Self-hosted agent sessions across your terminal, browser and phone', type: 'module', license: 'Apache-2.0', bin: { turnwire: 'bin/turnwire.mjs' }, engines: { node: '>=22.13.0' }, os: ['linux', 'darwin'], files: ['bin/', 'apps/', 'config/', 'licenses/', 'README.md', 'README.zh.md', 'LICENSE'], publishConfig: { access: 'public', tag: distributionVersion().includes('-') ? 'next' : 'latest' }, repository: { type: 'git', url: 'git+https://github.com/turnwire/turnwire.git' }, homepage: 'https://github.com/turnwire/turnwire', bugs: { url: 'https://github.com/turnwire/turnwire/issues' } });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = join(root, 'artifacts/npm/turnwire');
 const banner = "import { createRequire as __twCreateRequire } from 'node:module'; const require = __twCreateRequire(import.meta.url);";

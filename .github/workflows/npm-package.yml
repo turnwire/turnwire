@@ -8,6 +8,10 @@ on:
       revision:
         required: true
         type: string
+      preview-version:
+        required: false
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -33,6 +37,8 @@ jobs:
         if: inputs.revision != '' && matrix.os == 'ubuntu-latest'
         run: npm run typecheck && npm test
       - name: Build the standalone distribution
+        env:
+          TURNWIRE_NPM_PREVIEW_VERSION: ${{ inputs.preview-version }}
         run: |
           npm run build
           node scripts/package-npm.mjs

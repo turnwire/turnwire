@@ -2,7 +2,7 @@ English · [中文](NPM.zh.md)
 
 # npm distribution and releases
 
-The public package and executable are both **turnwire**. [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) is published. Its registry integrity matches the reviewed tarball; isolated registry installation, CLI/doctor and packaged demo/Web smoke passed. It remains a preview, not a stable or signed native release. At initial verification both `next` and `latest` pointed to this preview; use `@next` explicitly. Trusted Publisher binding has not yet been confirmed; the workflow alone does not establish npm authorization.
+The public package and executable are both **turnwire** ([npm](https://www.npmjs.com/package/turnwire)). Use `@next` explicitly for previews. Under the current policy, pushes to `main` publish unique test versions to npm `next` through GitHub Actions, without a GitHub Release. Only a published formal GitHub Release with a stable `vX.Y.Z` tag and `prerelease: false` authorizes the normal stable path to npm `latest` and Release assets. All npm publication and Release asset uploads are Actions-only; local publication and local upload fallbacks are prohibited. The policy below is not evidence that a new workflow run has been tested.
 
 ## User experience
 
@@ -57,19 +57,11 @@ npm pack ./artifacts/npm/turnwire --dry-run
 
 `.github/workflows/check.yml` remains the full type/test/build gate. `npm-package.yml` adds Linux/macOS package-install smoke checks outside the checkout: install the tarball without lifecycle scripts, then execute `--help`, `--version`, and offline `doctor --json` with isolated directories. It also starts the installed demo daemon on an ephemeral port and verifies health, authenticated `system.snapshot` RPC, matching Web contract and static assets. The matrix targets Linux x64/arm64 and macOS arm64/x64 using GitHub-hosted runner labels. These smoke checks do **not** prove live DSH installation, model execution, phone connectivity, background services or every CPU architecture. macOS validation is performed by Actions, not claimed from Linux development testing.
 
-## First publication (maintainer bootstrap)
+## Publication history (not current instructions)
 
-1. Confirm `npm whoami`, name availability and account 2FA. Do not store a token in this repository.
-2. Review the source commit, successful CI results, tarball file list and package version. The first package must be `turnwire@0.1.0-next.0` (or deliberately revise the preview version before tagging).
-3. Publish the **reviewed tarball** from a trusted local terminal, using interactive npm authentication:
+`0.1.0-next.0` was published manually during the initial bootstrap. Its registry integrity matched the reviewed tarball, and isolated registry installation, CLI/doctor and packaged demo/Web smoke passed. At that historical verification, both `next` and `latest` pointed to the preview. `0.1.0-next.1` was subsequently published to npm by Actions, with Release assets uploaded manually. These are historical exceptions, not the current release policy or fallback procedures. They do not establish validation of the new main-push/stable-Release automation, stable readiness, or signed native releases.
 
-   ```sh
-   npm publish ./artifacts/npm/tarballs/turnwire-0.1.0-next.0.tgz --access public --tag next
-   ```
-
-   This is a manual authorization step, not an instruction to publish before validation. Do not run it from the workspace root without the tarball path. Do not claim local bootstrap provenance if none was generated.
-4. Verify `npm view turnwire@next name version dist.integrity` and install that registry version in a clean environment.
-5. Configure Trusted Publisher on the newly created npm package.
+The former local first-publication instructions are retired. All future npm publications and Release asset uploads must run in Actions using the workflow below; authorization failures must be fixed there, not bypassed locally.
 
 ## GitHub Trusted Publisher setup
 
@@ -80,22 +72,36 @@ In npm's package settings, configure GitHub Actions with:
 - Workflow filename: **`npm-release.yml`**
 - Environment: **`npm-release`**
 
-In GitHub configure the `npm-release` environment to allow the `main` branch (manual fallback) and `v*` tags (published Release events). A Release run uses its tag ref, so a main-only environment policy blocks it. The `v*` policy is an environment admission rule, not version validation: the workflow separately enforces the stricter supported version syntax and main ancestry. Protect main and version tags, limit who may publish Releases, and carefully review workflow changes. Required reviewers may be added where the plan supports them; merely naming an environment does not configure approval protection. Use GitHub-hosted runners. The workflow uses Node 24 and npm 11.6.2 for OIDC publishing, separate from application Node requirements. No `NPM_TOKEN` secret is needed, but the npm Trusted Publisher binding above is mandatory and is not yet confirmed.
+Keep the existing npm Trusted Publisher binding unchanged. In GitHub configure the `npm-release` environment to allow the `main` branch (push previews and manual dispatch) and `v*` tags (published stable Release events). A Release run uses its tag ref, so a main-only environment policy blocks it. The `v*` policy is an environment admission rule, not version validation: the workflow separately enforces the stricter supported version syntax and main ancestry. Protect main and version tags, limit who may publish Releases, and carefully review workflow changes. Required reviewers may be added where the plan supports them; merely naming an environment does not configure approval protection. Use GitHub-hosted runners. The workflow uses Node 24 and npm 11.6.2 for OIDC publishing, separate from application Node requirements. No `NPM_TOKEN` secret is needed, but the npm Trusted Publisher binding above is mandatory; a workflow file alone does not establish npm authorization.
 
-The current GitHub repository is private. npm provenance is unsupported for private source repositories even for public npm packages; the workflow explicitly disables provenance for private repositories while retaining OIDC authentication, and enables it if the repository is public. It does not change repository visibility. This repository's current plan does not support required environment reviewers: do not claim an independent approval gate is active. Limit `npm-release` to main and `v*` tags and restrict repository/Release write permissions. Publishing a GitHub Release is the normal human authorization boundary; the typed main-branch dispatch remains a manual fallback. If independent approval is required, use a plan/protection mechanism that supports it before enabling automated release.
+The current GitHub repository is private. npm provenance is unsupported for private source repositories even for public npm packages; the workflow explicitly disables provenance for private repositories while retaining OIDC authentication, and enables it if the repository is public. It does not change repository visibility. This repository's current plan does not support required environment reviewers: do not claim an independent approval gate is active. Limit `npm-release` to main and `v*` tags and restrict repository/Release write permissions. Merging or pushing to protected main authorizes an automated preview; publishing a formal GitHub Release is the normal stable authorization boundary. Typed main-branch dispatch is limited to a preview of current main or repair of an existing formal Release. If independent approval is required, use a plan/protection mechanism that supports it before enabling automated release.
 
 Reference: [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) and [npm provenance](https://docs.npmjs.com/generating-provenance-statements/). Check these requirements again when changing CI versions.
 
-## Subsequent release
+## Main previews and stable releases
 
-1. Update `packageVersion` in `scripts/package-npm.mjs` and release notes; run validation and merge to main. The version in the tag must match the package built from that commit; creating a Release does not rewrite source versions.
-2. Create a version tag pointing to the reviewed main commit, for example `v0.1.0-next.1`.
-3. Create a GitHub Release for that tag and click **Publish release**. Mark `vX.Y.Z-next.N` as a **pre-release**; leave `vX.Y.Z` as a regular release. The pre-release checkbox must agree with the tag. Draft creation, Release edits, and pushing a tag alone do not trigger publication.
-4. The `release: published` event automatically starts **Publish npm**. It checks tag syntax, main ancestry, and Release pre-release metadata, resolves an immutable commit, then runs the four-platform package tests (Linux/macOS × x64/arm64) and real Linux/macOS DSH baseline/latest/next checks. Environment approval applies only if actually configured.
-5. After every gate passes, it validates the package name/version and publishes the exact tested Ubuntu tarball to npm through OIDC, without rebuilding it. `vX.Y.Z-next.N` goes to `next`; `vX.Y.Z` goes to `latest`. Other prerelease formats are rejected. Provenance is requested only when the source repository is public.
-6. Only after npm publication succeeds, it attaches that same `.tgz` and `SHA256SUMS` to the existing GitHub Release. Existing assets are not overwritten; a name conflict fails instead of silently replacing downloads. Because this repository is private, its Release downloads remain access-controlled even though the npm package is public.
+### Main pushes → npm `next`, no GitHub Release
 
-**Manual fallback:** run **Publish npm** from `main`, enter the existing tag, and type `publish-turnwire`. The same source/version/test gates apply. This fallback does not create a GitHub Release or upload Release assets. If npm succeeds but asset upload fails, npm publication is not rolled back—inspect the run and existing assets before retrying; never assume the two services update transactionally.
+Every push to `main` starts **Publish npm** in `.github/workflows/npm-release.yml`. The workflow takes the version from `scripts/package-npm.mjs`, strips its prerelease suffix to obtain the stable base, and derives a unique test version as `<base>-next.<github.run_number>.<shortsha>` from the immutable source commit. For example, base `0.1.0` produces a version shaped like `0.1.0-next.123.abcdef0`. The generated version is used for packaging, testing and publication; it is not a local source-version edit. A new run gets a new run number, while rerunning the same run retains its version.
+
+After the package and DSH gates pass, Actions publishes the exact tested tarball to npm `next`. It neither creates a GitHub Release nor uploads Release assets. Preview publication never targets `latest` and does not require a prerelease tag or GitHub pre-release.
+
+### Published formal Release → npm `latest` and assets
+
+1. Set the stable `packageVersion` in `scripts/package-npm.mjs`, update release notes, validate and merge to main. The stable tag must match the package version at that commit; a Release does not rewrite source versions.
+2. Create a strict stable `vX.Y.Z` tag pointing to a reviewed commit on main. Create its GitHub Release and click **Publish release**, leaving **pre-release** unchecked (`prerelease: false`). Drafts, Release edits and tag pushes alone do not publish stable packages. Prerelease tags and GitHub pre-releases are not a publishing path.
+3. The `release: published` event starts **Publish npm**. It validates the stable tag, main ancestry and formal Release metadata, resolves the immutable commit, and runs four-platform package tests (Linux/macOS × x64/arm64) plus real Linux/macOS DSH baseline/latest/next checks. Environment approval applies only if actually configured.
+4. After all gates pass, Actions validates package name/version and publishes the exact tested Ubuntu tarball to npm `latest` through OIDC, without rebuilding it. Provenance is requested only for public source repositories.
+5. After npm publication succeeds, Actions attaches the same `.tgz` and `SHA256SUMS` to that existing formal Release. Assets are not silently overwritten. This private repository's Release downloads remain access-controlled even though the npm package is public.
+
+### Manual Actions dispatch and recovery
+
+Run **Publish npm** using `workflow_dispatch` on `main` and type `publish-turnwire` in `confirm`. The `tag` input is **optional**:
+
+- Leave `tag` empty to publish a unique preview of current main to npm `next`, with no GitHub Release or Release assets.
+- Supply an existing stable `vX.Y.Z` tag only to repair its **already published formal Release** (`draft: false`, `prerelease: false`). The same source/version/test gates apply; the workflow publishes to `latest` and uploads assets to that existing Release. It does not create a Release. Arbitrary prerelease tags and missing, draft or pre-release Releases are rejected.
+
+If npm succeeds but an asset upload fails, publication is not rolled back. Inspect the original run and assets, then use **Re-run failed jobs** on that same Actions run so recovery uses its original tested artifact and version. Do not start a new local rebuild, republish an immutable npm version, or upload assets locally. A new dispatch is not the recovery procedure for this partially successful run. All publication and uploads remain Actions-only, with no local npm publish or `gh release upload` fallback.
 
 PRs cannot trigger publication. Tag input is validated before checking out its source. Only the npm publish job receives `id-token: write`; the Release upload receives the narrowly scoped repository write permission it needs. No package lifecycle scripts run during publishing, and the tested tarball is not rebuilt. Failed OIDC binding must stop publication, with no broad-token fallback. This documentation describes the configured automation; it does not claim that a new Release or an automatic npm publication has been executed.
 

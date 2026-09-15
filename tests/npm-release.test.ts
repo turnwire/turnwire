@@ -7,20 +7,32 @@ import { spawnSync } from 'node:child_process';
 const workflow = readFileSync(new URL('../.github/workflows/npm-release.yml', import.meta.url), 'utf8');
 const validation = workflow.split('          set -euo pipefail\n')[1]!.split('  test-package:')[0]!.split('\n').map(line => line.replace(/^          /, '')).join('\n');
 // Stub only Git metadata. Execute the actual workflow's tag/channel validation.
-const git = `git() { case "$1" in rev-parse) echo abc123 ;; merge-base) return 0 ;; *) return 1 ;; esac; }\n`;
+const git = `git() { case "$1" in rev-parse) echo abc123abcdef456789 ;; merge-base) return 0 ;; *) return 1 ;; esac; }\ngh() { printf '{"id":123,"draft":false,"prerelease":%s,"tag_name":"%s"}' "\${MOCK_PRERELEASE:-false}" "$RELEASE_TAG"; }\n`;
 describe('npm Release publication policy', () => {
   it('accepts only matching preview/stable release flags and safe version tags', () => {
     const home = mkdtempSync(join(tmpdir(), 'turnwire-release-policy-'));
     try {
       for (const [tag, prerelease, ok] of [
-        ['v0.1.0-next.1', 'true', true], ['v1.2.3', 'false', true],
+        ['v0.1.0-next.1', 'true', false], ['v1.2.3', 'false', true],
         ['v1.2.3', 'true', false], ['v0.1.0-next.1', 'false', false],
         ['v1.2.3-beta.1', 'true', false], ['v01.2.3', 'false', false],
         ['v1.2.3;echo bad', 'false', false],
       ] as const) {
-        const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + git + validation], { env: { PATH: process.env.PATH, RELEASE_TAG: tag, RELEASE_EVENT: 'release', RELEASE_PRERELEASE: prerelease, GITHUB_OUTPUT: join(home, 'output') }, encoding: 'utf8' });
+        const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + git + validation], { env: { PATH: process.env.PATH, RUNNER_TEMP: home, GH_REPO: 'turnwire/turnwire', RELEASE_TAG: tag, RELEASE_EVENT: 'release', RELEASE_PRERELEASE: prerelease, GITHUB_OUTPUT: join(home, 'output') }, encoding: 'utf8' });
         expect(result.status === 0, `${tag}/${prerelease}: ${result.stderr}`).toBe(ok);
       }
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+  it('publishes main only to unique next versions without creating a Release', () => {
+    const home = mkdtempSync(join(tmpdir(), 'turnwire-main-policy-'));
+    try {
+      const output = join(home, 'output');
+      const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + git + validation], { env: { PATH: process.env.PATH, RELEASE_TAG: '', RELEASE_EVENT: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_RUN_NUMBER: '42', GITHUB_OUTPUT: output }, encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      const text = readFileSync(output, 'utf8');
+      expect(text).toContain('version=0.1.0-next.42.abc123abcdef');
+      expect(text).toContain('channel=next');
+      expect(text).not.toContain('release_id=');
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
   it('gates publication on package and real DSH tests and confines write permissions', () => {
