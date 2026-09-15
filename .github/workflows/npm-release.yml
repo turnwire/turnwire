@@ -1,6 +1,8 @@
 name: Publish npm
-run-name: Publish ${{ inputs.tag }} to npm
+run-name: Publish ${{ github.event.release.tag_name || inputs.tag }} to npm
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -18,12 +20,16 @@ concurrency:
   cancel-in-progress: false
 jobs:
   authorize:
-    if: github.repository == 'turnwire/turnwire' && github.ref == 'refs/heads/main' && inputs.confirm == 'publish-turnwire'
+    if: >-
+      github.repository == 'turnwire/turnwire' &&
+      ((github.event_name == 'release' && github.event.action == 'published' && !github.event.release.draft) ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm == 'publish-turnwire'))
     runs-on: ubuntu-latest
     outputs:
       revision: ${{ steps.tag.outputs.revision }}
       version: ${{ steps.tag.outputs.version }}
       channel: ${{ steps.tag.outputs.channel }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,7 +38,9 @@ jobs:
       - name: Validate tag and release channel
         id: tag
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -40,6 +48,16 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-next\.(0|[1-9][0-9]*))?$ ]]
           revision=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
           git merge-base --is-ancestor "$revision" origin/main
+          if [[ "$RELEASE_EVENT" == release ]]; then
+            if [[ "$RELEASE_TAG" == *-next.* ]]; then
+              test "$RELEASE_PRERELEASE" = true
+            else
+              test "$RELEASE_PRERELEASE" = false
+            fi
+            # Ref must still identify the commit checked out for this release event.
+            test "$revision" = "$(git rev-parse HEAD)"
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
           if [[ "$RELEASE_TAG" == *-next.* ]]; then
@@ -92,9 +110,74 @@ jobs:
             if (p.scripts?.prepublishOnly || p.scripts?.publish || p.scripts?.postpublish) throw Error("Publication hooks are not allowed");
           '
           sha256sum "${packages[0]}"
+      - name: Check for an identical already-published version
+        id: registry
+        env:
+          EXPECTED_VERSION: ${{ needs.authorize.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.authorize.outputs.channel }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import { createHash } from 'node:crypto';
+          const version = process.env.EXPECTED_VERSION;
+          const response = await fetch(`https://registry.npmjs.org/turnwire/${encodeURIComponent(version)}`, { signal: AbortSignal.timeout(15000) });
+          if (response.status === 404) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'exists=false\n');
+          } else {
+            if (!response.ok) throw Error(`Registry check failed: ${response.status}`);
+            const metadata = await response.json();
+            const bytes = fs.readFileSync(`release/turnwire-${version}.tgz`);
+            const integrity = 'sha512-' + createHash('sha512').update(bytes).digest('base64');
+            if (metadata.name !== 'turnwire' || metadata.version !== version || metadata.dist?.integrity !== integrity) throw Error('Published version differs from tested artifact; never overwrite');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'exists=true\n');
+          }
+          JS
       - name: Publish via npm trusted OIDC
+        if: steps.registry.outputs.exists != 'true'
         env:
           RELEASE_CHANNEL: ${{ needs.authorize.outputs.channel }}
           NPM_CONFIG_PROVENANCE: ${{ !github.event.repository.private }}
         # npm provenance is unsupported for private source repos; OIDC authentication remains in use.
         run: npm publish release/*.tgz --ignore-scripts --access public --tag "$RELEASE_CHANNEL" --registry https://registry.npmjs.org
+  release-assets:
+    if: github.event_name == 'release'
+    needs: [authorize, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package-ubuntu-latest
+          path: release
+      - name: Attach published package and checksum to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+          EXPECTED_VERSION: ${{ needs.authorize.outputs.version }}
+          EXPECTED_RELEASE_ID: ${{ github.event.release.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(release/*.tgz)
+          test "${#packages[@]}" -eq 1
+          test "$(basename "${packages[0]}")" = "turnwire-$EXPECTED_VERSION.tgz"
+          test "$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq .id)" = "$EXPECTED_RELEASE_ID"
+          test "$(gh api "repos/$GH_REPO/releases/$EXPECTED_RELEASE_ID" --jq .draft)" = false
+          (cd release && sha256sum "turnwire-$EXPECTED_VERSION.tgz" > SHA256SUMS)
+          # No --clobber: never replace a release artifact silently. On rerun,
+          # accept only byte-identical assets already attached by this workflow.
+          mkdir existing
+          for file in "${packages[0]}" release/SHA256SUMS; do
+            name=$(basename "$file")
+            count=$(gh api "repos/$GH_REPO/releases/$EXPECTED_RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$name\") | .id" | wc -l)
+            if [[ "$count" -gt 0 ]]; then
+              gh release download "$RELEASE_TAG" --pattern "$name" --dir existing
+              cmp "$file" "existing/$name"
+            else
+              gh release upload "$RELEASE_TAG" "$file"
+            fi
+          done
