@@ -2,6 +2,8 @@ English · [中文](CLIENTS.zh.md)
 
 # Capability parity and code ownership
 
+The Web/PWA composer sends with Enter and inserts a newline with Shift+Enter; Alt+Enter retains steering. IME candidate confirmation and held-key repeats never send. Existing session permission and busy-state checks still apply.
+
 ## Platform-specific installation details
 
 Choose clients independently from the execution host. The current native desktop implementation targets macOS 14+ and requires Xcode 16+ / Swift 6 to build: from the separate desktop checkout, `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app`. The bundle is ad-hoc signed; public native distribution additionally requires Developer ID signing and notarization. These are requirements of that optional client, not an assumption about every user's host.

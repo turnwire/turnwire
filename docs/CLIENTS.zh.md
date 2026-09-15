@@ -2,6 +2,8 @@
 
 # 能力对等与代码归属
 
+Web/PWA 消息输入框使用 Enter 发送、Shift+Enter 换行；Alt+Enter 保留插话发送。中文等输入法确认候选与按键长按不会触发发送。发送动作仍复用原有会话权限与忙碌状态检查。
+
 ## 特定平台的安装细节
 
 客户端可独立于执行主机选择。当前原生桌面实现面向 macOS 14+，构建需要 Xcode 16+ / Swift 6；在独立桌面仓库中执行 `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app`。产物为 ad-hoc 签名，对外分发还需要 Developer ID 签名和 notarization。这些是该可选客户端的要求，不代表所有用户的执行主机都必须采用此平台。
