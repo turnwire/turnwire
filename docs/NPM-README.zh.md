@@ -2,6 +2,9 @@
 
 # Turnwire
 
+[![npm next](https://img.shields.io/npm/v/turnwire/next?label=npm%20next)](https://www.npmjs.com/package/turnwire/v/next)
+[![npm latest](https://img.shields.io/npm/v/turnwire/latest?label=npm%20latest)](https://www.npmjs.com/package/turnwire/v/latest)
+
 在终端、浏览器和手机间继续同一个自托管 Agent 会话。任务由主机上的 DeepSeek Harness（DSH）执行，模型凭据只留在主机。
 
 ## 安装预览版

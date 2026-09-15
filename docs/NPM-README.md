@@ -2,6 +2,9 @@ English · [中文](NPM-README.zh.md)
 
 # Turnwire
 
+[![npm next](https://img.shields.io/npm/v/turnwire/next?label=npm%20next)](https://www.npmjs.com/package/turnwire/v/next)
+[![npm latest](https://img.shields.io/npm/v/turnwire/latest?label=npm%20latest)](https://www.npmjs.com/package/turnwire/v/latest)
+
 Self-hosted agent sessions across your terminal, browser and phone. The host runs tasks through DeepSeek Harness (DSH); model credentials stay on the host.
 
 ## Install the preview

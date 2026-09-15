@@ -2,6 +2,9 @@
 
 # Turnwire
 
+[![npm next](https://img.shields.io/npm/v/turnwire/next?label=npm%20next)](https://www.npmjs.com/package/turnwire/v/next)
+[![npm latest](https://img.shields.io/npm/v/turnwire/latest?label=npm%20latest)](https://www.npmjs.com/package/turnwire/v/latest)
+
 同一个 Agent 会话，在 Mac、终端和手机上接续：**主机负责干活，手机负责随时接话和审批。**
 
 ### 它们如何协作

@@ -2,6 +2,9 @@ English · [中文](README.zh.md)
 
 # Turnwire
 
+[![npm next](https://img.shields.io/npm/v/turnwire/next?label=npm%20next)](https://www.npmjs.com/package/turnwire/v/next)
+[![npm latest](https://img.shields.io/npm/v/turnwire/latest?label=npm%20latest)](https://www.npmjs.com/package/turnwire/v/latest)
+
 One agent session, continued across a Mac, a terminal, and a phone: **the host does the work, the phone lets you jump in and approve at any time.**
 
 ### How it fits together
