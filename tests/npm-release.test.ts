@@ -25,6 +25,8 @@ describe('npm Release publication policy', () => {
   });
   it('gates publication on package and real DSH tests and confines write permissions', () => {
     expect(workflow).toContain('types: [published]');
+    expect(workflow).toContain('npm publish ./release/*.tgz');
+    expect(workflow).not.toContain('npm publish release/*.tgz');
     expect(workflow).toContain('needs: [authorize, test-package, test-dsh]');
     expect(workflow).toContain("inputs.confirm == 'publish-turnwire'");
     expect(workflow).toContain('git merge-base --is-ancestor');

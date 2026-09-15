@@ -138,7 +138,7 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.authorize.outputs.channel }}
           NPM_CONFIG_PROVENANCE: ${{ !github.event.repository.private }}
         # npm provenance is unsupported for private source repos; OIDC authentication remains in use.
-        run: npm publish release/*.tgz --ignore-scripts --access public --tag "$RELEASE_CHANNEL" --registry https://registry.npmjs.org
+        run: npm publish ./release/*.tgz --ignore-scripts --access public --tag "$RELEASE_CHANNEL" --registry https://registry.npmjs.org
   release-assets:
     if: github.event_name == 'release'
     needs: [authorize, publish]
