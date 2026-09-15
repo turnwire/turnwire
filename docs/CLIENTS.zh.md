@@ -2,6 +2,12 @@
 
 # 能力对等与代码归属
 
+## 特定平台的安装细节
+
+客户端可独立于执行主机选择。当前原生桌面实现面向 macOS 14+，构建需要 Xcode 16+ / Swift 6；在独立桌面仓库中执行 `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app`。产物为 ad-hoc 签名，对外分发还需要 Developer ID 签名和 notarization。这些是该可选客户端的要求，不代表所有用户的执行主机都必须采用此平台。
+
+当前后台主机安装器面向 Linux + systemd：在构建好的 release 中运行 `scripts/install-linux-host.sh`，先创建私有 DSH 环境文件（默认 `~/.config/turnwire/dsh.env.json`；支持 `TURNWIRE_CONFIG_HOME`、`XDG_CONFIG_HOME`、`TURNWIRE_DSH_ENV_FILE`）。该特定安装路径见[快速开始](QUICKSTART.zh.md)。npm 主机平台约束和已验证范围仍在 [npm 安装说明](NPM.zh.md) 中明确记录；产品介绍采用中立措辞不代表扩大兼容性承诺。
+
 Web 设置不会向可编辑字段回填已保存的配对码或本机令牌。更换连接需重新输入凭据，取消保留当前连接。“在此浏览器记住连接”仅控制浏览器保存方式，不改变主机授权；切换立即将当前凭据在 localStorage 与 sessionStorage 之间移动。开启通知不会隐式开启长期保存凭据。CLI/原生的凭据存储机制及所有连接权限不变。
 
 本机 CLI/TUI 和原生主机管理共用认证的 `/maintenance` 状态、开启、取消和整理操作。持有者令牌绑定的持久租约阻止 Turnwire 新任务提交，但保留取消任务、处理已有审批/问题。daemon 将本机管理写操作，以及异步部署、远程配置、直连监听和通知操作的完整生命周期纳入同一接纳计数。只有这些主机操作及托管运行时根会话、后代和队列都已知空闲才能就绪，未知时拒绝。重启恢复先取消属于旧运行时连接的审批，再检查维护租约，不因此恢复运行时工作。它不限制独立 DSH 客户端或无关会话。租约跨 daemon 重启保留，必须显式释放。释放后显式重新应用原远程配置，会根据期望配置与实际 transport 状态协调运行，包括恢复因租约而跳过的启动。相同请求不能重启正在连接、退避重试或服务中的 transport；就绪标签只是观测结果，不用于替代生命周期状态。`maintenance compact` 仅清理可重建导出缓存并执行 SQLite checkpoint/vacuum，永久保留 journal 序号和命令回执以维护恢复与幂等语义。

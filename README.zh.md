@@ -5,13 +5,13 @@
 [![npm next](https://img.shields.io/npm/v/turnwire/next?label=npm%20next)](https://www.npmjs.com/package/turnwire/v/next)
 [![npm latest](https://img.shields.io/npm/v/turnwire/latest?label=npm%20latest)](https://www.npmjs.com/package/turnwire/v/latest)
 
-同一个 Agent 会话，在 Mac、终端和手机上接续：**主机负责干活，手机负责随时接话和审批。**
+同一个 Agent 会话，在桌面浏览器、终端和手机上接续：**主机负责干活，手机负责随时接话和审批。**
 
 ### 它们如何协作
 
 ![Turnwire 架构：本地客户端和手机连接同一台主机，由主机保存共享状态并通过 DSH 执行任务。](docs/architecture.svg)
 
-- **客户端：** CLI、交互终端（TUI）、原生 Mac 应用和手机 PWA，都访问同一台主机、共享同一份会话状态。
+- **客户端：** 可使用桌面浏览器、CLI、交互终端（TUI）或手机 PWA，也可选用原生桌面客户端。各客户端访问同一台主机、共享同一份会话状态；能力覆盖与平台要求见[客户端文档](docs/CLIENTS.zh.md)。
 - **远程连接：** 手机通过 Relay 或已配置的隧道连接主机。配对后的会话通信经过加密，Relay 只转发密文。
 - **主机与状态：** `turnwire-host` 运行 Turnwire Core；SQLite 保存元数据、事件缓存、审批和命令回执。
 - **任务执行：** Turnwire Core 通过 `AgentRuntime` 接口将任务交给 DSH。模型凭据和任务执行始终留在主机上。
@@ -20,7 +20,7 @@
 
 - **离开电脑也不断线**：手机上看到同一条会话的实时进度，把下一步想法发回主机；消息要么排队等当前回合结束，要么直接插话引导它。
 - **审批在手机上完成**：需要放行的操作弹到手机，批准或拒绝一次有效，处理结果留在收件箱里可回查。
-- **一份状态，四端一致**：CLI、交互终端、原生 Mac 应用和手机 PWA 共享会话、历史、审批与模型选择，不是四套各记各的。
+- **多端共享一份状态**：桌面、浏览器、终端和手机共享会话、历史、审批与模型选择，不是各记各的；各客户端尚存的功能差异见[能力覆盖](docs/CLIENTS.zh.md)。
 - **模型由主机决定**：手机上也能切换会话模型与思考强度，只列出主机 runtime 真正注册的模型。
 - **跑在你自己的机器上**：异地连接走临时隧道或你自己部署的 Relay；主机主动连出，不需要把 daemon 端口暴露到公网。
 
@@ -28,16 +28,16 @@
 
 诚实前置，免得你走到一半才发现：
 
-1. **npm 预览版已发布**：[`turnwire@next`](https://www.npmjs.com/package/turnwire)，安装不需要源码仓库权限。它还不是稳定版，也不是已签名的 Mac 原生安装器；源码仓库仍为私有。
-2. **需要一台常开的主机**。Mac（推荐，能跑原生应用）或一台 Linux 机器都可以 —— 主机睡着，手机就连不上。
+1. **npm 预览版已发布**：[`turnwire@next`](https://www.npmjs.com/package/turnwire)，安装不需要源码仓库权限。它还不是稳定版，也不是已签名的原生桌面安装器；源码仓库仍为私有。
+2. **需要一台常开的主机**。请选择符合[主机要求](docs/QUICKSTART.zh.md)的机器 —— 主机睡着，手机就连不上。主机与可选原生客户端的平台支持范围不同，均不代表支持所有操作系统。
 3. **需要模型凭据，而且只留在主机上**。API key 由主机上的 DSH 读取，不进客户端、不进 Relay、不进隧道进程。
 
 ## 开始使用
 
-### 推荐：npm 预览版（Linux / macOS）
+### 推荐：npm 预览版
 
 <!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
-Linux / macOS 需要 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或 systemd：
+选择满足当前安装包与 runtime 要求的执行主机，并准备 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或系统服务配置：
 
 ```sh
 npx turnwire@next
@@ -48,41 +48,32 @@ turnwire --open
 
 **发布通道：** 推送到 `main` 时将预览版发布到 npm `next`。只有明确发布稳定版 GitHub Release 才会发布到 npm `latest`；推送 `main` 不会升级稳定版。使用 `turnwire@next` 获取当前预览版，不固定某个预览版本号。这是 Turnwire 的发布通道，与 DSH runtime 的通道不同。
 
-源码仓库仍为私有；从 npm 安装不需要访问权限。预览版不是稳定版，也不是已签名的 Mac 原生安装器。
+源码仓库仍为私有；从 npm 安装不需要访问权限。预览版不是稳定版，也不是已签名的原生桌面安装器。统一安装入口不代表支持所有操作系统，仍以安装包约束与 runtime 要求为准。
 <!-- END GENERATED INSTALL -->
 
 预览版以前台运行，请保持终端打开，不会安装系统服务。模型密钥通过隐藏输入提供，只留在主机。明确配置了已有 DSH 时会复用；否则询问安装 npm `latest`，解析为精确版本并先隔离验证。本机使用无需 Relay；手机远程访问需要另行配置。
 
 停止自己的前台实例后，可运行 `turnwire start --update-dsh`：先安装、检查新版本，通过后再切换。不自动降级、不热替换活跃 runtime、不更新外部 DSH；普通启动不会悄悄更新已有安装。
 
-详见[快速开始](docs/QUICKSTART.zh.md)、[npm 安装与发布](docs/NPM.zh.md)和[DSH 兼容性与边界](docs/DSH-COMPATIBILITY.zh.md)。兼容矩阵覆盖 Linux/macOS × 基准版/latest/next，不代表对未来任意上游改动的永久兼容保证。
+详见[快速开始](docs/QUICKSTART.zh.md)、[npm 安装与发布](docs/NPM.zh.md)和[DSH 兼容性与边界](docs/DSH-COMPATIBILITY.zh.md)。兼容矩阵在已配置的主机环境上覆盖基准版/latest/next，不代表对未来任意上游改动的永久兼容保证。
 
-### 可选：源码方式安装 Linux 服务
+### 可选：后台主机
 
-在源码目录运行 `bash scripts/start-host.sh`（已装 Node/npm 时也可 `npm start`）。首次自动准备主机并隐藏输入模型密钥；再次运行不打断正在运行的同目录服务，已安装但停止的服务直接启动。手机公网连接仍需明确配置。前置条件、安全边界及验证状态见[一命令启动](docs/QUICKSTART.zh.md)。
+需要主机在后台运行时，请参阅[快速开始中的服务安装说明](docs/QUICKSTART.zh.md)。安装前先确认对应的平台要求与安全边界；手机访问仍需单独明确配置。
 
 ### 第 1 步：主机跑起来
 
-有私有仓库访问权限的开发者也可以运行离线 Demo（不需要模型凭据）。这是上面 npm 启动之外的源码开发方式：
+在主机上启动上面的 npm 预览版，再用浏览器打开启动器输出的本机地址。要从其他客户端接续会话，请保持主机运行。
 
-```bash
-git clone https://github.com/turnwire/turnwire.git
-cd turnwire
-npm ci
-npm run build
-TURNWIRE_RUNTIME=demo npm run dev
-```
-
-浏览器打开 `http://127.0.0.1:9898`，选「本机连接」，填入 `npm run turnwire -- connect` 输出的地址和令牌。Demo 不调用模型、不运行 shell、不修改文件；输入包含「审批」时会产生一条演示审批。
-
-要接上真实模型（DeepSeek via DSH），见 [从源码开发](docs/DEVELOPING.zh.md)。
+有私有仓库访问权限的开发者可按[从源码开发](docs/DEVELOPING.zh.md)构建、运行离线 Demo，或通过 DSH 接入真实模型。Demo 不需要模型凭据，不调用模型、不运行 shell、不修改文件。
 
 ### 第 2 步：装上你要的客户端
 
 | 你想要 | 怎么装 | 需要什么 |
 | --- | --- | --- |
-| Mac 原生应用（最完整） | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+、Xcode 16+ / Swift 6；产物是 ad-hoc 签名，对外发布还需 Developer ID 与 notarization |
-| 常驻主机（Linux，无界面） | 在构建好的 release 里运行 `scripts/install-linux-host.sh` | Linux + systemd，且先写好私有 DSH 环境文件（默认 `~/.config/turnwire/dsh.env.json`；支持 `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME` 或 `TURNWIRE_DSH_ENV_FILE`） |
+| 桌面浏览器 | 打开主机启动器输出的本机地址 | 一台运行中的主机；见[快速开始](docs/QUICKSTART.zh.md) |
+| 原生桌面客户端（可选） | 见[客户端能力](docs/CLIENTS.zh.md)与[源码安装说明](docs/DEVELOPING.zh.md) | 先确认文档中的平台、构建与签名要求 |
+| 后台主机 | 见[服务安装说明](docs/QUICKSTART.zh.md) | 先确认文档中的平台与服务要求 |
 | 自托管 Relay（长期稳定地址） | `deploy/` 下有 Dockerfile、compose.yaml 与 Caddyfile | 一台服务器；详见[一键部署 Relay](docs/RELAY-INSTALL.zh.md) |
 | 终端 / 脚本 | `npm run turnwire -- ...`，或构建后 `node apps/cli/dist/main.js ...` | Node.js（最低版本见上文）；命令见[命令行参考](docs/CLI.zh.md) |
 
@@ -98,7 +89,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 
 通道就绪后生成配对二维码，手机打开已部署的 PWA 粘贴配对码即可。配对链接把密钥放在 URL fragment 中，网页接收后立即移除；默认只为本次浏览会话保存，勾选「记住这台受信任设备」才持久保存。
 
-> 国内网络可能连不上 Cloudflare 临时隧道，或出现延迟与不稳定 —— 它作为快速体验选项保留。长期使用建议选择在 Mac 和手机实际网络中验证过的自托管 Relay；免费 Quick Tunnel 不等同于 Cloudflare China Network（那是另行订阅的企业服务）。
+> 国内网络可能连不上 Cloudflare 临时隧道，或出现延迟与不稳定 —— 它作为快速体验选项保留。长期使用建议选择在主机和手机实际网络中验证过的自托管 Relay；免费 Quick Tunnel 不等同于 Cloudflare China Network（那是另行订阅的企业服务）。
 
 ## 手机上能做什么
 
@@ -110,7 +101,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 
 ## 已知限制
 
-- **Mac 要醒着、联网**：主机不在线，手机看不到进度。
+- **主机要醒着、联网**：主机不在线，手机看不到进度。
 - **手机推送需要自托管 Relay**：临时地址不支持长期推送（`turnwire notifications status` 会明确告诉你）。
 - **切换地址要重新配对**：临时隧道每次重启都会换地址。
 - **原生应用是 ad-hoc 签名**：只适合自用或内部分发。

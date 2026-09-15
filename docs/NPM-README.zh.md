@@ -10,7 +10,7 @@
 ## 安装预览版
 
 <!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
-Linux / macOS 需要 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或 systemd：
+选择满足当前安装包与 runtime 要求的执行主机，并准备 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或系统服务配置：
 
 ```sh
 npx turnwire@next
@@ -21,7 +21,7 @@ turnwire --open
 
 **发布通道：** 推送到 `main` 时将预览版发布到 npm `next`。只有明确发布稳定版 GitHub Release 才会发布到 npm `latest`；推送 `main` 不会升级稳定版。使用 `turnwire@next` 获取当前预览版，不固定某个预览版本号。这是 Turnwire 的发布通道，与 DSH runtime 的通道不同。
 
-源码仓库仍为私有；从 npm 安装不需要访问权限。预览版不是稳定版，也不是已签名的 Mac 原生安装器。
+源码仓库仍为私有；从 npm 安装不需要访问权限。预览版不是稳定版，也不是已签名的原生桌面安装器。统一安装入口不代表支持所有操作系统，仍以安装包约束与 runtime 要求为准。
 <!-- END GENERATED INSTALL -->
 
 这是预览版，不是稳定版或已签名的原生桌面发行版。无需源码仓库权限。npm 安装本身不会启动服务或安装 DSH；运行启动器后以前台运行，请保持终端打开，Ctrl-C 仅停止它拥有的进程。
@@ -48,7 +48,7 @@ DSH 更新需要明确执行：不自动降级、不热替换、不更新外部�
 
 ## 兼容性与边界
 
-连接时验证 DSH 核心认证响应结构，无法确认的可选能力保持未知。Linux/macOS × 基准/latest/next 的 CI 测试真实启动、模型目录、空会话、重启和进程所有权，不发送模型推理请求，也不保证未来任意 DSH 改动永久兼容。真实推理流、审批、图片和 steer 等仍需要更多端到端验证。
+连接时验证 DSH 核心认证响应结构，无法确认的可选能力保持未知。CI 在配置的平台矩阵上针对基准/latest/next 测试真实启动、模型目录、空会话、重启和进程所有权，不发送模型推理请求，也不保证未来任意 DSH 改动永久兼容。真实推理流、审批、图片和 steer 等仍需要更多端到端验证。
 
 源码仓库当前为私有；从 npm 安装不需要仓库权限。仓库内文档链接需要访问权限，包内提供本独立说明及英文版。
 

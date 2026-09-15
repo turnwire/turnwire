@@ -10,7 +10,7 @@ Self-hosted agent sessions across your terminal, browser and phone. The host run
 ## Install the preview
 
 <!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
-Linux / macOS requires **Node.js 22.13+** and npm. The published [npm preview](https://www.npmjs.com/package/turnwire) needs no repository access, source build or systemd setup:
+Choose an execution host that meets the current package and runtime requirements, with **Node.js 22.13+** and npm. The published [npm preview](https://www.npmjs.com/package/turnwire) needs no repository access, source build or system-service setup:
 
 ```sh
 npx turnwire@next
@@ -21,7 +21,7 @@ turnwire --open
 
 **Release channels:** pushes to `main` publish previews to npm `next`. Only an explicit stable GitHub Release publishes to npm `latest`; a `main` push does not promote a stable release. Use `turnwire@next` for the current preview rather than a pinned preview version. These are Turnwire channels, separate from the DSH runtime's channels.
 
-The source repository remains private; npm installation does not require access. The preview is not a stable release or a signed native Mac installer.
+The source repository remains private; npm installation does not require access. The preview is not a stable release or a signed native desktop installer. This entry point does not imply support for every operating system; package constraints and runtime requirements still apply.
 <!-- END GENERATED INSTALL -->
 
 This is a preview, not a stable or signed native desktop release. No source checkout is required. npm installation does not start a service or install DSH. Running the launcher starts a foreground host: keep the terminal open, and use Ctrl-C to stop owned processes.
@@ -48,7 +48,7 @@ Local use requires no Relay. Phone access is a separate pairing and remote-conne
 
 ## Compatibility and limits
 
-Core authenticated DSH response shapes are validated; optional unsupported or unavailable observations remain unknown. Linux/macOS baseline/latest/next CI exercises real no-inference startup, catalog, empty sessions, restart and process ownership. It does not guarantee every future DSH change or validate all real model streaming, approvals, image inference and steering scenarios.
+Core authenticated DSH response shapes are validated; optional unsupported or unavailable observations remain unknown. The configured platform matrix against baseline/latest/next exercises real no-inference startup, catalog, empty sessions, restart and process ownership. It does not guarantee every future DSH change or validate all real model streaming, approvals, image inference and steering scenarios.
 
 The source repository is currently private; installation from npm does not require repository access. Repository documentation links require access. This package includes this standalone guide and its Chinese translation.
 
