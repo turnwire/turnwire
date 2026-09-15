@@ -6,7 +6,7 @@ describe('standalone npm package boundary', () => {
   it('publishes one preview app without private workspace dependencies or install hooks', () => {
     const manifest = packageManifest();
     expect(manifest.name).toBe('turnwire');
-    expect(manifest.version).toBe('0.1.0-next.0');
+    expect(manifest.version).toBe('0.1.0-next.1');
     expect(manifest.bin).toEqual({ turnwire: 'bin/turnwire.mjs' });
     expect(manifest.os).toEqual(['linux', 'darwin']);
     expect(manifest.publishConfig).toEqual({ access: 'public', tag: 'next' });
