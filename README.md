@@ -88,31 +88,35 @@ See [quickstart](docs/QUICKSTART.md), [npm installation and release](docs/NPM.md
 
 For a host that runs in the background, see [service setup in the quickstart](docs/QUICKSTART.md). Check its platform requirements and safety boundaries before installing; phone access remains a separate explicit configuration step.
 
-### Step 1: Get the host running
+### Start the execution host
+
+Local use: start the host → open local Web or a terminal. Remote use: start the host → configure remote access → pair and connect. Remote users need not install a native client or complete a task in a local browser first. On a headless host, use `--no-open` and continue directly to [remote access setup](#configure-remote-access-when-needed).
 
 1. Run `node --version` and `npm --version` to check prerequisites, then `npx turnwire@next --open`.
 2. Follow prompts to install missing DSH and privately enter model credentials. For existing DSH, configure the explicit connection first using [quickstart](docs/QUICKSTART.md).
 3. Wait for startup. `--open` attempts to open authenticated local Web. If browser launch is unavailable, use `--no-open`, note the printed address, and run `npx turnwire@next connect` for local connection details. That output contains credentials: do not publish it.
 4. In another terminal, run `npx turnwire@next status` to inspect the running host and runtime. `npx turnwire@next doctor --json` checks the environment offline; it is not a live health check.
-5. In Web or the terminal, select a project workspace, create a session and send a task. Connecting to the host does not prove model credentials work; a real task validates model-service access.
+5. Local users can now select a project workspace, create a session and send a task in Web or the terminal. Remote users can perform this verification after configuring remote access and pairing. Connecting to the host does not prove model credentials work; a real task validates model-service access.
 
 If the default Web port is occupied, use `npx turnwire@next start --port 9900 --open`. Keep the host running. Ctrl-C stops its owned processes, never an external DSH.
 
 Contributors with access to the private repository can follow [Developing from source](docs/DEVELOPING.md) to build, run an offline Demo, or connect a real model through DSH. The Demo needs no model credentials and does not call a model, run a shell, or modify files.
 
-### Step 2: Choose an access client
+### Optional access clients (independent choices, not deployment steps)
 
 Clients let you view sessions, send tasks and handle approvals. They connect to the same execution host rather than maintaining independent task state; multiple clients can be used together.
 
 | Client | How to use it | Connection requirements |
 | --- | --- | --- |
-| Web / PWA (desktop or phone browser) | Open the launcher's local Web, or the configured HTTPS Web endpoint remotely; optionally add it to the home screen | Local authentication for local use; pair remote clients as described in the next step |
+| Web / PWA (desktop or phone browser) | Open the launcher's local Web, or the configured HTTPS Web endpoint remotely; optionally add it to the home screen | Local authentication for local use; pair remote clients using [remote access setup](#configure-remote-access-when-needed) |
 | Terminal (CLI / TUI, including scripts) | After npm installation, run `turnwire --help`; without a global installation, use `npx turnwire@next --help` | A running host and appropriate connection permissions; see [CLI reference](docs/CLI.md) |
 | Native desktop client (optional) | Build and use it according to [client documentation](docs/CLIENTS.md) | Meet that client's build, platform and signing requirements, then connect to the host |
 
 The execution host runs tasks; tunnels and Relay provide remote connectivity. Neither is a client.
 
-### Step 3: Get your phone connected
+### Configure remote access (when needed)
+
+Prerequisites are a running execution host, host-management permission and the configuration for your chosen remote endpoint—not a completed client-selection step. Local-only users can skip this section. After configuring the endpoint, remote users can pair using a phone or another device's browser; no native app installation is required.
 
 The local address `127.0.0.1` refers only to that machine itself, and `127.0.0.1` on your phone is the phone itself — so a remote connection must have a public channel. Three options:
 
