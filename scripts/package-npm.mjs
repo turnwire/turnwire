@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Produce an isolated, dependency-free npm distribution, never touch installed services.
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 import { build as buildWeb } from 'vite';
 import { mkdir, readFile, writeFile, cp, rm, chmod, readdir, mkdtemp } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -18,7 +19,7 @@ export function distributionVersion(env = process.env) {
   if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-next\.[1-9][0-9]*\.[0-9a-f]{12}$/.test(preview) || !preview.startsWith(packageVersion.split('-')[0] + '-next.')) throw Error('Invalid CI preview version');
   return preview;
 }
-export const packageManifest = () => ({ name: 'turnwire', version: distributionVersion(), description: 'Self-hosted agent sessions across your terminal, browser and phone', type: 'module', license: 'Apache-2.0', bin: { turnwire: 'bin/turnwire.mjs' }, engines: { node: '>=22.13.0' }, os: ['linux', 'darwin'], files: ['bin/', 'apps/', 'config/', 'licenses/', 'README.md', 'README.zh.md', 'LICENSE'], publishConfig: { access: 'public', tag: distributionVersion().includes('-') ? 'next' : 'latest' }, repository: { type: 'git', url: 'git+https://github.com/turnwire/turnwire.git' }, homepage: 'https://github.com/turnwire/turnwire', bugs: { url: 'https://github.com/turnwire/turnwire/issues' } });
+export const packageManifest = () => ({ name: 'turnwire', version: distributionVersion(), description: 'Self-hosted agent sessions across your terminal, browser and phone', type: 'module', license: 'Apache-2.0', bin: { turnwire: 'bin/turnwire.mjs' }, engines: { node: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).engines.node }, os: ['linux', 'darwin'], files: ['bin/', 'apps/', 'config/', 'licenses/', 'README.md', 'README.zh.md', 'LICENSE'], publishConfig: { access: 'public', tag: distributionVersion().includes('-') ? 'next' : 'latest' }, repository: { type: 'git', url: 'git+https://github.com/turnwire/turnwire.git' }, homepage: 'https://github.com/turnwire/turnwire', bugs: { url: 'https://github.com/turnwire/turnwire/issues' } });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = join(root, 'artifacts/npm/turnwire');
 const banner = "import { createRequire as __twCreateRequire } from 'node:module'; const require = __twCreateRequire(import.meta.url);";
@@ -28,6 +29,7 @@ export function assertBundled(meta) {
   }
 }
 export async function packageNpm() {
+  execFileSync(process.execPath, [join(root, 'scripts/sync-docs.mjs'), '--check'], { cwd: root, stdio: 'inherit' });
   await rm(output, { recursive: true, force: true }); await mkdir(output, { recursive: true });
   const alias = {};
   for (const name of await readdir(join(root, 'packages'))) {
@@ -95,6 +97,10 @@ export async function verifyPack(directory = output) {
     for (const file of packed.files) if (/(^|\/)(node_modules|\.env|client\.json|dsh\.env\.json|state|\.git)(\/|$)/.test(file.path)) throw Error(`Unexpected packed file: ${file.path}`);
     execFileSync('tar', ['-xzf', join(temporary, packed.filename), '-C', temporary]);
     const isolated = join(temporary, 'package');
+    for (const [source, target] of [['NPM-README.md', 'README.md'], ['NPM-README.zh.md', 'README.zh.md']]) {
+      const expected = (await readFile(join(root, 'docs', source), 'utf8')).replaceAll('(NPM-README.md)', '(README.md)').replaceAll('(NPM-README.zh.md)', '(README.zh.md)');
+      if (await readFile(join(isolated, target), 'utf8') !== expected) throw Error(`Packaged documentation differs from source: ${target}`);
+    }
     const env = { PATH: process.env.PATH, LANG: 'C.UTF-8', NODE_PATH: '', HOME: temporary, XDG_CONFIG_HOME: join(temporary, 'config'), XDG_STATE_HOME: join(temporary, 'state'), XDG_DATA_HOME: join(temporary, 'data'), XDG_CACHE_HOME: join(temporary, 'cache') };
     for (const key of Object.keys(env)) if (key.startsWith('TURNWIRE_')) delete env[key];
     const help = execFileSync(process.execPath, [join(isolated, 'apps/cli/dist/main.js'), '--help'], { cwd: temporary, env, encoding: 'utf8', timeout: 30000 });

@@ -41,7 +41,7 @@ jobs:
           TURNWIRE_NPM_PREVIEW_VERSION: ${{ inputs.preview-version }}
         run: |
           npm run build
-          node scripts/package-npm.mjs
+          node scripts/package-npm.mjs --verify
           mkdir -p artifacts/npm/tarballs
           npm pack ./artifacts/npm/turnwire --pack-destination ./artifacts/npm/tarballs
       - name: Install and smoke-test outside the checkout

@@ -25,7 +25,7 @@
 
 诚实前置，免得你走到一半才发现：
 
-1. **npm 预览版已发布**：[`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire)，安装不需要源码仓库权限。它还不是稳定版，也不是已签名的 Mac 原生安装器；源码仓库仍为私有。
+1. **npm 预览版已发布**：[`turnwire@next`](https://www.npmjs.com/package/turnwire)，安装不需要源码仓库权限。它还不是稳定版，也不是已签名的 Mac 原生安装器；源码仓库仍为私有。
 2. **需要一台常开的主机**。Mac（推荐，能跑原生应用）或一台 Linux 机器都可以 —— 主机睡着，手机就连不上。
 3. **需要模型凭据，而且只留在主机上**。API key 由主机上的 DSH 读取，不进客户端、不进 Relay、不进隧道进程。
 
@@ -33,7 +33,8 @@
 
 ### 推荐：npm 预览版（Linux / macOS）
 
-需要 **Node.js 22.13+** 和 npm，不用克隆源码仓库：
+<!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
+Linux / macOS 需要 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或 systemd：
 
 ```sh
 npx turnwire@next
@@ -41,6 +42,11 @@ npx turnwire@next
 npm install -g turnwire@next
 turnwire --open
 ```
+
+**发布通道：** 推送到 `main` 时将预览版发布到 npm `next`。只有明确发布稳定版 GitHub Release 才会发布到 npm `latest`；推送 `main` 不会升级稳定版。使用 `turnwire@next` 获取当前预览版，不固定某个预览版本号。这是 Turnwire 的发布通道，与 DSH runtime 的通道不同。
+
+源码仓库仍为私有；从 npm 安装不需要访问权限。预览版不是稳定版，也不是已签名的 Mac 原生安装器。
+<!-- END GENERATED INSTALL -->
 
 预览版以前台运行，请保持终端打开，不会安装系统服务。模型密钥通过隐藏输入提供，只留在主机。明确配置了已有 DSH 时会复用；否则询问安装 npm `latest`，解析为精确版本并先隔离验证。本机使用无需 Relay；手机远程访问需要另行配置。
 
@@ -75,7 +81,7 @@ TURNWIRE_RUNTIME=demo npm run dev
 | Mac 原生应用（最完整） | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+、Xcode 16+ / Swift 6；产物是 ad-hoc 签名，对外发布还需 Developer ID 与 notarization |
 | 常驻主机（Linux，无界面） | 在构建好的 release 里运行 `scripts/install-linux-host.sh` | Linux + systemd，且先写好私有 DSH 环境文件（默认 `~/.config/turnwire/dsh.env.json`；支持 `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME` 或 `TURNWIRE_DSH_ENV_FILE`） |
 | 自托管 Relay（长期稳定地址） | `deploy/` 下有 Dockerfile、compose.yaml 与 Caddyfile | 一台服务器；详见[一键部署 Relay](docs/RELAY-INSTALL.zh.md) |
-| 终端 / 脚本 | `npm run turnwire -- ...`，或构建后 `node apps/cli/dist/main.js ...` | Node.js 22.13+；命令见[命令行参考](docs/CLI.zh.md) |
+| 终端 / 脚本 | `npm run turnwire -- ...`，或构建后 `node apps/cli/dist/main.js ...` | Node.js（最低版本见上文）；命令见[命令行参考](docs/CLI.zh.md) |
 
 ### 第 3 步：让手机连上
 

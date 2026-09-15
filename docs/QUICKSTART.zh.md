@@ -4,18 +4,20 @@
 
 ## 推荐：已发布 npm 预览版（Linux / macOS）
 
-公开的 [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) 预览版需要 Node.js 22.13+ 和 npm，不需要仓库权限、源码构建或 systemd：
+<!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
+Linux / macOS 需要 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或 systemd：
 
 ```sh
 npx turnwire@next
-```
-
-长期安装：
-
-```sh
+# 或长期安装：
 npm install -g turnwire@next
 turnwire --open
 ```
+
+**发布通道：** 推送到 `main` 时将预览版发布到 npm `next`。只有明确发布稳定版 GitHub Release 才会发布到 npm `latest`；推送 `main` 不会升级稳定版。使用 `turnwire@next` 获取当前预览版，不固定某个预览版本号。这是 Turnwire 的发布通道，与 DSH runtime 的通道不同。
+
+源码仓库仍为私有；从 npm 安装不需要访问权限。预览版不是稳定版，也不是已签名的 Mac 原生安装器。
+<!-- END GENERATED INSTALL -->
 
 保持终端打开：这是前台主机，不是后台服务。Ctrl-C 只停止它自己启动的进程，不停止外部 DSH。安装包包含主机、CLI/TUI 和 Web，不是签名的原生 Mac App。使用本机 Web 无需 Relay。模型凭据只留在主机上，并以隐藏方式询问；不要把密钥发到手机或 Relay。
 

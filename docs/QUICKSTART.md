@@ -4,18 +4,20 @@ English · [中文](QUICKSTART.zh.md)
 
 ## Recommended: published npm preview (Linux / macOS)
 
-The public [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) preview requires Node.js 22.13+ and npm. No repository access, source build or systemd setup is needed:
+<!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
+Linux / macOS requires **Node.js 22.13+** and npm. The published [npm preview](https://www.npmjs.com/package/turnwire) needs no repository access, source build or systemd setup:
 
 ```sh
 npx turnwire@next
-```
-
-For a persistent installation:
-
-```sh
+# Or install persistently:
 npm install -g turnwire@next
 turnwire --open
 ```
+
+**Release channels:** pushes to `main` publish previews to npm `next`. Only an explicit stable GitHub Release publishes to npm `latest`; a `main` push does not promote a stable release. Use `turnwire@next` for the current preview rather than a pinned preview version. These are Turnwire channels, separate from the DSH runtime's channels.
+
+The source repository remains private; npm installation does not require access. The preview is not a stable release or a signed native Mac installer.
+<!-- END GENERATED INSTALL -->
 
 Keep the terminal open: this starts a foreground host, not a background service. Ctrl-C stops processes it owns, not an external DSH. The package contains the host, CLI/TUI and Web; it is not a signed native Mac app. Local Web needs no Relay. Model credentials remain on the host and are requested privately; never send them to a phone or Relay.
 

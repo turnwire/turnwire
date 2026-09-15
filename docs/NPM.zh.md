@@ -36,6 +36,12 @@ turnwire
 
 普通启动不会无限轮询 npm 或擅自更新。`latest` 是 npm 发布者维护的通道，不保证版本号大于 `next`。兼容性依据实际返回结构，不伪造上游协议版本或未提供的能力握手。完整边界和 CI 覆盖见 [DSH 兼容性](DSH-COMPATIBILITY.md)。
 
+## 文档维护门禁
+
+安装说明的共享内容在 `docs/install-snippets.json`，最低 Node 版本来自根 `package.json`。修改源内容后运行 `npm run docs:sync`，提交生成的中英文 README、快速开始和 npm 包内说明。`npm run docs:check` 只检查、不写文件，发现过时生成块就失败；它也纳入 `npm run check` 和打包前置检查。
+
+发布矩阵会解包真实 tarball，对比包内两份 README 与本次提交的来源文件（仅转换语言互链）。源码 README 对应 main，npm 包内说明对应具体版本，不要求旧版本的文档随 main 变化。PR 模板要求说明文档影响；机器检查不能代替对行为解释完整性的人工评审。
+
 ## npm 包内文档
 
 包内独立中英文安装说明来自 `docs/NPM-README.md` 和 `docs/NPM-README.zh.md`，打包时互链改写为 `README.md` / `README.zh.md`，阅读不需要私有源码仓库权限。仓库文档更新不会改变已发布 `0.1.0-next.0` 的 tarball 或 npm README；包内说明的改动应随新版本发布，不能重复发布同版本。

@@ -36,6 +36,12 @@ Run `turnwire start --update-dsh` to explicitly check and update managed DSH; ad
 
 Normal startup does not continuously poll npm or silently update. `latest` is a publisher-controlled dist-tag and may be older than `next`. Compatibility uses observed response shapes rather than invented protocol versions or unsupported capability handshakes. See [DSH compatibility](DSH-COMPATIBILITY.md) for limits and CI coverage.
 
+## Documentation freshness gates
+
+Shared installation content lives in `docs/install-snippets.json`; the minimum Node version comes from root `package.json`. After editing source content, run `npm run docs:sync` and commit the generated bilingual README, quickstart and package-guide blocks. `npm run docs:check` is read-only and fails on stale blocks; it is part of `npm run check` and a prerequisite for packaging.
+
+The release matrix extracts a real tarball and compares both packaged READMEs with this commit's source guides (only sibling language links are rewritten). Source README follows main; package documentation follows its specific version. Old versions must not silently acquire instructions for newer code. The PR template requires a documentation impact explanation; mechanical checks do not replace human review of behavioral completeness.
+
 ## Package documentation
 
 The package includes standalone English and Chinese installation guides, sourced from `docs/NPM-README.md` and `docs/NPM-README.zh.md`. The packager rewrites their sibling links to `README.md` / `README.zh.md`. They do not require access to the private source repository. Repository documentation updates do not change the already-published `0.1.0-next.0` tarball or its npm README; ship package-guide changes with a new version, never republish the same version.

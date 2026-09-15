@@ -6,7 +6,8 @@ Self-hosted agent sessions across your terminal, browser and phone. The host run
 
 ## Install the preview
 
-Linux or macOS, **Node.js 22.13+** and npm:
+<!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
+Linux / macOS requires **Node.js 22.13+** and npm. The published [npm preview](https://www.npmjs.com/package/turnwire) needs no repository access, source build or systemd setup:
 
 ```sh
 npx turnwire@next
@@ -14,6 +15,11 @@ npx turnwire@next
 npm install -g turnwire@next
 turnwire --open
 ```
+
+**Release channels:** pushes to `main` publish previews to npm `next`. Only an explicit stable GitHub Release publishes to npm `latest`; a `main` push does not promote a stable release. Use `turnwire@next` for the current preview rather than a pinned preview version. These are Turnwire channels, separate from the DSH runtime's channels.
+
+The source repository remains private; npm installation does not require access. The preview is not a stable release or a signed native Mac installer.
+<!-- END GENERATED INSTALL -->
 
 This is a preview, not a stable or signed native desktop release. No source checkout is required. npm installation does not start a service or install DSH. Running the launcher starts a foreground host: keep the terminal open, and use Ctrl-C to stop owned processes.
 

@@ -25,7 +25,7 @@ One agent session, continued across a Mac, a terminal, and a phone: **the host d
 
 Honest up front, so you do not discover them halfway through:
 
-1. **The npm preview is published:** [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) installs without repository access. It is not a stable release or a signed native Mac installer; source repositories remain private.
+1. **The npm preview is published:** [`turnwire@next`](https://www.npmjs.com/package/turnwire) installs without repository access. It is not a stable release or a signed native Mac installer; source repositories remain private.
 2. **You need an always-on host.** A Mac (recommended, since it can run the native app) or a Linux machine both work — if the host is asleep, the phone cannot connect.
 3. **You need model credentials, and they stay on the host only.** The API key is read by DSH on the host and does not enter a client, the Relay, or a tunnel process.
 
@@ -33,7 +33,8 @@ Honest up front, so you do not discover them halfway through:
 
 ### Recommended: npm preview (Linux / macOS)
 
-Requires **Node.js 22.13+** and npm. No source checkout is needed:
+<!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
+Linux / macOS requires **Node.js 22.13+** and npm. The published [npm preview](https://www.npmjs.com/package/turnwire) needs no repository access, source build or systemd setup:
 
 ```sh
 npx turnwire@next
@@ -41,6 +42,11 @@ npx turnwire@next
 npm install -g turnwire@next
 turnwire --open
 ```
+
+**Release channels:** pushes to `main` publish previews to npm `next`. Only an explicit stable GitHub Release publishes to npm `latest`; a `main` push does not promote a stable release. Use `turnwire@next` for the current preview rather than a pinned preview version. These are Turnwire channels, separate from the DSH runtime's channels.
+
+The source repository remains private; npm installation does not require access. The preview is not a stable release or a signed native Mac installer.
+<!-- END GENERATED INSTALL -->
 
 Keep the terminal open: the preview runs in the foreground and installs no system service. Model credentials are prompted for privately and stay on the host. An explicitly configured existing DSH is reused; otherwise the launcher offers installation of npm `latest`, resolved to an exact version and validated in isolation. Local use needs no Relay; phone access is configured separately.
 
@@ -75,7 +81,7 @@ To connect a real model (DeepSeek via DSH), see [Developing from source](docs/DE
 | Mac native app (the most complete) | `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app` | macOS 14+, Xcode 16+ / Swift 6; the artifact is ad-hoc signed, and public distribution still needs a Developer ID and notarization |
 | Resident host (Linux, headless) | Run `scripts/install-linux-host.sh` from a built release | Linux + systemd, with the private DSH environment file written first (default `~/.config/turnwire/dsh.env.json`; honors `TURNWIRE_CONFIG_HOME` / `XDG_CONFIG_HOME` or `TURNWIRE_DSH_ENV_FILE`) |
 | Self-hosted Relay (stable long-term address) | `deploy/` contains a Dockerfile, compose.yaml, and Caddyfile | A server; see [One-click Relay deployment](docs/RELAY-INSTALL.md) |
-| Terminal / scripts | `npm run turnwire -- ...`, or after building `node apps/cli/dist/main.js ...` | Node.js 22.13+; for the commands see the [CLI reference](docs/CLI.md) |
+| Terminal / scripts | `npm run turnwire -- ...`, or after building `node apps/cli/dist/main.js ...` | Node.js (minimum version above); for the commands see the [CLI reference](docs/CLI.md) |
 
 ### Step 3: Get your phone connected
 
