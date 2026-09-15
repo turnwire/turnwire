@@ -25,19 +25,36 @@
 
 诚实前置，免得你走到一半才发现：
 
-1. **目前没有签名的发行版**。要装就得从源码构建，或运行仓库里的安装脚本；两个仓库现在也是私有的。没有"下载双击即用"这一步。
+1. **npm 预览版已发布**：[`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire)，安装不需要源码仓库权限。它还不是稳定版，也不是已签名的 Mac 原生安装器；源码仓库仍为私有。
 2. **需要一台常开的主机**。Mac（推荐，能跑原生应用）或一台 Linux 机器都可以 —— 主机睡着，手机就连不上。
 3. **需要模型凭据，而且只留在主机上**。API key 由主机上的 DSH 读取，不进客户端、不进 Relay、不进隧道进程。
 
 ## 开始使用
 
-### Linux 一命令启动
+### 推荐：npm 预览版（Linux / macOS）
+
+需要 **Node.js 22.13+** 和 npm，不用克隆源码仓库：
+
+```sh
+npx turnwire@next
+# 或长期安装：
+npm install -g turnwire@next
+turnwire --open
+```
+
+预览版以前台运行，请保持终端打开，不会安装系统服务。模型密钥通过隐藏输入提供，只留在主机。明确配置了已有 DSH 时会复用；否则询问安装 npm `latest`，解析为精确版本并先隔离验证。本机使用无需 Relay；手机远程访问需要另行配置。
+
+停止自己的前台实例后，可运行 `turnwire start --update-dsh`：先安装、检查新版本，通过后再切换。不自动降级、不热替换活跃 runtime、不更新外部 DSH；普通启动不会悄悄更新已有安装。
+
+详见[快速开始](docs/QUICKSTART.zh.md)、[npm 安装与发布](docs/NPM.zh.md)和[DSH 兼容性与边界](docs/DSH-COMPATIBILITY.zh.md)。兼容矩阵覆盖 Linux/macOS × 基准版/latest/next，不代表对未来任意上游改动的永久兼容保证。
+
+### 可选：源码方式安装 Linux 服务
 
 在源码目录运行 `bash scripts/start-host.sh`（已装 Node/npm 时也可 `npm start`）。首次自动准备主机并隐藏输入模型密钥；再次运行不打断正在运行的同目录服务，已安装但停止的服务直接启动。手机公网连接仍需明确配置。前置条件、安全边界及验证状态见[一命令启动](docs/QUICKSTART.zh.md)。
 
 ### 第 1 步：主机跑起来
 
-最快看到全貌的方式是用离线 Demo（不需要任何模型凭据）：
+有私有仓库访问权限的开发者也可以运行离线 Demo（不需要模型凭据）。这是上面 npm 启动之外的源码开发方式：
 
 ```bash
 git clone https://github.com/turnwire/turnwire.git

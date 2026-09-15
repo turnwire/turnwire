@@ -13,6 +13,7 @@ describe('standalone npm package boundary', () => {
     expect(manifest.dependencies).toBeUndefined();
     expect(manifest.scripts).toBeUndefined();
     expect(manifest.files).not.toContain('node_modules');
+    expect(manifest.files).toEqual(expect.arrayContaining(['README.md', 'README.zh.md']));
   });
   it('rejects unresolved workspaces and third-party runtime imports', () => {
     const graph = (path: string) => ({ outputs: { 'main.js': { imports: [{ external: true, path }] } } });

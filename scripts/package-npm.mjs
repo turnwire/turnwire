@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { buildDaemonArtifact } from './build-identity.mjs';
 
 export const packageVersion = '0.1.0-next.0';
-export const packageManifest = () => ({ name: 'turnwire', version: packageVersion, description: 'Self-hosted agent sessions across your terminal, browser and phone', type: 'module', license: 'Apache-2.0', bin: { turnwire: 'bin/turnwire.mjs' }, engines: { node: '>=22.13.0' }, os: ['linux', 'darwin'], files: ['bin/', 'apps/', 'config/', 'licenses/', 'README.md', 'LICENSE'], publishConfig: { access: 'public', tag: 'next' }, repository: { type: 'git', url: 'git+https://github.com/turnwire/turnwire.git' }, homepage: 'https://github.com/turnwire/turnwire', bugs: { url: 'https://github.com/turnwire/turnwire/issues' } });
+export const packageManifest = () => ({ name: 'turnwire', version: packageVersion, description: 'Self-hosted agent sessions across your terminal, browser and phone', type: 'module', license: 'Apache-2.0', bin: { turnwire: 'bin/turnwire.mjs' }, engines: { node: '>=22.13.0' }, os: ['linux', 'darwin'], files: ['bin/', 'apps/', 'config/', 'licenses/', 'README.md', 'README.zh.md', 'LICENSE'], publishConfig: { access: 'public', tag: 'next' }, repository: { type: 'git', url: 'git+https://github.com/turnwire/turnwire.git' }, homepage: 'https://github.com/turnwire/turnwire', bugs: { url: 'https://github.com/turnwire/turnwire/issues' } });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = join(root, 'artifacts/npm/turnwire');
 const banner = "import { createRequire as __twCreateRequire } from 'node:module'; const require = __twCreateRequire(import.meta.url);";
@@ -60,7 +60,10 @@ export async function packageNpm() {
   await cp(join(root, 'config/dsh-deepseek.patch.yml'), join(output, 'config/dsh-deepseek.patch.yml'));
   await cp(join(root, 'LICENSE'), join(output, 'LICENSE'));
   await writeFile(join(output, 'package.json'), JSON.stringify(packageManifest(), null, 2) + '\n');
-  await writeFile(join(output, 'README.md'), '# Turnwire\n\nSelf-hosted agent sessions for Linux and macOS. Requires Node.js 22.13 or later.\n\n```sh\nnpx turnwire@next\n```\n\nPreview release: DSH discovery and installation are guided; remote access is optional and self-hosted. Run `turnwire --help` for commands. npm installation never starts services or installs DSH.\n\nSource and documentation: https://github.com/turnwire/turnwire\n');
+  for (const [source, target] of [['NPM-README.md', 'README.md'], ['NPM-README.zh.md', 'README.zh.md']]) {
+    const guide = (await readFile(join(root, 'docs', source), 'utf8')).replaceAll('(NPM-README.md)', '(README.md)').replaceAll('(NPM-README.zh.md)', '(README.zh.md)');
+    await writeFile(join(output, target), guide);
+  }
   await mkdir(join(output, 'licenses'), { recursive: true });
   const seen = new Set();
   for (const input of licenseInputs) {

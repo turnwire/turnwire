@@ -25,19 +25,36 @@ One agent session, continued across a Mac, a terminal, and a phone: **the host d
 
 Honest up front, so you do not discover them halfway through:
 
-1. **There is no signed release yet.** To install it you have to build from source or run the install scripts in the repository; both repositories are private for now. There is no "download, double-click, done" step.
+1. **The npm preview is published:** [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) installs without repository access. It is not a stable release or a signed native Mac installer; source repositories remain private.
 2. **You need an always-on host.** A Mac (recommended, since it can run the native app) or a Linux machine both work — if the host is asleep, the phone cannot connect.
 3. **You need model credentials, and they stay on the host only.** The API key is read by DSH on the host and does not enter a client, the Relay, or a tunnel process.
 
 ## Getting started
 
-### One-command Linux setup
+### Recommended: npm preview (Linux / macOS)
+
+Requires **Node.js 22.13+** and npm. No source checkout is needed:
+
+```sh
+npx turnwire@next
+# Or install persistently:
+npm install -g turnwire@next
+turnwire --open
+```
+
+Keep the terminal open: the preview runs in the foreground and installs no system service. Model credentials are prompted for privately and stay on the host. An explicitly configured existing DSH is reused; otherwise the launcher offers installation of npm `latest`, resolved to an exact version and validated in isolation. Local use needs no Relay; phone access is configured separately.
+
+After stopping your own foreground instance, `turnwire start --update-dsh` stages and checks a managed DSH update before switching. It does not downgrade, hot-replace an active runtime, or update external DSH. Ordinary startup does not silently update existing installations.
+
+See [quickstart](docs/QUICKSTART.md), [npm installation and release](docs/NPM.md), and [DSH compatibility and limits](docs/DSH-COMPATIBILITY.md). The runtime compatibility matrix tests Linux/macOS against baseline/latest/next; it is not a guarantee of compatibility with every future upstream change.
+
+### Alternative: source-based Linux service
 
 From the source checkout, run `bash scripts/start-host.sh` (or `npm start` with Node/npm installed). First run prepares the host and prompts privately for the model key; repeated runs leave an active matching service alone or start an installed stopped service. Public phone access remains an explicit configuration step. See [one-command startup](docs/QUICKSTART.md) for prerequisites, safety boundaries and verification status.
 
 ### Step 1: Get the host running
 
-The fastest way to see the whole picture is the offline Demo (no model credentials required):
+For contributors with access to the private repository, the offline Demo requires no model credentials. This is an alternative to the npm startup above:
 
 ```bash
 git clone https://github.com/turnwire/turnwire.git

@@ -1,6 +1,31 @@
 English · [中文](QUICKSTART.zh.md)
 
-# One-command Linux host startup
+# Turnwire quickstart
+
+## Recommended: published npm preview (Linux / macOS)
+
+The public [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) preview requires Node.js 22.13+ and npm. No repository access, source build or systemd setup is needed:
+
+```sh
+npx turnwire@next
+```
+
+For a persistent installation:
+
+```sh
+npm install -g turnwire@next
+turnwire --open
+```
+
+Keep the terminal open: this starts a foreground host, not a background service. Ctrl-C stops processes it owns, not an external DSH. The package contains the host, CLI/TUI and Web; it is not a signed native Mac app. Local Web needs no Relay. Model credentials remain on the host and are requested privately; never send them to a phone or Relay.
+
+An existing DSH is reused when explicitly configured with `TURNWIRE_DSH_URL` and `TURNWIRE_DSH_TOKEN`, or a private mode-0600 `dsh-connection.json` in the Turnwire config directory. The launcher does not scan other tools for secrets. Without an external connection it reuses an existing Turnwire-managed installation; if none exists, it offers installation of registry `latest`, resolved to an exact version, in an isolated version directory and validates it before selection. Failed authentication does not silently install a replacement.
+
+Use `turnwire doctor --json` for an offline environment check. After stopping your own foreground instance, run `turnwire start --update-dsh` to explicitly stage and validate a managed runtime update. Failed validation preserves the old selection; there is no automatic downgrade, hot update, or update of external/custom DSH. Normal startup does not silently upgrade an existing runtime. See [npm installation](NPM.md), [DSH compatibility and limits](DSH-COMPATIBILITY.md), and [directory rules](XDG.md).
+
+## Advanced: source-based Linux service
+
+The following alternative requires access to the private source repository. It installs a systemd user service rather than the npm foreground preview; do not run both against the same active state or ports.
 
 ## First run
 
@@ -32,12 +57,14 @@ journalctl --user -u turnwire-host -n 100
 
 ## Phone access is a separate explicit choice
 
-After startup:
+After npm startup, keep the foreground terminal running and use a second terminal (for a global installation):
 
 ```bash
-bin/turnwire remote
-bin/turnwire devices pair --name phone --qr
+turnwire remote
+turnwire devices pair --name phone --qr
 ```
+
+For npx-only use, prefix the same commands with `npx turnwire@next`. For the source-based service, use `bin/turnwire` from its checkout instead of the global executable.
 
 Use the remote form to connect an existing fixed Relay or choose a temporary access provider. A permanent public endpoint still needs a reachable server/domain and credentials; bootstrap does not provision a VPS, configure DNS, open firewall ports or deploy public services without operator action. See [Relay deployment](RELAY-INSTALL.md).
 
@@ -45,4 +72,6 @@ Daemon and DSH remain loopback-only. No delegated approvals are enabled by boots
 
 ## Verification boundary
 
-Bootstrap tests replace system commands and the installer in an isolated filesystem. They verify control flow, repeated startup, conflicts and credential handling without restarting the development host. This is not an end-to-end fresh-VM/network/systemd deployment certification.
+The published npm tarball was verified by a fresh registry installation, offline doctor, demo host/authenticated RPC/Web checks, and Linux/macOS package CI. Real DSH baseline/latest/next integration CI covers authenticated startup, catalog, empty sessions, restart/resume and ownership-safe shutdown; it does not certify inference or every future DSH version. See [compatibility limits](DSH-COMPATIBILITY.md).
+
+Source-service bootstrap tests replace system commands and the installer in an isolated filesystem. They verify control flow, repeated startup, conflicts and credential handling without restarting the development host. This is not an end-to-end fresh-VM/network/systemd deployment certification.

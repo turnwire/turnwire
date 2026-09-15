@@ -1,6 +1,31 @@
 [English](QUICKSTART.md) · 中文
 
-# Linux 主机一命令启动
+# Turnwire 快速开始
+
+## 推荐：已发布 npm 预览版（Linux / macOS）
+
+公开的 [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) 预览版需要 Node.js 22.13+ 和 npm，不需要仓库权限、源码构建或 systemd：
+
+```sh
+npx turnwire@next
+```
+
+长期安装：
+
+```sh
+npm install -g turnwire@next
+turnwire --open
+```
+
+保持终端打开：这是前台主机，不是后台服务。Ctrl-C 只停止它自己启动的进程，不停止外部 DSH。安装包包含主机、CLI/TUI 和 Web，不是签名的原生 Mac App。使用本机 Web 无需 Relay。模型凭据只留在主机上，并以隐藏方式询问；不要把密钥发到手机或 Relay。
+
+已有 DSH 时，显式配置 `TURNWIRE_DSH_URL` 与 `TURNWIRE_DSH_TOKEN`，或在 Turnwire 配置目录提供权限为 0600 的私有 `dsh-connection.json`。启动器不会扫描其他工具的秘密。没有外部连接时会复用 Turnwire 已托管的安装；仅在安装缺失时询问安装 registry `latest`：先解析成精确版本，在隔离版本目录安装，通过验证后才选择使用。认证失败不会偷偷安装替代实例。
+
+用 `turnwire doctor --json` 离线检查环境。停止自己的前台实例后，运行 `turnwire start --update-dsh` 显式安装并验证托管 DSH 更新。验证失败保留旧选择，不自动降级、不热更新，也不更新外部或自定义 DSH。普通启动不会擅自升级已有 runtime。详见 [npm 安装](NPM.zh.md)、[DSH 兼容性与边界](DSH-COMPATIBILITY.zh.md)和[目录规则](XDG.zh.md)。
+
+## 进阶：源码 Linux 常驻服务
+
+下面是需要私有源码仓库访问权限的替代安装方式。它注册 systemd 用户服务，与 npm 前台预览版不同；不要让两者同时使用同一活跃状态目录或端口。
 
 ## 第一次运行
 
@@ -32,12 +57,14 @@ journalctl --user -u turnwire-host -n 100
 
 ## 手机访问仍由用户明确选择
 
-启动后：
+npm 启动后保持前台终端运行，在第二个终端操作（适用于全局安装）：
 
 ```bash
-bin/turnwire remote
-bin/turnwire devices pair --name phone --qr
+turnwire remote
+turnwire devices pair --name phone --qr
 ```
+
+仅使用 npx 时，以 `npx turnwire@next` 作为相同命令的前缀。源码常驻服务则在其仓库目录使用 `bin/turnwire`，而不是全局可执行文件。
 
 在远程表单里连接已有固定 Relay，或选择临时通道。稳定公网入口仍需要可达的服务器/域名和凭据；启动脚本不会擅自购买 VPS、配置 DNS、开放防火墙或部署公网服务。详见[Relay 部署](RELAY-INSTALL.zh.md)。
 
@@ -45,4 +72,6 @@ daemon 和 DSH 保持回环监听，不默认启用代审批。主机需要常�
 
 ## 验证边界
 
-启动脚本测试在隔离目录中替换系统命令和安装器，验证流程、重复启动、服务冲突及密钥处理，不重启当前开发主机。这不等于已完成全新虚拟机/真实网络/systemd 的端到端生产部署认证。
+已发布 npm tarball 通过全新 registry 安装、离线 doctor、demo 主机/认证 RPC/Web 检查及 Linux/macOS 安装包 CI。真实 DSH 基准/latest/next 集成 CI 覆盖认证启动、模型目录、空会话、重启恢复和进程所有权；不代表验证过真实推理或所有未来 DSH 版本，详见[兼容性边界](DSH-COMPATIBILITY.zh.md)。
+
+源码服务启动脚本测试在隔离目录中替换系统命令和安装器，验证流程、重复启动、服务冲突及密钥处理，不重启当前开发主机。这不等于已完成全新虚拟机/真实网络/systemd 的端到端生产部署认证。

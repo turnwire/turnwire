@@ -2,11 +2,11 @@ English · [中文](NPM.zh.md)
 
 # npm distribution and releases
 
-The public package and executable are both **turnwire**. The initial preview version is `0.1.0-next.0`. A registry 404 does not reserve the name: npm verifies ownership/name availability at first publication. This document describes the intended release process; a local build does not mean the package has been published.
+The public package and executable are both **turnwire**. [`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) is published. Its registry integrity matches the reviewed tarball; isolated registry installation, CLI/doctor and packaged demo/Web smoke passed. It remains a preview, not a stable or signed native release. At initial verification both `next` and `latest` pointed to this preview; use `@next` explicitly. Trusted Publisher binding has not yet been confirmed; the workflow alone does not establish npm authorization.
 
 ## User experience
 
-After the preview is published:
+Install the published preview:
 
 ```sh
 npx turnwire@next
@@ -35,6 +35,10 @@ This preview does not automatically discover arbitrary DSH installations: reuse 
 Run `turnwire start --update-dsh` to explicitly check and update managed DSH; add `--yes` to authorize installation when needed. Stop your own foreground instance first: no hot replacement during active sessions. The updater resolves npm `latest` to an exact version, installs into a separate version directory, probes authenticated interfaces with an isolated HOME and a dummy key, then atomically switches a private selection file. Failed validation leaves the previous selection unchanged and old installations retained. No automatic downgrade; external DSH and custom entries are not updated.
 
 Normal startup does not continuously poll npm or silently update. `latest` is a publisher-controlled dist-tag and may be older than `next`. Compatibility uses observed response shapes rather than invented protocol versions or unsupported capability handshakes. See [DSH compatibility](DSH-COMPATIBILITY.md) for limits and CI coverage.
+
+## Package documentation
+
+The package includes standalone English and Chinese installation guides, sourced from `docs/NPM-README.md` and `docs/NPM-README.zh.md`. The packager rewrites their sibling links to `README.md` / `README.zh.md`. They do not require access to the private source repository. Repository documentation updates do not change the already-published `0.1.0-next.0` tarball or its npm README; ship package-guide changes with a new version, never republish the same version.
 
 ## Build a reviewable package
 

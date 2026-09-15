@@ -2,11 +2,11 @@
 
 # npm 安装包与发布
 
-公开包名和可执行命令均为 **turnwire**，首个预览版本为 `0.1.0-next.0`。registry 返回 404 不代表名称已被保留，首次发布时仍由 npm 校验名称与权限。本说明描述发布流程；本地构建完成不等于已经发布。
+公开包名和可执行命令均为 **turnwire**。[`turnwire@0.1.0-next.0`](https://www.npmjs.com/package/turnwire) 已发布，registry 完整性与审阅过的 tarball 一致，全新 registry 安装、CLI/doctor 及安装包 demo/Web 启动检查通过。它仍是预览版，不是稳定版或已签名的原生发行版。首次核验时 `next` 和 `latest` 都指向此预览版，建议明确使用 `@next`。Trusted Publisher 绑定尚未确认，工作流存在不等于已获得 npm 发布授权。
 
 ## 用户使用
 
-预览版发布后：
+安装已发布的预览版：
 
 ```sh
 npx turnwire@next
@@ -35,6 +35,10 @@ turnwire
 运行 `turnwire start --update-dsh` 显式检查并更新托管 DSH；需要时可加 `--yes` 授权安装。先停止自己的 Turnwire 前台实例再运行，不在活跃会话中热替换。更新解析 npm `latest` 到精确版本，先安装到新的版本目录，在隔离 HOME 中用非真实密钥验证认证接口，通过后才原子切换私有选择文件。失败不切换，旧安装保留；不会自动降级，不更新外部 DSH 或自定义入口。
 
 普通启动不会无限轮询 npm 或擅自更新。`latest` 是 npm 发布者维护的通道，不保证版本号大于 `next`。兼容性依据实际返回结构，不伪造上游协议版本或未提供的能力握手。完整边界和 CI 覆盖见 [DSH 兼容性](DSH-COMPATIBILITY.md)。
+
+## npm 包内文档
+
+包内独立中英文安装说明来自 `docs/NPM-README.md` 和 `docs/NPM-README.zh.md`，打包时互链改写为 `README.md` / `README.zh.md`，阅读不需要私有源码仓库权限。仓库文档更新不会改变已发布 `0.1.0-next.0` 的 tarball 或 npm README；包内说明的改动应随新版本发布，不能重复发布同版本。
 
 ## 构建可审阅的安装包
 
