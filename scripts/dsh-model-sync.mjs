@@ -9,7 +9,7 @@
  * directions. This script asks each route's own `GET {baseURL}/models` and writes exactly that answer.
  *
  * Nothing is invented: an id the endpoint does not answer with is dropped, one it adds appears, and a
- * display name already written by hand is kept for as long as its id stays.
+ * model metadata already written by hand is kept for as long as its id stays.
  *
  * Usage: node scripts/dsh-model-sync.mjs [--check] [--file config/dsh-deepseek.patch.yml]
  *        --check reports what would change and exits 1 when the file is out of date, changing nothing.
@@ -69,7 +69,7 @@ export function listedModels(lines, route) {
   const models = [];
   for (let index = route.start; index < route.end; index++) {
     const hit = /^\s*-\s+id:\s*(\S+)\s*$/.exec(lines[index]);
-    if (!hit) continue;
+    if (!hit || indentOf(lines[index]) !== route.listIndent + 2) continue;
     const next = lines[index + 1] ?? '';
     const name = indentOf(next) > route.listIndent ? /^\s*name:\s*(.+?)\s*$/.exec(next) : undefined;
     models.push({ id: hit[1], ...(name ? { name: name[1] } : {}) });
@@ -82,16 +82,27 @@ export function displayName(id) {
   return id.split('-').map((part, index) => (index === 0 && /^[a-z]{2,4}$/.test(part) ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1))).join(' ');
 }
 
-/** Replaces one route's list with `ids`, keeping the names it already had. Returns the new text. */
+/** Replaces one route's list with `ids`, preserving existing model metadata verbatim.
+ * Discovery supplies identity, not capabilities: never discard a surviving model's
+ * reasoning mappings, modalities, limits or future adapter-owned fields. */
 export function rewrite(text, route, ids) {
   const lines = text.split('\n');
-  const known = new Map(listedModels(lines, route).map(model => [model.id, model.name]));
+  const known = new Map();
+  for (let index = route.start; index < route.end; index++) {
+    const hit = /^\s*-\s+id:\s*(\S+)\s*$/.exec(lines[index]);
+    if (!hit || indentOf(lines[index]) !== route.listIndent + 2) continue;
+    let end = index + 1;
+    while (end < route.end && (lines[end].trim() === '' || indentOf(lines[end]) > route.listIndent + 2)) end++;
+    // Separating whitespace belongs to the list, not the model being moved.
+    while (end > index + 1 && lines[end - 1].trim() === '') end--;
+    known.set(hit[1], lines.slice(index, end));
+  }
   const pad = ' '.repeat(route.listIndent + 2);
   const entryPad = ' '.repeat(route.listIndent + 4);
   const block = [
     `${pad}# Asked of this route's own GET {baseURL}/models by scripts/dsh-model-sync.mjs: an id the endpoint`,
     `${pad}# stops answering with is dropped, so a model it adds appears without anyone editing this file.`,
-    ...ids.flatMap(id => [`${pad}- id: ${id}`, `${entryPad}name: ${known.get(id) ?? displayName(id)}`]),
+    ...ids.flatMap(id => known.get(id) ?? [`${pad}- id: ${id}`, `${entryPad}name: ${displayName(id)}`]),
   ];
   return [...lines.slice(0, route.start), ...block, ...lines.slice(route.end)].join('\n');
 }

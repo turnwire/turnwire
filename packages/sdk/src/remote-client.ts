@@ -25,6 +25,7 @@ class Transport {
   private handshake?: Awaited<ReturnType<typeof createClientHandshake>>;
   private incoming = Promise.resolve(); private outgoing = Promise.resolve();
   private deadline?: ReturnType<typeof setTimeout>; private heartbeat?: ReturnType<typeof setInterval>;
+  private stageExpiresAt = 0; private verifiedAt = 0; private probeExpiresAt = 0;
   private probe?: { nonce: string; challenge?: string; started: number; resolve: () => void; reject: (error: Error) => void; promise: Promise<void>; timer: ReturnType<typeof setTimeout> };
   constructor(readonly url: string, readonly route: 'relay' | 'direct', private pairing: Pairing, private options: RemoteClientOptions,
     private health: (value: Partial<ConnectionHealth>) => void, private message: (value: SecureMessage) => void,
@@ -77,6 +78,7 @@ class Transport {
   }
   private stage(stage: ConnectionHealth['stage'], message: string) {
     clearTimeout(this.deadline); this.health({ phase: stage === 'transport' || stage === 'relay' ? 'connecting' : 'verifying', stage, message });
+    this.stageExpiresAt = Date.now() + (this.options.connectTimeoutMs ?? 5000);
     this.deadline = setTimeout(() => this.abort(new TurnwireError('STAGE_TIMEOUT', `${message.replace(/…$/, '')} timed out`)), this.options.connectTimeoutMs ?? 5000);
   }
   private async initialize() { this.stage('verification', 'Verifying the two-way connection with the host…'); await this.send('subscribe', { after: 'latest' }); }
@@ -85,6 +87,7 @@ class Transport {
     const latencyMs = performance.now() - probe.started;
     if (latencyMs > (this.options.heartbeatTimeoutMs ?? 5000)) throw new TurnwireError('PROBE_TIMEOUT', 'The connection probe response expired');
     clearTimeout(probe.timer); clearTimeout(this.deadline); this.probe = undefined; this.verified = true;
+    this.verifiedAt = Date.now(); this.stageExpiresAt = 0;
     this.verifiedHealth = { phase: 'connected', stage: 'ready', message: 'Connected to the host, verified', latencyMs: Math.round(latencyMs), lastVerifiedAt: new Date().toISOString() };
     this.health(this.verifiedHealth);
     probe.resolve(); this.resolve();
@@ -94,10 +97,20 @@ class Transport {
     let resolve!: () => void; let reject!: (error: Error) => void;
     const promise = new Promise<void>((ok, fail) => { resolve = ok; reject = fail; });
     const nonce = crypto.randomUUID(); const timer = setTimeout(() => this.abort(new TurnwireError('PROBE_TIMEOUT', 'Host connectivity probe timed out')), this.options.heartbeatTimeoutMs ?? 5000);
+    this.probeExpiresAt = Date.now() + (this.options.heartbeatTimeoutMs ?? 5000);
     this.probe = { nonce, started: performance.now(), promise, resolve, reject, timer };
     void this.send('ping', { nonce }).catch(error => this.abort(error)); return promise;
   }
   activate() { this.heartbeat = setInterval(() => { void this.ping().catch(() => {}); }, this.options.heartbeatIntervalMs ?? 15_000); }
+  /** Browser suspension can freeze timers (and performance.now on some platforms). Check
+   * wall-clock deadlines on foreground instead of waiting for those callbacks to catch up.
+   * Only lifecycle recovery uses this; slow active networks retain their configured budgets. */
+  get stale() {
+    const now = Date.now();
+    if (!this.active || (this.stageExpiresAt && now >= this.stageExpiresAt)) return true;
+    if (this.probe && now >= this.probeExpiresAt) return true;
+    return this.verified && now - this.verifiedAt >= (this.options.heartbeatIntervalMs ?? 15_000) + (this.options.heartbeatTimeoutMs ?? 5000);
+  }
   /** A socket that survived a background period can be reused; a closed one cannot. */
   get open() { return this.active && !!this.channel && this.socket.readyState === WebSocket.OPEN; }
   send(kind: SecureMessage['kind'], body: unknown): Promise<void> {
@@ -119,6 +132,7 @@ export class RemoteClient implements TurnwireClient {
   private transport?: Transport; private candidates = new Set<Transport>(); private ready?: Promise<void>;
   private stopped = false; private suspended = false; private terminal = false; private generation = 0; private attempts = 0;
   private timer?: ReturnType<typeof setTimeout>; private cursor = 0;
+  private foregroundProbe?: Transport;
   private listeners = new Set<(event: TurnwireEvent) => void>(); private states = new Set<(state: ConnectionState) => void>(); private state: ConnectionState = 'offline';
   private health: ConnectionHealth = { phase: 'offline', message: 'The host connection is not verified yet' }; private healthListeners = new Set<(health: ConnectionHealth) => void>();
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -168,9 +182,12 @@ export class RemoteClient implements TurnwireClient {
     this.ready = task; void task.finally(() => { if (this.ready === task) this.ready = undefined; }).catch(() => {}); return task;
   }
   private lost(error: Error) {
+    const foreground = !!this.transport && this.foregroundProbe === this.transport;
+    this.foregroundProbe = undefined;
     this.transport?.close(); this.transport = undefined; this.ready = undefined; this.rejectPending(); this.setState('offline');
     this.terminal = error instanceof TurnwireError && ['UNAUTHORIZED', 'AUTHENTICATION_FAILED'].includes(error.code);
-    const delay = retryDelay(this.attempts++);
+    // One foreground recovery attempt bypasses backoff; subsequent failures use normal retries.
+    const delay = foreground ? 0 : retryDelay(this.attempts++);
     this.healthChanged({ phase: this.terminal ? 'error' : 'offline', message: error.message, code: error instanceof TurnwireError ? error.code : 'CONNECTION_FAILED', retryInMs: this.terminal || this.suspended || this.stopped ? undefined : delay });
     if (!this.terminal && !this.suspended && !this.stopped) { clearTimeout(this.timer); this.timer = setTimeout(() => { this.timer = undefined; void this.connect().catch(() => {}); }, delay); }
   }
@@ -211,18 +228,28 @@ export class RemoteClient implements TurnwireClient {
    * `offline` drops it and the bar says so instead of showing a connection that cannot deliver.
    */
   suspend(reason: 'hidden' | 'offline' = 'hidden') {
-    this.suspended = true; if (reason === 'hidden') return;
+    this.suspended = true; this.foregroundProbe = undefined;
+    clearTimeout(this.timer); this.timer = undefined;
+    if (reason === 'hidden') return;
     this.reset(); this.healthChanged({ phase: 'offline', message: 'The device is offline; the connection resumes when the network returns', retryInMs: undefined });
   }
-  /** Returning to the foreground reuses the socket that survived and drops only one that is genuinely gone. */
+  /** Only a hidden/offline → foreground transition recovers the connection. In particular,
+   * pageshow + visibilitychange must not restart a probe, backoff, or terminal auth failure. */
   resume() {
-    this.suspended = false; this.stopped = false; this.terminal = false;
+    const wasSuspended = this.suspended; this.suspended = false;
+    if (!wasSuspended || this.stopped || this.terminal) return;
     const transport = this.transport;
-    if (transport?.open) { this.attempts = 0; void transport.ping().catch(() => {}); return; }
-    if (!transport && (this.ready || this.candidates.size)) return;
-    this.attempts = 0; if (transport) this.reset(); void this.connect().catch(() => {});
+    if (transport?.open && !transport.stale) {
+      this.attempts = 0; this.foregroundProbe = transport;
+      void transport.ping().then(() => { if (this.foregroundProbe === transport) this.foregroundProbe = undefined; }).catch(() => {});
+      return;
+    }
+    // A still-live candidate keeps its full stage budget. Frozen, expired candidates must
+    // not hold ready forever after mobile sleep; replace the whole route race once.
+    if (!transport && (this.ready || this.candidates.size) && (!this.candidates.size || [...this.candidates].some(candidate => !candidate.stale))) return;
+    this.attempts = 0; this.reset(); void this.connect().catch(() => {});
   }
-  private reset() { ++this.generation; clearTimeout(this.timer); this.timer = undefined; this.transport?.close(); this.transport = undefined; for (const transport of this.candidates) transport.close(); this.candidates.clear(); this.ready = undefined; this.rejectPending(); this.setState('offline'); }
+  private reset() { this.foregroundProbe = undefined; ++this.generation; clearTimeout(this.timer); this.timer = undefined; this.transport?.close(); this.transport = undefined; for (const transport of this.candidates) transport.close(); this.candidates.clear(); this.ready = undefined; this.rejectPending(); this.setState('offline'); }
   private setState(value: ConnectionState) { if (this.state === value) return; this.state = value; for (const listener of this.states) listener(value); }
   private rejectPending() { for (const [id, pending] of this.pending) { clearTimeout(pending.timer); pending.reject(new TurnwireError('OUTCOME_UNKNOWN', `Connection interrupted; check the result with request ID ${id}`)); } this.pending.clear(); }
   close() { this.stopped = true; this.reset(); this.healthChanged({ phase: 'offline', message: 'Connection closed', retryInMs: undefined }); }

@@ -44,6 +44,34 @@ it('writes exactly what the endpoint answered, keeping hand-written names', () =
   expect(updated).toContain('- id: one\n            name: One');
   expect(rewrite(updated, routeModels(updated)[0]!, ['gpt-5.5', 'gpt-6-astra'])).toBe(updated);
 });
+it('preserves surviving metadata verbatim when discovery adds, removes or reorders IDs', () => {
+  const metadata = `          - id: gpt-5.5
+            # Existing adapter-owned metadata, not inferred from discovery.
+            reasoningEfforts:
+              high: high
+            inputModalities: [text, image]
+            contextWindow: 128000
+            futureMetadata:
+              - id: nested-not-a-model
+                name: Nested metadata
+            name: GPT-5.5`;
+  const configured = overlay.replace('          - id: gpt-5.5\n            name: GPT-5.5', metadata);
+  const route = routeModels(configured)[0]!;
+  expect(listedModels(configured.split('\n'), route).map(model => model.id)).toEqual(['gpt-5.5', 'gpt-5.5-mini']);
+  const updated = rewrite(configured, route, ['gpt-6-astra', 'gpt-5.5']);
+  expect(updated).toContain(metadata);
+  expect(updated).not.toContain('gpt-5.5-mini');
+  expect(updated.indexOf('- id: gpt-6-astra')).toBeLessThan(updated.indexOf('- id: gpt-5.5'));
+  expect(updated).toContain('      other:\n        baseURL: https://example.test/v1');
+  expect(rewrite(updated, routeModels(updated)[0]!, ['gpt-6-astra', 'gpt-5.5'])).toBe(updated);
+});
+it('preserves false reasoning and nameless models without adding capabilities', () => {
+  const configured = overlay.replace('          - id: gpt-5.5-mini', '          - id: gpt-5.5-mini\n            reasoningEfforts: false');
+  const updated = rewrite(configured, routeModels(configured)[0]!, ['gpt-5.5-mini', 'gpt-6-astra']);
+  expect(updated).toContain('          - id: gpt-5.5-mini\n            reasoningEfforts: false');
+  expect(updated).not.toContain('name: GPT 5.5 Mini');
+  expect(updated).toContain('          - id: gpt-6-astra\n            name: GPT 6 Astra\n      other:');
+});
 it('keeps a model id readable when nobody named it', () => {
   expect(displayName('gpt-6-astra')).toBe('GPT 6 Astra');
   expect(displayName('deepseek-v4-flash')).toBe('Deepseek V4 Flash');
