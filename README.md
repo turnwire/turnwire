@@ -48,14 +48,16 @@ No universal CPU, memory or disk minimum has been measured. Resource use depends
 
 ## Choose a deployment method
 
-| Goal | Method | Important distinction |
+All four methods use the same execution host; choose how clients reach it.
+
+| Deployment method | What you need | How to use it |
 | --- | --- | --- |
-| Try locally | `npx turnwire@next --open` | Foreground process: keep the terminal open and follow DSH/key setup prompts |
-| Use regularly | `npm install -g turnwire@next`, then `turnwire --open` | Persistent installation, not an automatically installed background service |
-| Reuse existing DSH | Configure its authenticated URL/token before starting Turnwire | Explicit authorization required; Turnwire does not update or stop external DSH |
-| Run unattended | Follow [background service installation](docs/QUICKSTART.md) | Separate lifecycle from npm foreground launch; check applicable environment requirements |
-| Explore without a model | With source access, use the [offline Demo](docs/DEVELOPING.md) | No model key or real coding tasks |
-| Continue from a phone or elsewhere | Start the host, then configure a temporary tunnel or [self-hosted Relay](docs/RELAY-INSTALL.md) | Relay is a remote connection component, not a replacement execution host; persistent access needs a stable address |
+| Local | Execution host and local browser/terminal; no public endpoint | Run `npx turnwire@next --open` and use the authenticated local connection |
+| Temporary tunnel | Execution host and an available tunnel provider | In remote-access settings choose localhost.run, cpolar or Cloudflare and enable temporary access; pair the remote client. Addresses can change, requiring re-pairing |
+| Named tunnel | An existing Cloudflare tunnel, fixed public hostname and private tunnel credentials | Configure the tunnel name, hostname and credentials, enable it, then pair clients using the fixed address |
+| Self-deployed Relay | Your own server, HTTPS address and Relay connection key | [Deploy Relay and PWA](docs/RELAY-INSTALL.md), configure the address/key on the host, then pair clients. Recommended for persistent remote access and required for push |
+
+Relay and tunnels do not replace the execution host. npm/npx are installation choices; foreground/background execution and reusing DSH are runtime choices, not additional deployment methods. See [quickstart](docs/QUICKSTART.md) for host setup and detailed steps.
 
 ## Getting started
 
@@ -154,7 +156,7 @@ Once the channel is ready, generate a pairing QR code, then open the deployed PW
 
 ## Current status and boundaries
 
-The current delivery includes one-time pairing, per-connection ECDH session encryption authenticated by device credentials, staged connection recovery, a persistent approval inbox, Web Push, and a configurable TLS LAN listener. Pairing and remote transport support only v2; v1 devices and credential upgrades are not supported. Create a new v2 pairing from the host. RPC/event envelopes remain v1. Store rejects old databases without migration; use a separate empty database. The Relay's connection routing is still in memory, while push keys and the delivery queue are persisted.
+The current delivery includes one-time pairing, per-connection ECDH session encryption authenticated by device credentials, staged connection recovery, a persistent approval inbox, Web Push, and a configurable TLS LAN listener. Start with a dedicated data directory and create client pairings from the host. Keep pairing credentials private. The Relay's connection routing is still in memory, while push keys and the delivery queue are persisted.
 
 It does not yet include Codex / Claude adapters, team accounts, native iOS, auto-update, or release signing. "Which things were verified only under specific conditions" is governed by the [verification record](docs/VALIDATION.md).
 

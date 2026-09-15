@@ -19,9 +19,20 @@
 | 持久目录 | 配置、状态、运行时数据目录必须私有且可写，下载缓存也必须可写；重启时保留配置和状态。默认是 `~/.config/turnwire`、`~/.local/state/turnwire`、`~/.local/share/turnwire`、`~/.cache/turnwire`。分别用 `TURNWIRE_CONFIG_HOME`、`TURNWIRE_STATE_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 覆盖，详见[目录规则](XDG.zh.md)。 |
 | 浏览器（可选） | Web/PWA 使用当前版本浏览器；无显示器主机不需要图形桌面或本机浏览器，也可只用 CLI/TUI。 |
 
-选择以下一种部署方式。不要让多个主机进程共用同一状态目录或占用中的端口。单独试用时应同时隔离 config 和 state，避免覆盖现有的本机连接描述文件。
+## 从四种部署方式中选择
 
-## 推荐：已发布 npm 预览版（Linux / macOS）
+| 部署方式 | 要求与操作起点 |
+| --- | --- |
+| **本地** | 按下文安装并启动执行主机，在同一主机的浏览器打开输出的 Web 地址；无需公网入口、域名、Relay 或隧道。 |
+| **临时隧道** | 启动主机，准备所选服务商的隧道工具及出站网络，运行 `turnwire remote` 选择临时访问。默认 Cloudflare quick tunnel 无需自有域名；重启后公网地址可能变化，不是持久入口。 |
+| **命名隧道** | 预先准备已有 Cloudflare tunnel、已通过 DNS 路由到该 tunnel 的固定 hostname、执行主机上的凭据 JSON 文件及 `cloudflared`。运行 `turnwire remote` 选择命名 Cloudflare provider，填写已有 tunnel 名称、hostname 与凭据文件路径。Turnwire 不替你创建 tunnel、DNS 记录或凭据。hostname 固定，但访问仍依赖主机和隧道进程在线。 |
+| **自部署 Relay** | 准备自己的可达服务器与公网 HTTPS 地址（域名或受支持的公网 IP）、SSH 私钥/agent、管理员或免密 sudo 权限，并开放公网 TCP 80/443。运行 `turnwire deploy` 填写表单；支持的系统和具体步骤见 [Relay 部署](RELAY-INSTALL.zh.md)。服务器在你自己的 HTTPS 入口持久运行 Relay 并提供 PWA；保留私有配置与 push 状态。执行主机仍是独立角色，必须保持在线。 |
+
+启用远程访问后仍可本地访问。所有远程方式均需完成下方的[远程连接与配对](#远程连接与配对)。npx/全局 npm 是**主机安装**选择，外部 DSH 是 **runtime** 选择，systemd 是**主机进程管理**，Demo 是**开发测试**，都不是额外的部署模式。
+
+不要让多个主机进程共用同一状态目录或占用中的端口。单独试用时应同时隔离 config 和 state，避免覆盖现有的本机连接描述文件。
+
+## 主机安装：已发布 npm 预览版（Linux / macOS）
 
 <!-- BEGIN GENERATED INSTALL: scripts/sync-docs.mjs -->
 选择满足当前安装包与 runtime 要求的执行主机，并准备 **Node.js 22.13+** 和 npm。已发布的 [npm 预览版](https://www.npmjs.com/package/turnwire) 不需要仓库权限、源码构建或系统服务配置：
@@ -44,14 +55,14 @@ turnwire --open
 
 用 `turnwire doctor --json` 离线检查环境。停止自己的前台实例后，运行 `turnwire start --update-dsh` 显式安装并验证托管 DSH 更新。验证失败保留旧选择，不自动降级、不热更新，也不更新外部或自定义 DSH。普通启动不会擅自升级已有 runtime。详见 [npm 安装](NPM.zh.md)、[DSH 兼容性与边界](DSH-COMPATIBILITY.zh.md)和[目录规则](XDG.zh.md)。
 
-### 方式一：npx 前台运行（不全局安装）
+### 主机安装：npx 前台运行（不全局安装）
 
 1. 在主机检查 `node --version`（22.13 或更新）及 `npm --version`。
 2. 运行 `npx turnwire@next doctor --json` 做离线预检。
 3. 运行 `npx turnwire@next --open`，按提示批准受管 DSH 安装，在隐藏输入提示中填写模型密钥。`--yes` 可以批准安装，但不能代替缺失的密钥。
 4. 保持终端运行，按下文步骤验证成功。后续用相同命令启动，复用相同私有目录；npx 不是常驻服务。
 
-### 方式二：全局安装、前台运行（复用命令）
+### 主机安装：全局安装、前台运行（复用命令）
 
 ```sh
 npm install -g turnwire@next
@@ -61,7 +72,7 @@ turnwire --open
 
 使用普通用户可写的 npm prefix，不要以 root 运行主机。安装只提供可执行命令，每次 `turnwire --open` 都在前台运行。无显示器主机使用 `turnwire --no-open`。非交互启动前应私下在主机配置密钥；禁止打开浏览器并不会禁止凭据提示。
 
-### 方式三：复用已认证的外部 DSH
+### Runtime 配置：复用已认证的外部 DSH
 
 1. 独立启动兼容的 DSH，并预先在其主机配置模型凭据。私下取得认证端点和连接 token；DSH token 不是模型 API key。
 2. 在解析后的 Turnwire config 目录创建属于当前用户的普通文件 `dsh-connection.json`，在填入秘密前设置为 **0600** 权限。用私有编辑器填写，不要在 shell 命令中写入 token。以下只是占位模板，不是可用凭据：
@@ -85,7 +96,7 @@ turnwire --open
 
 无显示器主机不需要屏幕：用 `--no-open` 保持运行，在主机用 CLI/TUI；若要从其他设备的浏览器访问，显式配置下文远程方式。手机/笔记本浏览器中的 `127.0.0.1` 指手机/笔记本自身，不是远端执行主机。本机回环 URL 或本机引导秘密不是远程配对链接；不要公开 daemon 端口或把本机秘密复制到手机。
 
-## 源码 Demo：无需模型凭据
+## 开发测试：源码 Demo，无需模型凭据
 
 具备私有仓库访问权限和 Node/npm 后，使用与活跃部署分开的 checkout/config/state。以下环境变量赋值采用 **POSIX shell 语法**（例如 Bash 或 zsh）：
 
@@ -107,7 +118,7 @@ npm run turnwire -- new 'Try the demo' --runtime demo --title 'First demo'
 
 打开 daemon 打印的本机 Web 地址（默认端口 9898），使用私有本机连接信息。Demo 返回模拟响应，不需要 DSH/模型密钥，也不能验证真实推理；下载/构建仍需要网络。连接真实 DSH 参见[源码开发](DEVELOPING.zh.md)。源码方式不是 npm 启动器，不使用它的 `doctor`/`--open` 选项。
 
-## 进阶：源码 Linux 常驻服务
+## 主机安装与进程管理：源码 Linux 常驻服务
 
 下面是需要私有源码仓库访问权限的替代安装方式。它注册 systemd 用户服务，与 npm 前台预览版不同；不要让两者同时使用同一活跃状态目录或端口。
 
@@ -123,7 +134,7 @@ bash scripts/start-host.sh
 
 已经安装 Node/npm 时，也可以运行 `npm start`，两者是同一入口。Bash 入口可以自行准备固定版本 Node。首次下载/构建耗时取决于网络和 CPU；「一命令」不代表无需前置条件或瞬间安装。
 
-脚本检查环境、准备 Node 与依赖、构建 PWA/主机、隐藏输入模型密钥，并调用已有 Linux 安装器注册常驻服务。默认受管主机需要 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，不因此新增或注册模型。私有配置、状态、运行时和下载缓存分别用独立的 `TURNWIRE_CONFIG_HOME`、`TURNWIRE_STATE_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 覆盖。未覆盖时使用对应的绝对路径 XDG 基目录加 `/turnwire`，默认依次为 `~/.config/turnwire`、`~/.local/state/turnwire`、`~/.local/share/turnwire`、`~/.cache/turnwire`。`TURNWIRE_HOME` 已删除，设置它会被拒绝。不自动识别旧布局；DSH 环境文件只默认使用解析后的 config 目录中的 `dsh.env.json`，也可用 `TURNWIRE_DSH_ENV_FILE` 显式指定。Store 以 `UNSUPPORTED_STORAGE` 拒绝旧库，不提供迁移；当前格式须使用独立空状态目录。详见 [XDG 目录规则](XDG.zh.md)。不要把密钥放进命令行参数、公开部署文件或截图。
+脚本检查环境、准备 Node 与依赖、构建 PWA/主机、隐藏输入模型密钥，并调用已有 Linux 安装器注册常驻服务。默认受管主机需要 `TURNWIRE_HARNESS_DEEPSEEK_API_KEY`，不因此新增或注册模型。私有配置、状态、运行时和下载缓存分别用独立的 `TURNWIRE_CONFIG_HOME`、`TURNWIRE_STATE_HOME`、`TURNWIRE_DATA_HOME`、`TURNWIRE_CACHE_HOME` 覆盖。未覆盖时使用对应的绝对路径 XDG 基目录加 `/turnwire`，默认依次为 `~/.config/turnwire`、`~/.local/state/turnwire`、`~/.local/share/turnwire`、`~/.cache/turnwire`。DSH 环境文件默认使用解析后的 config 目录中的 `dsh.env.json`，也可用 `TURNWIRE_DSH_ENV_FILE` 显式指定。详见 [XDG 目录规则](XDG.zh.md)。不要把密钥放进命令行参数、公开部署文件或截图。
 
 需要 Bash、正常工作的 systemd 用户服务及下载/解压 Node 所需工具，不以 root 运行。安装路径使用不含空格的简单路径，与既有服务安装器限制一致。该入口仅支持 Linux；Mac 使用原生/源码安装说明，不会假装安装 Linux 服务。
 
@@ -139,7 +150,7 @@ journalctl --user -u turnwire-host -n 100
 
 `--check` 只检查，不安装、不启动。服务开始运行不等于 DSH/模型已健康；在仓库目录运行 `bin/turnwire status`，再私下运行 `bin/turnwire connect`，使用打印的本机地址确认 Web 连接。另行检查模型目录并执行一个小型真实任务。源码 CLI 不提供 npm 启动器的离线 `doctor` 命令。无人登录也需开机运行时，可能要管理员批准：`sudo loginctl enable-linger "$USER"`。
 
-## 手机访问仍由用户明确选择
+## 远程连接与配对
 
 npm 启动后保持前台终端运行，在第二个终端操作（适用于全局安装）：
 
@@ -150,9 +161,9 @@ turnwire devices pair --name phone --qr
 
 仅使用 npx 时，以 `npx turnwire@next` 作为相同命令的前缀。源码常驻服务则在其仓库目录使用 `bin/turnwire`，而不是全局可执行文件。
 
-同一主机上的浏览器访问完全本地，无需 Relay 或 tunnel。手机/其他设备访问是可选项：在远程表单里连接已有固定 Relay，或选择临时通道。固定 Relay 提供由操作者管理的稳定端点；临时通道依赖所选服务商、工具和出站连接，地址与有效期可能变化。Cloudflare 是可选项，不是本地使用或固定 Relay 的前置要求。打开远程 Web 端点并使用一次性邀请配对，不要使用主机的本机连接 token。配对码和二维码图片都应作为秘密保护。稳定公网入口仍需要可达的服务器/域名和凭据；启动脚本不会擅自购买 VPS、配置 DNS、开放防火墙或部署公网服务。详见[Relay 部署](RELAY-INSTALL.zh.md)。
+在远程表单配置上文选择的临时隧道、已有命名隧道或自部署 Relay。连接已部署的 Relay 时，填写其 HTTPS 入口并私下提供连接凭据。配对前运行 `turnwire remote status` 确认路由就绪。Cloudflare 是可选项，不是本地使用或 Relay 的前置要求。打开远程 HTTPS Web 端点并使用一次性邀请配对，不要使用主机的本机连接 token。保护配对码、二维码及 tunnel/Relay 凭据。实际确认手机连接并能恢复会话；本机状态不能验证蜂窝网络。长期使用 Relay PWA 时，从自己的稳定 HTTPS 入口安装，并在重启/更新间保留服务器 push 数据库与配置。启动脚本不会擅自购买 VPS、配置 DNS、开放防火墙或部署公网服务。详见[Relay 部署](RELAY-INSTALL.zh.md)。
 
-daemon 和 DSH 保持回环监听，不默认启用代审批。主机需要常醒，保护私有凭据，分别备份 Turnwire config、state 和 DSH 状态/附件，包括显式配置的 `TURNWIRE_DSH_HOME`。配对仅支持 v2，要求 Relay、主机和客户端使用匹配的当前版本；不支持旧主机或旧设备凭据。
+daemon 和 DSH 保持回环监听，不默认启用代审批。主机需要常醒，保护私有凭据，分别备份 Turnwire config、state 和 DSH 状态/附件，包括显式配置的 `TURNWIRE_DSH_HOME`。配对时请确保 Relay、主机和客户端使用匹配的当前版本。
 
 ## 验证边界
 

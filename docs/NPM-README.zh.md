@@ -11,11 +11,18 @@
 
 需要一台满足安装包/runtime 要求的执行主机、Node.js 和 npm（最低版本见下文）、当前用户可写的配置/数据/缓存与项目目录、安装时的 registry 访问能力，以及真实任务所需的模型凭据和模型服务网络。浏览器设备不运行 DSH。尚未测定统一的 CPU、内存或磁盘最低值，资源要求取决于项目与并发任务。本机使用不需要 Relay、容器或公网入口。
 
-- **本机试用：** `npx turnwire@next --open`，保持终端打开。
-- **长期安装：** `npm install -g turnwire@next`，之后运行 `turnwire --open`。仍是前台运行，不会安装后台系统服务。
-- **复用已有 DSH：** 启动前按下方说明配置经过认证的连接；Turnwire 不停止或更新外部 runtime。
-- **远程使用：** 先启动执行主机，再配置配对和隧道或自托管 Relay。Relay 只转发加密连接，不是执行主机，也不是完整的 Turnwire 部署。
-- **后台服务/源码 Demo：** 是不同的源码安装路径，详见仓库快速开始，需要仓库访问权限；npm 启动器不会自动安装这些组件。
+准备执行主机后，从以下四种部署方式中选择；启用远程访问后仍可本地访问：
+
+- **本地：** 运行 `npx turnwire@next --open`，在同一电脑打开打印的地址。无需域名、公网 IP、Relay 或隧道；保持终端运行。
+- **临时隧道：** 准备所选服务商的隧道工具及出站连接。主机运行后，用 `npx turnwire@next remote` 选择临时访问。默认 Cloudflare quick tunnel 无需自有域名，但重启后地址可能变化，不应作为持久 PWA 入口。
+- **命名隧道：** 准备已有 Cloudflare tunnel、已通过 DNS 路由到该 tunnel 的固定 hostname、`cloudflared` 和执行主机上的 tunnel 凭据 JSON。在 `npx turnwire@next remote` 中选择命名 Cloudflare provider，填写 tunnel 名称、hostname 和凭据文件路径。Turnwire 不替你创建这些资源。hostname 固定，但执行主机与隧道进程必须保持在线。
+- **自部署 Relay：** 准备自己满足 [Relay 部署要求](https://github.com/turnwire/turnwire/blob/main/docs/RELAY-INSTALL.zh.md)的服务器、公网域名或受支持的公网 IP、可达的 TCP 80/443、出站下载连接、SSH 私钥/agent 和管理员或免密 sudo 权限。在已启动的执行主机运行 `npx turnwire@next deploy` 并填写表单，在自己的 HTTPS 入口持久运行 Relay 并提供 PWA。保留服务器配置和 push 状态，维护证书续期，同时保持独立的执行主机在线。Relay 转发加密连接，不执行 Agent 任务。
+
+任何远程方式配置后，先用 `npx turnwire@next remote status` 检查，再运行 `npx turnwire@next devices pair --name phone --qr`。打开远程 HTTPS Web 入口，用一次性邀请配对，不能使用主机的本机连接 token。保护邀请码、二维码及 tunnel/Relay 凭据。实际确认远程设备连接成功；部署成功不代表设备网络已经验证。
+
+### 主机安装、runtime 与开发选择（不是部署模式）
+
+npx 用于前台启动；或先 `npm install -g turnwire@next`，再 `turnwire --open`，得到可复用的命令，全局安装仍不安装后台服务。需要时按下文配置**外部 DSH runtime**，Turnwire 不停止或更新它。**源码后台服务安装**与**源码 Demo 开发测试**步骤见仓库[快速开始](https://github.com/turnwire/turnwire/blob/main/docs/QUICKSTART.zh.md)（需要访问权限），npm 启动器不安装这些组件。
 
 ## 安装预览版
 
@@ -58,7 +65,7 @@ turnwire start --no-open --port 9898
 turnwire start --update-dsh
 ```
 
-DSH 更新需要明确执行：不自动降级、不热替换、不更新外部或自定义入口。验证失败保留旧安装。私有 `managed-dsh.json` 选择文件只由 npm 启动器使用，不影响旧版系统服务安装器。普通启动不会悄悄升级已有 DSH。
+DSH 更新需要明确执行：不自动降级、不热替换、不更新外部或自定义入口。验证失败保留旧安装。私有 `managed-dsh.json` 选择文件只由 npm 启动器使用，不由源码系统服务安装器读取。普通启动不会悄悄升级已有 DSH。
 
 本机使用不需要 Relay。手机访问需另外配置配对和远程连接；手机上的 localhost 指手机自己。长期远程访问优先使用自托管 Relay，不要直接把 daemon 端口暴露到公网。
 

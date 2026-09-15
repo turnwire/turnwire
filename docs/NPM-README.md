@@ -11,11 +11,18 @@ Self-hosted agent sessions across your terminal, browser and phone. The host run
 
 You need one execution host meeting the package/runtime requirements, Node.js and npm (minimum below), user-writable configuration/data/cache and project directories, registry access for installation, and model credentials plus model-service network access for real tasks. The browser device does not run DSH. No universal CPU, RAM or disk minimum has been measured; resource needs depend on your projects and concurrency. Local use needs no Relay, container or public endpoint.
 
-- **Try locally:** `npx turnwire@next --open`; keep its terminal open.
-- **Persistent installation:** `npm install -g turnwire@next`, then `turnwire --open`. This still runs in the foreground, not as an installed system service.
-- **Existing DSH:** configure the explicit authenticated connection described below before starting. Turnwire never stops or updates that external runtime.
-- **Remote use:** first get the host working, then configure pairing and a tunnel or self-hosted Relay. A Relay forwards encrypted connections; it is not an execution host or a complete Turnwire installation.
-- **Background service/source Demo:** these are separate source-based installation paths documented in the repository quickstart and require repository access. Do not assume the npm launcher installs them.
+Choose from these four deployment methods after preparing the execution host; local access remains available when remote access is enabled:
+
+- **Local:** start the host with `npx turnwire@next --open` and open the printed address on the same computer. No domain, public IP, Relay or tunnel is required; keep the terminal running.
+- **Temporary tunnel:** prepare the selected provider's tunnel tool and outbound connectivity. With the host running, use `npx turnwire@next remote` to select temporary access. The default Cloudflare quick tunnel needs no owned domain, but its address can change after restart; do not treat it as a persistent PWA entry point.
+- **Named tunnel:** prepare an existing Cloudflare tunnel, a fixed hostname with DNS routed to it, `cloudflared`, and the tunnel credentials JSON on the execution host. In `npx turnwire@next remote`, select the named Cloudflare provider and supply that tunnel's name, hostname and credentials-file path. Turnwire does not create these resources. The hostname is stable; the execution host and tunnel process must remain online.
+- **Self-deployed Relay:** prepare your own server meeting the [Relay deployment requirements](https://github.com/turnwire/turnwire/blob/main/docs/RELAY-INSTALL.md), a public domain or supported public IP, reachable TCP 80/443, outbound download access, SSH key/agent and administrator or passwordless sudo access. Run `npx turnwire@next deploy` on the running execution host and fill in the form. It deploys a persistent Relay and PWA at your own HTTPS endpoint. Preserve server configuration and push state, maintain certificate renewal, and keep the separate execution host online. A Relay forwards encrypted connections; it does not run agent tasks.
+
+For any remote method, check `npx turnwire@next remote status`, then run `npx turnwire@next devices pair --name phone --qr`. Open the remote HTTPS Web endpoint and use the one-use invitation, never the host's local connection token. Protect invitation codes, QR images and tunnel/Relay credentials. Confirm an actual remote device connects; a successful deployment alone does not prove that device's network works.
+
+### Host installation, runtime and development choices (not deployment modes)
+
+Use npx for a foreground launch, or `npm install -g turnwire@next` followed by `turnwire --open` for a reusable command; global installation still does not install a background service. Configure an **external DSH runtime** as below if needed; Turnwire never stops or updates it. **Source background service** installation and **source Demo development/testing** procedures are in the repository [quickstart](https://github.com/turnwire/turnwire/blob/main/docs/QUICKSTART.md) (repository access required); the npm launcher does not install them.
 
 ## Install the preview
 
@@ -58,7 +65,7 @@ turnwire start --no-open --port 9898
 turnwire start --update-dsh
 ```
 
-DSH updates are explicit: no automatic downgrade, hot replacement, or external/custom-entry updates. Failed staging preserves the old installation. The private `managed-dsh.json` selection is consumed by the npm launcher, not older system-service installers. Ordinary startup does not silently upgrade existing DSH.
+DSH updates are explicit: no automatic downgrade, hot replacement, or external/custom-entry updates. Failed staging preserves the old installation. The private `managed-dsh.json` selection is consumed by the npm launcher, not the source system-service installer. Ordinary startup does not silently upgrade existing DSH.
 
 Local use requires no Relay. Phone access is a separate pairing and remote-connection setup; localhost on a phone refers to that phone. Prefer a self-hosted Relay for persistent remote access. Never expose the daemon port directly to the public internet.
 
