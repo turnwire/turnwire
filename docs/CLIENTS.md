@@ -4,6 +4,8 @@ English · [中文](CLIENTS.zh.md)
 
 The Web/PWA composer sends with Enter and inserts a newline with Shift+Enter; Alt+Enter retains steering. IME candidate confirmation and held-key repeats never send. Existing session permission and busy-state checks still apply.
 
+Local Codex bridge image input and reasoning levels are declared in the DSH provider configuration; all clients continue to follow runtime capabilities. `config/dsh-deepseek.patch.yml` declares existing models using the local Codex model catalog, without adding client-owned models or levels. Chat Completions uses `thinkingFormat: openai` and `supportsReasoningEffort: true`; `max` sends `max`, not the distinct `ultra` value. Current DSH has no separate `ultra` option. This configuration does not promise reasoning-text output or audio/video input; offline wire checks do not replace live upstream acceptance. Editing the source overlay does not mean running DSH has loaded it: verify effective settings and a safe maintenance method before activation.
+
 ## Platform-specific installation details
 
 Choose clients independently from the execution host. The current native desktop implementation targets macOS 14+ and requires Xcode 16+ / Swift 6 to build: from the separate desktop checkout, `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app`. The bundle is ad-hoc signed; public native distribution additionally requires Developer ID signing and notarization. These are requirements of that optional client, not an assumption about every user's host.

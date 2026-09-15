@@ -4,6 +4,8 @@
 
 Web/PWA 消息输入框使用 Enter 发送、Shift+Enter 换行；Alt+Enter 保留插话发送。中文等输入法确认候选与按键长按不会触发发送。发送动作仍复用原有会话权限与忙碌状态检查。
 
+本地 Codex bridge 的图片输入与推理档位由 DSH provider 配置声明，所有客户端仍以运行时能力为准。`config/dsh-deepseek.patch.yml` 按本机 Codex 模型目录声明现有模型能力，不为客户端新增模型或独立档位。Chat Completions 使用 `thinkingFormat: openai` 与 `supportsReasoningEffort: true`；`max` 保持发送 `max`，不映射为不同的 `ultra`。当前 DSH 无独立 `ultra` 选项。该配置不承诺完整思考过程输出或音视频输入；离线协议验证不替代真实上游验收。修改源码 overlay 不等于运行中的 DSH 已加载，生效前需核验实际 settings 与安全维护方式。
+
 ## 特定平台的安装细节
 
 客户端可独立于执行主机选择。当前原生桌面实现面向 macOS 14+，构建需要 Xcode 16+ / Swift 6；在独立桌面仓库中执行 `cd ../turnwire-desktop && bash scripts/bundle.sh && open dist/Turnwire.app`。产物为 ad-hoc 签名，对外分发还需要 Developer ID 签名和 notarization。这些是该可选客户端的要求，不代表所有用户的执行主机都必须采用此平台。

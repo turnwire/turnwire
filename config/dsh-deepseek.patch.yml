@@ -11,8 +11,9 @@
 # A second provider route: a local OpenAI-compatible endpoint served by codex-provider-bridge,
 # which bridges the ChatGPT/Codex login into OpenAI shapes. The endpoint itself takes no credential
 # (the key is a placeholder the client is expected to send), so the name only has to exist.
-# This bridge cannot emit tool calls — it answers tool-bearing requests with text — so a route here
-# suits a conversation, not an agent turn that has to run anything.
+# The bridge forwards Chat Completions function tools, image input and reasoning effort.
+# Model capabilities below follow the local Codex model catalog, not inferred model names.
+# DSH has no distinct ultra level: preserve max -> max rather than aliasing it to ultra.
 - id: llm-pi-ai
   config:
     providers:
@@ -21,16 +22,53 @@
         baseURL: http://127.0.0.1:8790/v1
         api: openai-completions
         apiKeyEnv: TURNWIRE_HARNESS_CODEX_BRIDGE_KEY
+        compat:
+          thinkingFormat: openai
+          supportsReasoningEffort: true
         models:
           # Asked of this route's own GET {baseURL}/models by scripts/dsh-model-sync.mjs: an id the endpoint
           # stops answering with is dropped, so a model it adds appears without anyone editing this file.
           - id: gpt-6-astra
             name: GPT-6 Astra
+            input: [text, image]
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+              max: max
           - id: gpt-5.6-sol
             name: GPT-5.6 Sol
+            input: [text, image]
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+              max: max
           - id: gpt-5.6-terra
             name: GPT-5.6 Terra
+            input: [text, image]
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+              max: max
           - id: gpt-5.6-luna
             name: GPT-5.6 Luna
+            input: [text, image]
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+              max: max
           - id: gpt-5.5
             name: GPT-5.5
+            input: [text, image]
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
