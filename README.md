@@ -100,15 +100,17 @@ If the default Web port is occupied, use `npx turnwire@next start --port 9900 --
 
 Contributors with access to the private repository can follow [Developing from source](docs/DEVELOPING.md) to build, run an offline Demo, or connect a real model through DSH. The Demo needs no model credentials and does not call a model, run a shell, or modify files.
 
-### Step 2: Install the clients you want
+### Step 2: Choose an access client
 
-| What you want | How to install | What you need |
+Clients let you view sessions, send tasks and handle approvals. They connect to the same execution host rather than maintaining independent task state; multiple clients can be used together.
+
+| Client | How to use it | Connection requirements |
 | --- | --- | --- |
-| Desktop browser | Open the local address printed by the host launcher | A running host; see [quickstart](docs/QUICKSTART.md) |
-| Native desktop client (optional) | See [client capabilities](docs/CLIENTS.md) and [source setup](docs/DEVELOPING.md) | Check the documented platform, build, and signing requirements |
-| Background host | See [service setup](docs/QUICKSTART.md) | Check the documented platform and service requirements |
-| Self-hosted Relay (stable long-term address) | `deploy/` contains a Dockerfile, compose.yaml, and Caddyfile | A server; see [One-click Relay deployment](docs/RELAY-INSTALL.md) |
-| Terminal / scripts | `npm run turnwire -- ...`, or after building `node apps/cli/dist/main.js ...` | Node.js (minimum version above); for the commands see the [CLI reference](docs/CLI.md) |
+| Web / PWA (desktop or phone browser) | Open the launcher's local Web, or the configured HTTPS Web endpoint remotely; optionally add it to the home screen | Local authentication for local use; pair remote clients as described in the next step |
+| Terminal (CLI / TUI, including scripts) | After npm installation, run `turnwire --help`; without a global installation, use `npx turnwire@next --help` | A running host and appropriate connection permissions; see [CLI reference](docs/CLI.md) |
+| Native desktop client (optional) | Build and use it according to [client documentation](docs/CLIENTS.md) | Meet that client's build, platform and signing requirements, then connect to the host |
+
+The execution host runs tasks; tunnels and Relay provide remote connectivity. Neither is a client.
 
 ### Step 3: Get your phone connected
 

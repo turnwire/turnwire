@@ -100,15 +100,17 @@ turnwire --open
 
 有私有仓库访问权限的开发者可按[从源码开发](docs/DEVELOPING.zh.md)构建、运行离线 Demo，或通过 DSH 接入真实模型。Demo 不需要模型凭据，不调用模型、不运行 shell、不修改文件。
 
-### 第 2 步：装上你要的客户端
+### 第 2 步：选择访问客户端
 
-| 你想要 | 怎么装 | 需要什么 |
+客户端是你查看会话、发送任务和处理审批的入口。它们连接同一台执行主机，不各自运行一套任务状态；可以同时使用多个客户端。
+
+| 客户端 | 如何使用 | 连接要求 |
 | --- | --- | --- |
-| 桌面浏览器 | 打开主机启动器输出的本机地址 | 一台运行中的主机；见[快速开始](docs/QUICKSTART.zh.md) |
-| 原生桌面客户端（可选） | 见[客户端能力](docs/CLIENTS.zh.md)与[源码安装说明](docs/DEVELOPING.zh.md) | 先确认文档中的平台、构建与签名要求 |
-| 后台主机 | 见[服务安装说明](docs/QUICKSTART.zh.md) | 先确认文档中的平台与服务要求 |
-| 自托管 Relay（长期稳定地址） | `deploy/` 下有 Dockerfile、compose.yaml 与 Caddyfile | 一台服务器；详见[一键部署 Relay](docs/RELAY-INSTALL.zh.md) |
-| 终端 / 脚本 | `npm run turnwire -- ...`，或构建后 `node apps/cli/dist/main.js ...` | Node.js（最低版本见上文）；命令见[命令行参考](docs/CLI.zh.md) |
+| Web / PWA（桌面或手机浏览器） | 本机打开启动器提供的 Web；远程打开配置好的 HTTPS Web 入口，也可添加到主屏幕 | 本机使用本机认证；远程客户端按下一步完成配对 |
+| 终端（CLI / TUI，可用于脚本） | npm 安装后运行 `turnwire --help` 查看命令；未全局安装时用 `npx turnwire@next --help` | 主机运行中，并具备对应连接权限；详见[命令行参考](docs/CLI.zh.md) |
+| 原生桌面客户端（可选） | 按[客户端说明](docs/CLIENTS.zh.md)构建和使用 | 满足该客户端的构建、平台与签名要求，并连接主机 |
+
+执行主机负责运行任务；隧道和 Relay 负责远程连接，均不是客户端。
 
 ### 第 3 步：让手机连上
 
